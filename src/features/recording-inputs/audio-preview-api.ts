@@ -11,6 +11,7 @@ type StartAudioPreviewOptions = {
   kind: AudioPreviewKind;
   applicationIds?: string[];
   deviceId?: string;
+  processIds?: number[];
 };
 
 export const startAudioPreview = async ({
@@ -18,12 +19,14 @@ export const startAudioPreview = async ({
   channel,
   deviceId,
   kind,
+  processIds,
 }: StartAudioPreviewOptions) => {
   await invoke("start_audio_preview", {
     applicationIds,
     channel,
     deviceId,
     kind,
+    processIds,
   });
 };
 

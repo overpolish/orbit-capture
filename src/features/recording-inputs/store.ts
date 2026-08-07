@@ -24,10 +24,12 @@ export const ALL_SYSTEM_AUDIO: SystemAudioSource = {
 };
 
 type RecordingInputStore = {
+  cameraFlippedById: Record<string, boolean>;
   inputs: RecordingInputs;
   selectedCamera: InputDevice | null;
   selectedMicrophone: InputDevice | null;
   selectedSystemAudio: SystemAudioSource[];
+  setCameraFlipped: (cameraId: string, flipped: boolean) => void;
   setInput: (input: keyof RecordingInputs, selected: boolean) => void;
   setSelectedCamera: (camera: InputDevice | null) => void;
   setSelectedMicrophone: (microphone: InputDevice | null) => void;
@@ -37,6 +39,7 @@ type RecordingInputStore = {
 export const useRecordingInputStore = create<RecordingInputStore>()(
   persist(
     (set) => ({
+      cameraFlippedById: {},
       inputs: {
         camera: false,
         microphone: false,
@@ -46,6 +49,14 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
       selectedCamera: null,
       selectedMicrophone: null,
       selectedSystemAudio: [ALL_SYSTEM_AUDIO],
+      setCameraFlipped: (cameraId, flipped) => {
+        set((state) => ({
+          cameraFlippedById: {
+            ...state.cameraFlippedById,
+            [cameraId]: flipped,
+          },
+        }));
+      },
       setInput: (input, selected) => {
         set((state) => ({
           inputs: { ...state.inputs, [input]: selected },
@@ -67,6 +78,11 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
         return {
           ...currentState,
           ...persisted,
+          cameraFlippedById:
+            persisted.cameraFlippedById &&
+            typeof persisted.cameraFlippedById === "object"
+              ? persisted.cameraFlippedById
+              : {},
           selectedSystemAudio: Array.isArray(persisted.selectedSystemAudio)
             ? persisted.selectedSystemAudio
             : [ALL_SYSTEM_AUDIO],

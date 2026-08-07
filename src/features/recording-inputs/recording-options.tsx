@@ -1,9 +1,18 @@
-import { Camera, CameraOff, Lock, Mic, Volume2 } from "lucide-react";
+import {
+  Camera,
+  CameraOff,
+  FlipHorizontal2,
+  Lock,
+  Mic,
+  Volume2,
+} from "lucide-react";
 import { RefObject } from "react";
 
 import { Button } from "../../components/base/button/button";
+import { ToggleButton } from "../../components/base/button/toggle-button";
 import { ListBoxItem } from "../../components/base/listbox-item/listbox-item";
 import { Select } from "../../components/base/select/select";
+import { cn } from "../../lib/styling";
 import { AudioMeter } from "../audio-inputs/components/audio-meter";
 import { StandaloneMultiSelect } from "../standalone-listbox/standalone-multi-select";
 import { StandaloneSelect } from "../standalone-listbox/standalone-select";
@@ -19,6 +28,7 @@ type InputSelectProps<T extends InputDevice> = {
   placeholder: string;
   selected: T | null;
   standalone: boolean;
+  onOpen?: () => Promise<T[]>;
 };
 
 function InputSelect<T extends InputDevice>({
@@ -27,6 +37,7 @@ function InputSelect<T extends InputDevice>({
   items,
   label,
   onChange,
+  onOpen,
   placeholder,
   selected,
   standalone,
@@ -38,6 +49,7 @@ function InputSelect<T extends InputDevice>({
         items={items}
         label={label}
         leftSection={icon}
+        onOpen={onOpen}
         onSelectionChange={(item) => {
           const match = items.find((candidate) => candidate.id === item.id);
           if (match) onChange(match);
@@ -79,11 +91,13 @@ type SystemAudioSelectProps = {
   onChange: (items: SystemAudioSource[]) => void;
   selected: SystemAudioSource[];
   standalone: boolean;
+  onOpen?: () => Promise<SystemAudioSource[]>;
 };
 
 function SystemAudioSelect({
   items,
   onChange,
+  onOpen,
   selected,
   standalone,
 }: SystemAudioSelectProps) {
@@ -95,6 +109,7 @@ function SystemAudioSelect({
         items={items}
         label="System audio"
         leftSection={<Volume2 size={14} />}
+        onOpen={onOpen}
         onSelectionChange={(selection) => {
           onChange(
             selection
@@ -168,49 +183,57 @@ export type RecordingOptionsProps = {
   selectedCamera: InputDevice | null;
   selectedMicrophone: InputDevice | null;
   selectedSystemAudio: SystemAudioSource[];
-  cameraEnabled?: boolean;
+  cameraFlipped?: boolean;
   cameraLocked?: boolean;
   cameraPreviewActive?: boolean;
   cameraPreviewRef?: RefObject<HTMLCanvasElement | null>;
   microphoneDecibels?: number;
-  microphoneEnabled?: boolean;
   microphoneLocked?: boolean;
   microphonePeak?: number;
+  microphonePreviewEnabled?: boolean;
+  onCameraFlippedChange?: (flipped: boolean) => void;
   onCameraLockedPress?: () => void;
+  onCameraOptionsOpen?: () => Promise<InputDevice[]>;
   onMicrophoneLockedPress?: () => void;
+  onMicrophoneOptionsOpen?: () => Promise<InputDevice[]>;
+  onSystemAudioOptionsOpen?: () => Promise<SystemAudioSource[]>;
   standalone?: boolean;
   systemAudioDecibels?: number;
-  systemAudioEnabled?: boolean;
   systemAudioPeak?: number;
+  systemAudioPreviewEnabled?: boolean;
 };
 
 export function RecordingOptions({
   audioSources,
-  cameraEnabled = false,
+  cameraFlipped = false,
   cameraLocked = false,
   cameraPreviewActive = false,
   cameraPreviewRef,
   cameras,
   microphoneDecibels = -Infinity,
-  microphoneEnabled = false,
   microphoneLocked = false,
   microphonePeak = -Infinity,
+  microphonePreviewEnabled = false,
   microphones,
   onCameraChange,
+  onCameraFlippedChange,
   onCameraLockedPress,
+  onCameraOptionsOpen,
   onMicrophoneChange,
   onMicrophoneLockedPress,
+  onMicrophoneOptionsOpen,
   onSystemAudioChange,
+  onSystemAudioOptionsOpen,
   selectedCamera,
   selectedMicrophone,
   selectedSystemAudio,
   standalone = false,
   systemAudioDecibels = -Infinity,
-  systemAudioEnabled = false,
   systemAudioPeak = -Infinity,
+  systemAudioPreviewEnabled = false,
 }: RecordingOptionsProps) {
   return (
-    <main className="flex h-full min-h-[270px] w-full min-w-[240px] flex-col gap-3 overflow-hidden rounded-[10px] bg-content/92 p-4 text-content-fg">
+    <main className="window-surface flex h-full min-h-[270px] w-full min-w-[240px] flex-col gap-3 overflow-hidden rounded-[10px] bg-content/92 p-4 text-content-fg">
       <section className="relative flex flex-col gap-1.5">
         {cameraLocked ? (
           <PermissionOverlay
@@ -222,13 +245,27 @@ export function RecordingOptions({
         <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-md bg-content-fg/10 text-muted shadow-sm">
           <canvas
             aria-label="Camera preview"
-            className="h-full w-full -scale-x-100 object-cover"
-            hidden={!cameraPreviewActive || !cameraEnabled}
+            className={cn(
+              "h-full w-full object-cover",
+              cameraFlipped && "-scale-x-100",
+            )}
+            hidden={!cameraPreviewActive}
             ref={cameraPreviewRef}
             role="img"
           />
-          {!cameraPreviewActive || !cameraEnabled ? (
-            <CameraOff size={24} />
+          {!cameraPreviewActive ? <CameraOff size={24} /> : null}
+          {selectedCamera && onCameraFlippedChange ? (
+            <ToggleButton
+              aria-label="Flip camera horizontally"
+              className="absolute right-2 bottom-2"
+              isSelected={cameraFlipped}
+              onChange={onCameraFlippedChange}
+              showFocus={false}
+              size="sm"
+              variant="ghost"
+            >
+              <FlipHorizontal2 size={14} />
+            </ToggleButton>
           ) : null}
         </div>
 
@@ -238,6 +275,7 @@ export function RecordingOptions({
           items={cameras}
           label="Camera"
           onChange={onCameraChange}
+          onOpen={onCameraOptionsOpen}
           placeholder="No camera"
           selected={selectedCamera}
           standalone={standalone}
@@ -258,13 +296,14 @@ export function RecordingOptions({
           items={microphones}
           label="Microphone"
           onChange={onMicrophoneChange}
+          onOpen={onMicrophoneOptionsOpen}
           placeholder="No microphone"
           selected={selectedMicrophone}
           standalone={standalone}
         />
         <AudioMeter
           decibels={microphoneDecibels}
-          disabled={!microphoneEnabled}
+          disabled={!microphonePreviewEnabled}
           height={5}
           hidePeakTick
           hideTicks
@@ -277,12 +316,13 @@ export function RecordingOptions({
         <SystemAudioSelect
           items={audioSources}
           onChange={onSystemAudioChange}
+          onOpen={onSystemAudioOptionsOpen}
           selected={selectedSystemAudio}
           standalone={standalone}
         />
         <AudioMeter
           decibels={systemAudioDecibels}
-          disabled={!systemAudioEnabled}
+          disabled={!systemAudioPreviewEnabled}
           height={5}
           hidePeakTick
           hideTicks

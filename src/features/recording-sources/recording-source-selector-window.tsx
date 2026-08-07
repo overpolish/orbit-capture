@@ -167,7 +167,7 @@ export function RecordingSourceSelectorWindow() {
   }, [isExpanded, recordingMode, refreshMonitors]);
 
   return (
-    <main className="fixed inset-0 flex overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg">
+    <main className="window-surface fixed inset-0 flex overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg">
       <section
         className={`flex h-full w-full flex-col gap-2 ${placement === "below" ? "justify-start" : "justify-end"}`}
       >

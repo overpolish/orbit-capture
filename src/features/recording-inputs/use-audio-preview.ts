@@ -40,6 +40,7 @@ type UseAudioPreviewOptions = {
   kind: AudioPreviewKind;
   applicationIds?: string[];
   deviceId?: string;
+  processIds?: number[];
 };
 
 export const useAudioPreview = ({
@@ -47,6 +48,7 @@ export const useAudioPreview = ({
   applicationIds,
   deviceId,
   kind,
+  processIds,
 }: UseAudioPreviewOptions) => {
   const [decibels, setDecibels] = useState(-Infinity);
   const operationsRef = useRef(Promise.resolve());
@@ -70,6 +72,7 @@ export const useAudioPreview = ({
           channel,
           deviceId,
           kind,
+          processIds,
         });
       })
       .catch(() => {
@@ -83,7 +86,7 @@ export const useAudioPreview = ({
         .then(() => stopAudioPreview(kind))
         .catch(() => undefined);
     };
-  }, [active, applicationIds, deviceId, kind]);
+  }, [active, applicationIds, deviceId, kind, processIds]);
 
   return { decibels, peak: usePeak(decibels) };
 };

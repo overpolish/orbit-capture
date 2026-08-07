@@ -106,6 +106,10 @@ body {
   overflow: hidden;
 }
 
+html[data-platform="windows"] .window-surface {
+  border-radius: 0;
+}
+
 .os-theme-orbit-capture {
   --os-size: 10px;
   --os-padding-perpendicular: 2px;

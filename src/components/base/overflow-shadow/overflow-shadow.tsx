@@ -98,6 +98,7 @@ type OverflowShadowProps = VariantProps<typeof overflowShadowVariants> & {
   children?: React.ReactNode;
   className?: string;
   hideScrollbar?: boolean;
+  rootClassName?: string;
   startAtEnd?: boolean;
 };
 
@@ -107,6 +108,7 @@ export const OverflowShadow = ({
   hideScrollbar,
   insetShadow,
   orientation,
+  rootClassName,
   shadowRadius,
   startAtEnd,
 }: OverflowShadowProps) => {
@@ -160,7 +162,7 @@ export const OverflowShadow = ({
   };
 
   return (
-    <div className={os()}>
+    <div className={cn(os(), rootClassName)}>
       <OverlayScrollbarsComponent
         className="w-full h-full"
         defer

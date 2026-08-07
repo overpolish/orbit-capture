@@ -156,7 +156,7 @@ export function RecordingBar({
 
   return (
     <main
-      className="flex h-full min-h-[92px] w-full min-w-[628px] items-center justify-center overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg"
+      className="window-surface flex h-full min-h-[92px] w-full min-w-[628px] items-center justify-center overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg"
       data-tauri-drag-region="deep"
       onPointerDown={onInteract}
       onPointerUpCapture={onPointerUp}

@@ -43,14 +43,18 @@ export function RecordingOptionsWindow() {
   ]);
   const [isOpen, setIsOpen] = useState(false);
   const {
-    inputs,
+    cameraFlippedById,
     selectedCamera,
     selectedMicrophone,
     selectedSystemAudio,
+    setCameraFlipped,
     setSelectedCamera,
     setSelectedMicrophone,
     setSelectedSystemAudio,
   } = useRecordingInputStore((state) => state);
+  const cameraFlipped = selectedCamera
+    ? (cameraFlippedById[selectedCamera.id] ?? false)
+    : false;
   const previewsAllSystemAudio = selectedSystemAudio.some(
     (source) => source.id === ALL_SYSTEM_AUDIO.id,
   );
@@ -61,61 +65,67 @@ export function RecordingOptionsWindow() {
         .map((source) => source.id),
     [selectedSystemAudio],
   );
+  const selectedProcessIds = useMemo(
+    () =>
+      selectedSystemAudio
+        .filter((source) => source.kind === "application")
+        .flatMap((source) => source.processIds ?? []),
+    [selectedSystemAudio],
+  );
   const microphonePreview = useAudioPreview({
-    active:
-      isOpen &&
-      inputs.microphone &&
-      microphoneGranted &&
-      selectedMicrophone !== null,
+    active: isOpen && microphoneGranted && selectedMicrophone !== null,
     deviceId: selectedMicrophone?.id,
     kind: "microphone",
   });
   const systemAudioPreview = useAudioPreview({
     active:
-      isOpen &&
-      inputs.systemAudio &&
-      (previewsAllSystemAudio || selectedApplicationIds.length > 0),
+      isOpen && (previewsAllSystemAudio || selectedApplicationIds.length > 0),
     applicationIds: previewsAllSystemAudio ? undefined : selectedApplicationIds,
     kind: "system",
+    processIds: previewsAllSystemAudio ? undefined : selectedProcessIds,
   });
   const cameraPreview = useCameraPreview({
-    active: isOpen && inputs.camera && cameraGranted && selectedCamera !== null,
+    active: isOpen && cameraGranted && selectedCamera !== null,
     deviceId: selectedCamera?.id,
   });
 
-  const refreshDevices = useCallback(async () => {
-    const [cameraResult, microphoneResult, applicationResult] =
-      await Promise.allSettled([
-        cameraGranted ? listCameras() : Promise.resolve([]),
-        microphoneGranted ? listMicrophones() : Promise.resolve([]),
-        screenRecordingGranted ? listSystemAudioSources() : Promise.resolve([]),
-      ]);
-    const nextCameras =
-      cameraResult.status === "fulfilled" ? cameraResult.value : [];
-    const nextMicrophones =
-      microphoneResult.status === "fulfilled" ? microphoneResult.value : [];
-    const nextAudioSources = [
-      ALL_SYSTEM_AUDIO,
-      ...(applicationResult.status === "fulfilled"
-        ? applicationResult.value
-        : []),
-    ];
-
+  const refreshCameras = useCallback(async () => {
+    const nextCameras = cameraGranted
+      ? await listCameras().catch(() => [])
+      : [];
     setCameras(nextCameras);
-    setMicrophones(nextMicrophones);
-    setAudioSources(nextAudioSources);
-
     const current = useRecordingInputStore.getState();
     const camera =
       nextCameras.find((item) => item.id === current.selectedCamera?.id) ??
       nextCameras.find((item) => item.isDefault) ??
       firstOrNull(nextCameras);
+    setSelectedCamera(camera);
+    return nextCameras;
+  }, [cameraGranted, setSelectedCamera]);
+
+  const refreshMicrophones = useCallback(async () => {
+    const nextMicrophones = microphoneGranted
+      ? await listMicrophones().catch(() => [])
+      : [];
+    setMicrophones(nextMicrophones);
+    const current = useRecordingInputStore.getState();
     const microphone =
       nextMicrophones.find(
         (item) => item.id === current.selectedMicrophone?.id,
       ) ??
       nextMicrophones.find((item) => item.isDefault) ??
       firstOrNull(nextMicrophones);
+    setSelectedMicrophone(microphone);
+    return nextMicrophones;
+  }, [microphoneGranted, setSelectedMicrophone]);
+
+  const refreshAudioSources = useCallback(async () => {
+    const applications = screenRecordingGranted
+      ? await listSystemAudioSources().catch(() => [])
+      : [];
+    const nextAudioSources = [ALL_SYSTEM_AUDIO, ...applications];
+    setAudioSources(nextAudioSources);
+    const current = useRecordingInputStore.getState();
     const selectedAll = current.selectedSystemAudio.some(
       (source) => source.id === ALL_SYSTEM_AUDIO.id,
     );
@@ -127,19 +137,19 @@ export function RecordingOptionsWindow() {
           ),
         );
 
-    setSelectedCamera(camera);
-    setSelectedMicrophone(microphone);
     setSelectedSystemAudio(
       systemAudio.length > 0 ? systemAudio : [ALL_SYSTEM_AUDIO],
     );
-  }, [
-    cameraGranted,
-    microphoneGranted,
-    screenRecordingGranted,
-    setSelectedCamera,
-    setSelectedMicrophone,
-    setSelectedSystemAudio,
-  ]);
+    return nextAudioSources;
+  }, [screenRecordingGranted, setSelectedSystemAudio]);
+
+  const refreshDevices = useCallback(async () => {
+    await Promise.all([
+      refreshCameras(),
+      refreshMicrophones(),
+      refreshAudioSources(),
+    ]);
+  }, [refreshAudioSources, refreshCameras, refreshMicrophones]);
 
   useEffect(() => {
     if (hydrated) void refreshDevices();
@@ -152,7 +162,6 @@ export function RecordingOptionsWindow() {
     void Promise.all([
       listen("recording-options://opened", () => {
         setIsOpen(true);
-        void refreshDevices();
       }),
       listen("recording-options://closed", () => {
         setIsOpen(false);
@@ -172,7 +181,7 @@ export function RecordingOptionsWindow() {
       unlistenOpened?.();
       unlistenClosed?.();
     };
-  }, [refreshDevices]);
+  }, []);
 
   return (
     <div
@@ -184,32 +193,42 @@ export function RecordingOptionsWindow() {
     >
       <RecordingOptions
         audioSources={audioSources}
-        cameraEnabled={inputs.camera}
+        cameraFlipped={cameraFlipped}
         cameraLocked={!hydrated || !permissions.camera.granted}
         cameraPreviewActive={cameraPreview.hasFrame}
         cameraPreviewRef={cameraPreview.canvasRef}
         cameras={cameras}
         microphoneDecibels={microphonePreview.decibels}
-        microphoneEnabled={inputs.microphone}
         microphoneLocked={!hydrated || !permissions.microphone.granted}
         microphonePeak={microphonePreview.peak}
+        microphonePreviewEnabled={
+          selectedMicrophone !== null && microphoneGranted
+        }
         microphones={microphones}
         onCameraChange={setSelectedCamera}
+        onCameraFlippedChange={(flipped) => {
+          if (selectedCamera) setCameraFlipped(selectedCamera.id, flipped);
+        }}
         onCameraLockedPress={() => {
           grantPermission("camera", permissions.camera);
         }}
+        onCameraOptionsOpen={refreshCameras}
         onMicrophoneChange={setSelectedMicrophone}
         onMicrophoneLockedPress={() => {
           grantPermission("microphone", permissions.microphone);
         }}
+        onMicrophoneOptionsOpen={refreshMicrophones}
         onSystemAudioChange={setSelectedSystemAudio}
+        onSystemAudioOptionsOpen={refreshAudioSources}
         selectedCamera={selectedCamera}
         selectedMicrophone={selectedMicrophone}
         selectedSystemAudio={selectedSystemAudio}
         standalone
         systemAudioDecibels={systemAudioPreview.decibels}
-        systemAudioEnabled={inputs.systemAudio}
         systemAudioPeak={systemAudioPreview.peak}
+        systemAudioPreviewEnabled={
+          previewsAllSystemAudio || selectedApplicationIds.length > 0
+        }
       />
     </div>
   );

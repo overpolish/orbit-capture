@@ -21,6 +21,7 @@ type StandaloneMultiSelectProps = {
   placeholder: string;
   selectedIds: string[];
   leftSection?: ReactNode;
+  onOpen?: () => Promise<StandaloneListboxItem[]>;
 };
 
 export function StandaloneMultiSelect({
@@ -29,6 +30,7 @@ export function StandaloneMultiSelect({
   items,
   label,
   leftSection,
+  onOpen,
   onSelectionChange,
   placeholder,
   selectedIds,
@@ -75,12 +77,13 @@ export function StandaloneMultiSelect({
     if (!trigger) return;
 
     const bounds = trigger.getBoundingClientRect();
-    const height = initialStandaloneListboxHeight(items.length);
+    const currentItems = onOpen ? await onOpen() : items;
+    const height = initialStandaloneListboxHeight(currentItems.length);
 
     open({
       exclusiveId,
       id,
-      items,
+      items: currentItems,
       label,
       selectedIds,
       selectionMode: "multiple",

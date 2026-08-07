@@ -7,6 +7,10 @@ import { synchronizeSystemTheme } from "./lib/theme";
 
 synchronizeSystemTheme();
 
+if (navigator.userAgent.includes("Windows")) {
+  document.documentElement.dataset.platform = "windows";
+}
+
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
     <App />

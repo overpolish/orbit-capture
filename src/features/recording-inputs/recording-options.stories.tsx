@@ -25,13 +25,16 @@ const audioSources: SystemAudioSource[] = [
 
 function StatefulOptions(props: RecordingOptionsProps) {
   const [camera, setCamera] = useState(props.selectedCamera);
+  const [cameraFlipped, setCameraFlipped] = useState(props.cameraFlipped);
   const [microphone, setMicrophone] = useState(props.selectedMicrophone);
   const [systemAudio, setSystemAudio] = useState(props.selectedSystemAudio);
 
   return (
     <RecordingOptions
       {...props}
+      cameraFlipped={cameraFlipped}
       onCameraChange={setCamera}
+      onCameraFlippedChange={setCameraFlipped}
       onMicrophoneChange={setMicrophone}
       onSystemAudioChange={setSystemAudio}
       selectedCamera={camera}
@@ -44,13 +47,12 @@ function StatefulOptions(props: RecordingOptionsProps) {
 const meta = {
   args: {
     audioSources,
-    cameraEnabled: true,
     cameraLocked: false,
     cameras,
     microphoneDecibels: -18,
-    microphoneEnabled: true,
     microphoneLocked: false,
     microphonePeak: -8,
+    microphonePreviewEnabled: true,
     microphones,
     onCameraChange: () => undefined,
     onMicrophoneChange: () => undefined,
@@ -60,8 +62,8 @@ const meta = {
     selectedSystemAudio: [ALL_SYSTEM_AUDIO],
     standalone: false,
     systemAudioDecibels: -24,
-    systemAudioEnabled: true,
     systemAudioPeak: -12,
+    systemAudioPreviewEnabled: true,
   },
   component: RecordingOptions,
   parameters: {
@@ -76,11 +78,14 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
 
+export const CameraFlipped: Story = {
+  args: { cameraFlipped: true },
+};
+
 export const InputsDisabled: Story = {
   args: {
-    cameraEnabled: false,
-    microphoneEnabled: false,
-    systemAudioEnabled: false,
+    microphonePreviewEnabled: false,
+    systemAudioPreviewEnabled: false,
   },
 };
 

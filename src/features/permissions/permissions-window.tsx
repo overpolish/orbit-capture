@@ -21,7 +21,7 @@ export function PermissionsWindow() {
     permissions.accessibility.granted && permissions.screenRecording.granted;
 
   return (
-    <main className="min-h-screen overflow-hidden rounded-[10px] bg-content/92 p-8">
+    <main className="window-surface min-h-screen overflow-hidden rounded-[10px] bg-content/92 p-8">
       <div className="mb-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <img

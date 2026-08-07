@@ -8,7 +8,10 @@ import { ListBoxItem } from "../../components/base/listbox-item/listbox-item";
 import { OverflowShadow } from "../../components/base/overflow-shadow/overflow-shadow";
 
 import { hideStandaloneListbox } from "./api";
-import { standaloneListboxMaxHeight } from "./layout";
+import {
+  emptyStandaloneListboxHeight,
+  standaloneListboxMaxHeight,
+} from "./layout";
 import { useStandaloneListboxStore } from "./store";
 
 export function StandaloneListboxWindow() {
@@ -25,10 +28,13 @@ export function StandaloneListboxWindow() {
     const resize = async () => {
       const scaleFactor = await window.scaleFactor();
       const currentSize = (await window.innerSize()).toLogical(scaleFactor);
-      const height = Math.min(
-        listboxRef.current?.scrollHeight ?? currentSize.height,
-        standaloneListboxMaxHeight,
-      );
+      const height =
+        active.items.length === 0
+          ? emptyStandaloneListboxHeight
+          : Math.min(
+              listboxRef.current?.scrollHeight ?? currentSize.height,
+              standaloneListboxMaxHeight,
+            );
       await window.setSize(new LogicalSize(currentSize.width, height));
     };
 
@@ -36,6 +42,17 @@ export function StandaloneListboxWindow() {
   }, [active]);
 
   if (!active) return null;
+
+  if (active.items.length === 0) {
+    return (
+      <div
+        className="window-surface flex h-full min-h-16 w-full items-center justify-center rounded-[10px] px-3 text-center text-xs text-muted"
+        ref={listboxRef}
+      >
+        No options available
+      </div>
+    );
+  }
 
   const selectItem = (selectedId: number | string) => {
     if (selectingRef.current) return;
@@ -78,10 +95,10 @@ export function StandaloneListboxWindow() {
   };
 
   return (
-    <OverflowShadow shadowRadius="md">
+    <OverflowShadow rootClassName="window-surface" shadowRadius="md">
       <ListBox
         aria-label={active.label}
-        className="w-full overflow-visible rounded-[10px]"
+        className="window-surface w-full overflow-visible rounded-[10px]"
         onSelectionChange={onSelectionChange}
         ref={listboxRef}
         selectedKeys={active.selectedIds}

@@ -20,6 +20,7 @@ type StandaloneSelectProps = {
   placeholder: string;
   selectedId: string | null;
   leftSection?: ReactNode;
+  onOpen?: () => Promise<StandaloneListboxItem[]>;
 };
 
 export function StandaloneSelect({
@@ -27,6 +28,7 @@ export function StandaloneSelect({
   items,
   label,
   leftSection,
+  onOpen,
   onSelectionChange,
   placeholder,
   selectedId,
@@ -63,11 +65,12 @@ export function StandaloneSelect({
     if (!trigger) return;
 
     const bounds = trigger.getBoundingClientRect();
-    const height = initialStandaloneListboxHeight(items.length);
+    const currentItems = onOpen ? await onOpen() : items;
+    const height = initialStandaloneListboxHeight(currentItems.length);
 
     open({
       id,
-      items,
+      items: currentItems,
       label,
       selectedIds: selectedId ? [selectedId] : [],
       selectionMode: "single",

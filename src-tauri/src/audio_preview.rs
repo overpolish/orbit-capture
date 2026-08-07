@@ -9,6 +9,8 @@ use tauri::{ipc::Channel, AppHandle, Manager};
 
 #[cfg(target_os = "macos")]
 mod platform;
+#[cfg(target_os = "windows")]
+mod platform_windows;
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +39,10 @@ enum SystemAudioPreview {
   #[cfg(target_os = "macos")]
   ScreenCaptureKit {
     _preview: platform::FilteredAudioPreview,
+  },
+  #[cfg(target_os = "windows")]
+  WasapiProcessLoopback {
+    _preview: platform_windows::ProcessLoopbackPreview,
   },
 }
 
@@ -203,6 +209,7 @@ pub async fn start_audio_preview(
   kind: AudioPreviewKind,
   device_id: Option<String>,
   application_ids: Option<Vec<String>>,
+  process_ids: Option<Vec<u32>>,
   channel: Channel<AudioPreviewEvent>,
 ) -> Result<(), String> {
   match kind {
@@ -228,7 +235,21 @@ pub async fn start_audio_preview(
           _preview: platform::start_filtered_audio_preview(application_ids, channel).await?,
         }
       };
-      #[cfg(not(target_os = "macos"))]
+      #[cfg(target_os = "windows")]
+      let stream = if application_ids.is_empty() {
+        let (device, config, sample_format) = system_audio()?;
+        SystemAudioPreview::Cpal {
+          _stream: build_stream(&device, &config, sample_format, channel)?,
+        }
+      } else {
+        SystemAudioPreview::WasapiProcessLoopback {
+          _preview: platform_windows::start_process_loopback_preview(
+            process_ids.unwrap_or_default(),
+            channel,
+          )?,
+        }
+      };
+      #[cfg(not(any(target_os = "macos", target_os = "windows")))]
       let stream = {
         if !application_ids.is_empty() {
           return Err("Application audio preview is not yet available on this platform".into());
