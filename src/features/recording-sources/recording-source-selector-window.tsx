@@ -156,7 +156,12 @@ export function RecordingSourceSelectorWindow() {
           </span>
           <ChevronDown
             aria-hidden
-            className={placement === "below" ? "rotate-180" : undefined}
+            className={`transform-gpu transition-transform duration-200 ${
+              (isExpanded && placement === "below") ||
+              (!isExpanded && placement === "above")
+                ? "rotate-180"
+                : "rotate-0"
+            }`}
             size={12}
           />
         </Button>
