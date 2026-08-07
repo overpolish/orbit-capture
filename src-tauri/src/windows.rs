@@ -12,6 +12,7 @@ mod platform;
 
 #[derive(Clone, Copy)]
 pub enum WindowLabel {
+  #[cfg(target_os = "macos")]
   Permissions,
   RecordingBar,
   RecordingSourceSelector,
@@ -20,6 +21,7 @@ pub enum WindowLabel {
 impl WindowLabel {
   pub const fn as_str(self) -> &'static str {
     match self {
+      #[cfg(target_os = "macos")]
       Self::Permissions => "permissions",
       Self::RecordingBar => "recording-bar",
       Self::RecordingSourceSelector => "recording-source-selector",
@@ -27,6 +29,7 @@ impl WindowLabel {
   }
 }
 
+#[cfg(target_os = "macos")]
 pub fn get_or_create<F>(
   app: &AppHandle,
   label: WindowLabel,
@@ -126,10 +129,10 @@ const SELECTOR_EXPANDED_WIDTH: f64 = 500.0;
 const SELECTOR_EXPANDED_HEIGHT: f64 = 250.0;
 const SELECTOR_GAP: f64 = 6.0;
 const ANIMATION_STEPS: u64 = 18;
-const BAR_DRAG_SETTLE_DELAY: Duration = Duration::from_millis(200);
 static SELECTOR_ANIMATION: AtomicU64 = AtomicU64::new(0);
-static BAR_MOVE_SETTLE: AtomicU64 = AtomicU64::new(0);
 static SELECTOR_EXPANDED: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "windows")]
+static BAR_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -178,6 +181,9 @@ fn selector_frames(
     SelectorPlacement::Below
   };
   let center_x = (bar_left + bar_right) / 2.0;
+  #[cfg(target_os = "windows")]
+  let expanded_x = bar_left.clamp(monitor_position.x, monitor_right - expanded_width);
+  #[cfg(not(target_os = "windows"))]
   let expanded_x =
     (center_x - expanded_width / 2.0).clamp(monitor_position.x, monitor_right - expanded_width);
   let collapsed_x =
@@ -330,19 +336,42 @@ pub fn manage_recording_bar_movement(app: &AppHandle) {
     }
 
     let _ = reposition_recording_source_selector(&app);
-    let settle = BAR_MOVE_SETTLE.fetch_add(1, Ordering::Relaxed) + 1;
-    let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-      std::thread::sleep(BAR_DRAG_SETTLE_DELAY);
-      if BAR_MOVE_SETTLE.load(Ordering::Relaxed) != settle {
-        return;
-      }
 
-      let _ = contain_recording_bar(&app);
-      let _ = reposition_recording_source_selector(&app);
-      let _ = app.save_window_state(StateFlags::POSITION);
-    });
+    #[cfg(target_os = "windows")]
+    watch_for_recording_bar_mouse_up(app.clone());
   });
+}
+
+#[cfg(target_os = "windows")]
+fn watch_for_recording_bar_mouse_up(app: AppHandle) {
+  use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+
+  if BAR_DRAG_ACTIVE.swap(true, Ordering::Relaxed) {
+    return;
+  }
+
+  tauri::async_runtime::spawn_blocking(move || {
+    loop {
+      let is_pressed = unsafe { GetAsyncKeyState(VK_LBUTTON.0.into()) } < 0;
+      if !is_pressed {
+        break;
+      }
+      std::thread::sleep(Duration::from_millis(8));
+    }
+
+    let _ = finish_recording_bar_drag(app);
+    BAR_DRAG_ACTIVE.store(false, Ordering::Relaxed);
+  });
+}
+
+#[tauri::command]
+pub fn finish_recording_bar_drag(app: AppHandle) -> Result<(), String> {
+  contain_recording_bar(&app).map_err(|error| error.to_string())?;
+  reposition_recording_source_selector(&app).map_err(|error| error.to_string())?;
+  app
+    .save_window_state(StateFlags::POSITION)
+    .map_err(|error| error.to_string())?;
+  Ok(())
 }
 
 #[tauri::command]
@@ -394,7 +423,10 @@ pub fn show_recording_ui(app: &AppHandle) -> tauri::Result<()> {
     .get_webview_window(WindowLabel::RecordingSourceSelector.as_str())
     .ok_or_else(|| tauri::Error::WindowNotFound)?;
   let (placement, collapsed, _) = selector_frames(app)?;
+  #[cfg(target_os = "macos")]
   let positioning = SELECTOR_ANIMATION.fetch_add(1, Ordering::Relaxed) + 1;
+  #[cfg(not(target_os = "macos"))]
+  SELECTOR_ANIMATION.fetch_add(1, Ordering::Relaxed);
   SELECTOR_EXPANDED.store(false, Ordering::Relaxed);
   selector.set_size(collapsed.size)?;
   selector.set_position(collapsed.position)?;
@@ -405,10 +437,12 @@ pub fn show_recording_ui(app: &AppHandle) -> tauri::Result<()> {
     placement,
   )?;
 
-  // A hidden window can still report the scale factor of the monitor it was
+  // A hidden macOS window can still report the scale factor of the monitor it was
   // last on. Reapply after AppKit has moved it to the bar's monitor so mixed-
   // DPI launches settle at the exact logical position.
+  #[cfg(target_os = "macos")]
   let app = app.clone();
+  #[cfg(target_os = "macos")]
   tauri::async_runtime::spawn_blocking(move || {
     std::thread::sleep(Duration::from_millis(75));
     if SELECTOR_ANIMATION.load(Ordering::Relaxed) != positioning {

@@ -3,15 +3,20 @@ mod models;
 #[cfg(target_os = "macos")]
 mod window;
 
-use std::collections::HashSet;
-use std::sync::{Mutex, RwLock};
+use std::sync::RwLock;
+#[cfg(target_os = "macos")]
+use std::{collections::HashSet, sync::Mutex};
 
 use models::{PermissionKind, PermissionSnapshot};
-use tauri::{AppHandle, Emitter, Manager, State};
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
+use tauri::{AppHandle, Manager, State};
 
+#[cfg(target_os = "macos")]
 const PERMISSIONS_CHANGED_EVENT: &str = "permissions://changed";
 
 pub struct PermissionState {
+  #[cfg(target_os = "macos")]
   requested: Mutex<HashSet<PermissionKind>>,
   snapshot: RwLock<PermissionSnapshot>,
 }
@@ -19,6 +24,7 @@ pub struct PermissionState {
 impl Default for PermissionState {
   fn default() -> Self {
     Self {
+      #[cfg(target_os = "macos")]
       requested: Mutex::default(),
       snapshot: RwLock::new(if cfg!(target_os = "macos") {
         PermissionSnapshot::unavailable()

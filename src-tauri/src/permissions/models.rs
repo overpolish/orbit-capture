@@ -57,6 +57,7 @@ impl PermissionSnapshot {
     }
   }
 
+  #[cfg(target_os = "macos")]
   pub fn has_required_recording_permissions(&self) -> bool {
     self.accessibility.granted && self.screen_recording.granted
   }

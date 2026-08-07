@@ -1,6 +1,7 @@
 import { usePermissionStore } from "../../permissions/store";
 import {
   collapseRecordingSourceSelector,
+  finishRecordingBarDrag,
   hideRecordingUi,
 } from "../../recording-sources/api";
 
@@ -23,6 +24,9 @@ export function RecordingBarWindow() {
       }}
       onInteract={() => {
         void collapseRecordingSourceSelector();
+      }}
+      onPointerUp={() => {
+        void finishRecordingBarDrag();
       }}
     />
   );

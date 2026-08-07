@@ -2801,6 +2801,7 @@ dependencies = [
  "tauri-plugin-macos-permissions",
  "tauri-plugin-window-state",
  "tokio",
+ "windows 0.61.3",
  "xcap",
 ]
 

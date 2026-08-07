@@ -10,4 +10,7 @@ export const toggleRecordingSourceSelector = () =>
 export const collapseRecordingSourceSelector = () =>
   invoke<null>("collapse_recording_source_selector");
 
+export const finishRecordingBarDrag = () =>
+  invoke<null>("finish_recording_bar_drag");
+
 export const hideRecordingUi = () => invoke<null>("hide_recording_ui");

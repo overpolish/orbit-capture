@@ -30,6 +30,7 @@ pub fn run() {
       permissions::restart_app,
       recording_sources::list_monitors,
       windows::collapse_recording_source_selector,
+      windows::finish_recording_bar_drag,
       windows::hide_recording_ui,
       windows::toggle_recording_source_selector,
     ])

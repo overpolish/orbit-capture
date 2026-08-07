@@ -45,6 +45,7 @@ type RecordingBarProps = {
   onCancel?: () => void;
   onInteract?: () => void;
   onOptions?: () => void;
+  onPointerUp?: () => void;
   onRecord?: () => void;
 };
 
@@ -112,6 +113,7 @@ export function RecordingBar({
   onCancel,
   onInteract,
   onOptions,
+  onPointerUp,
   onRecord,
 }: RecordingBarProps) {
   const [mode, setMode] = useState<RecordingMode>(initialMode);
@@ -135,6 +137,7 @@ export function RecordingBar({
       className="fixed inset-0 flex items-center justify-center overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg"
       data-tauri-drag-region="deep"
       onPointerDownCapture={onInteract}
+      onPointerUpCapture={onPointerUp}
     >
       <Overlay blur="sm" className="rounded-[10px]" isOpen={isLocked}>
         <Lock />
