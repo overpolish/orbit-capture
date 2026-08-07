@@ -5,6 +5,7 @@ import {
   CameraOff,
   Circle,
   CircleX,
+  ImageDown,
   Lock,
   Mic,
   MicOff,
@@ -41,12 +42,16 @@ type RecordingBarProps = {
   isCameraLocked?: boolean;
   isLocked?: boolean;
   isMicrophoneLocked?: boolean;
+  mode?: RecordingMode;
+  onCameraLockedPress?: () => void;
   onCancel?: () => void;
   onInteract?: () => void;
+  onMicrophoneLockedPress?: () => void;
   onModeChange?: (mode: RecordingMode) => void;
   onOptions?: () => void;
   onPointerUp?: () => void;
   onRecord?: () => void;
+  onScreenshot?: () => void;
 };
 
 const defaultInputs: RecordingInputs = {
@@ -110,37 +115,49 @@ export function RecordingBar({
   isCameraLocked,
   isLocked,
   isMicrophoneLocked,
+  mode: controlledMode,
+  onCameraLockedPress,
   onCancel,
   onInteract,
+  onMicrophoneLockedPress,
   onModeChange,
   onOptions,
   onPointerUp,
   onRecord,
+  onScreenshot,
 }: RecordingBarProps) {
-  const [mode, setMode] = useState<RecordingMode>(initialMode);
+  const [uncontrolledMode, setUncontrolledMode] =
+    useState<RecordingMode>(initialMode);
   const [inputs, setInputs] = useState<RecordingInputs>({
     ...defaultInputs,
     ...initialInputs,
   });
+
+  const mode = controlledMode ?? uncontrolledMode;
 
   const setInput = (input: keyof RecordingInputs, selected: boolean) => {
     setInputs((current) => ({ ...current, [input]: selected }));
   };
 
   const isAudioOnly = mode === "audio";
-  const canRecord =
-    !isAudioOnly ||
-    inputs.systemAudio ||
-    (inputs.microphone && !isMicrophoneLocked);
+  const isCameraOnly = mode === "camera";
+  const isScreenCapture = ["screen", "region", "window"].includes(mode);
+  const canRecord = isAudioOnly
+    ? inputs.systemAudio || (inputs.microphone && !isMicrophoneLocked)
+    : !isCameraOnly || (inputs.camera && !isCameraLocked);
 
   return (
     <main
-      className="fixed inset-0 flex items-center justify-center overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg"
+      className="flex h-full min-h-[92px] w-full min-w-[628px] items-center justify-center overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg"
       data-tauri-drag-region="deep"
       onPointerDownCapture={onInteract}
       onPointerUpCapture={onPointerUp}
     >
-      <Overlay blur="sm" className="rounded-[10px]" isOpen={isLocked}>
+      <Overlay
+        blur="sm"
+        className="rounded-[10px]"
+        isOpen={isLocked && isScreenCapture}
+      >
         <Lock />
       </Overlay>
 
@@ -159,10 +176,12 @@ export function RecordingBar({
 
       <RadioGroup
         aria-label="Recording type"
-        className="min-w-0 grow"
+        className="min-w-0 grow pr-2"
         onChange={(value) => {
           const nextMode = value as RecordingMode;
-          setMode(nextMode);
+          if (controlledMode === undefined) {
+            setUncontrolledMode(nextMode);
+          }
           onModeChange?.(nextMode);
         }}
         orientation="horizontal"
@@ -185,6 +204,12 @@ export function RecordingBar({
           icon={<AppWindowMac size={30} />}
           subtext="Window"
           value="window"
+        />
+        <IconRadio
+          aria-label="Camera only"
+          icon={<Camera size={30} />}
+          subtext="Camera"
+          value="camera"
         />
         <IconRadio
           aria-label="Audio only"
@@ -216,7 +241,7 @@ export function RecordingBar({
             onChange={(selected) => {
               setInput("microphone", selected);
             }}
-            onLockedPress={onOptions}
+            onLockedPress={onMicrophoneLockedPress}
           />
           <InputToggle
             isDisabled={isAudioOnly}
@@ -228,11 +253,11 @@ export function RecordingBar({
             onChange={(selected) => {
               setInput("camera", selected);
             }}
-            onLockedPress={onOptions}
+            onLockedPress={onCameraLockedPress}
           />
           <InputToggle
-            isDisabled={isAudioOnly}
-            isSelected={!isAudioOnly && inputs.showCursor}
+            isDisabled={!isScreenCapture}
+            isSelected={isScreenCapture && inputs.showCursor}
             label="Show cursor"
             off={<MousePointer2Off size={16} />}
             on={<MousePointer2 size={16} />}
@@ -252,6 +277,20 @@ export function RecordingBar({
           Options
         </Button>
       </div>
+
+      <Button
+        aria-label="Take screenshot"
+        className="group self-stretch cursor-default"
+        isDisabled={!isScreenCapture || isLocked}
+        onPress={onScreenshot}
+        showFocus={false}
+        variant="ghost"
+      >
+        <ImageDown
+          className="origin-center transform-gpu backface-hidden will-change-transform transition-transform group-data-[hovered]:scale-110"
+          size={40}
+        />
+      </Button>
 
       <Sparkles
         icon={Sparkle}

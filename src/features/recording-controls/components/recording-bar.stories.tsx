@@ -41,6 +41,18 @@ export const Window: Story = {
   args: { initialMode: "window" },
 };
 
+export const CameraOnly: Story = {
+  args: { initialMode: "camera" },
+};
+
+export const CameraOnlyEnabled: Story = {
+  args: { initialInputs: { camera: true }, initialMode: "camera" },
+};
+
+export const CameraOnlyPermissionLocked: Story = {
+  args: { initialMode: "camera", isCameraLocked: true },
+};
+
 export const AudioOnlyDisabled: Story = {
   args: { initialMode: "audio" },
 };

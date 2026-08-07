@@ -17,7 +17,7 @@ export type Region = {
   size: { height: number; width: number };
 };
 
-export type RecordingMode = "screen" | "region" | "window" | "audio";
+export type RecordingMode = "screen" | "region" | "window" | "camera" | "audio";
 
 export type SelectorPlacement = "above" | "below";
 

@@ -5,7 +5,8 @@ use tauri::Manager;
 
 #[cfg(target_os = "macos")]
 use tauri_nspanel::{
-  tauri_panel, CollectionBehavior, PanelLevel, StyleMask, TrackingAreaOptions, WebviewWindowExt,
+  tauri_panel, CollectionBehavior, ManagerExt as PanelManagerExt, PanelHandle, PanelLevel,
+  StyleMask, TrackingAreaOptions, WebviewWindowExt,
 };
 
 #[cfg(target_os = "macos")]
@@ -57,6 +58,14 @@ fn configure_panel<T: tauri_nspanel::FromWindow<tauri::Wry> + 'static>(
 }
 
 #[cfg(target_os = "macos")]
+fn registered_panel(window: &WebviewWindow) -> tauri::Result<PanelHandle<tauri::Wry>> {
+  window
+    .app_handle()
+    .get_webview_panel(window.label())
+    .map_err(|_| tauri::Error::WindowNotFound)
+}
+
+#[cfg(target_os = "macos")]
 pub fn initialize_recording_bar(window: &WebviewWindow) -> tauri::Result<()> {
   configure_panel::<RecordingBarPanel>(window, 28)
 }
@@ -73,31 +82,82 @@ pub fn initialize_region_selector(window: &WebviewWindow) -> tauri::Result<()> {
 
 #[cfg(target_os = "macos")]
 pub fn set_opacity(window: &WebviewWindow, opacity: f64) -> tauri::Result<()> {
-  let panel = window.to_panel::<RecordingBarPanel>()?;
-  panel.set_alpha_value(opacity);
-  Ok(())
+  let panel = registered_panel(window)?;
+  let app = window.app_handle().clone();
+  app.run_on_main_thread(move || panel.set_alpha_value(opacity))
 }
 
 #[cfg(target_os = "macos")]
 pub fn resign_key(window: &WebviewWindow) -> tauri::Result<()> {
-  let panel = window.to_panel::<RecordingBarPanel>()?;
+  let panel = registered_panel(window)?;
   panel.resign_key_window();
   Ok(())
 }
 
+#[cfg(target_os = "macos")]
+pub fn restore_recording_level(window: &WebviewWindow) -> tauri::Result<()> {
+  let level = match window.label() {
+    "region-selector" => 27,
+    "recording-bar" => 28,
+    "recording-source-selector" => 29,
+    _ => return Ok(()),
+  };
+  let panel = registered_panel(window)?;
+  panel.set_level(PanelLevel::Custom(level).value());
+  Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn raise_without_activation(window: &WebviewWindow) -> tauri::Result<()> {
+  registered_panel(window)?.show();
+  restore_recording_level(window)
+}
+
+#[cfg(target_os = "macos")]
+pub fn hide(window: &WebviewWindow) -> tauri::Result<()> {
+  window.set_ignore_cursor_events(true)?;
+  let panel = registered_panel(window)?;
+  let window = window.clone();
+  let app = window.app_handle().clone();
+  app.run_on_main_thread(move || {
+    panel.set_alpha_value(0.0);
+    let _ = window.hide();
+    panel.hide();
+  })
+}
+
+#[cfg(target_os = "macos")]
+pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
+  window.set_ignore_cursor_events(false)?;
+  let panel = registered_panel(window)?;
+  let app = window.app_handle().clone();
+  app.run_on_main_thread(move || {
+    panel.set_alpha_value(1.0);
+    panel.show();
+  })
+}
+
 #[cfg(target_os = "windows")]
 pub fn initialize_recording_bar(window: &WebviewWindow) -> tauri::Result<()> {
+  window.set_always_on_top(true)?;
   window.set_skip_taskbar(true)
 }
 
 #[cfg(target_os = "windows")]
 pub fn initialize_recording_source_selector(window: &WebviewWindow) -> tauri::Result<()> {
+  window.set_always_on_top(true)?;
   window.set_skip_taskbar(true)
 }
 
 #[cfg(target_os = "windows")]
 pub fn initialize_region_selector(window: &WebviewWindow) -> tauri::Result<()> {
+  window.set_always_on_top(true)?;
   window.set_skip_taskbar(true)
+}
+
+#[cfg(target_os = "windows")]
+pub fn restore_recording_level(_window: &WebviewWindow) -> tauri::Result<()> {
+  Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -145,6 +205,16 @@ pub fn raise_without_activation(window: &WebviewWindow) -> tauri::Result<()> {
   Ok(())
 }
 
+#[cfg(target_os = "windows")]
+pub fn hide(window: &WebviewWindow) -> tauri::Result<()> {
+  window.hide()
+}
+
+#[cfg(target_os = "windows")]
+pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
+  window.show()
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn initialize_recording_bar(_window: &WebviewWindow) -> tauri::Result<()> {
   Ok(())
@@ -161,6 +231,26 @@ pub fn initialize_region_selector(_window: &WebviewWindow) -> tauri::Result<()> 
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn hide(window: &WebviewWindow) -> tauri::Result<()> {
+  window.hide()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
+  window.show()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn set_opacity(_window: &WebviewWindow, _opacity: f64) -> tauri::Result<()> {
+  Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn restore_recording_level(_window: &WebviewWindow) -> tauri::Result<()> {
+  Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn raise_without_activation(_window: &WebviewWindow) -> tauri::Result<()> {
   Ok(())
 }

@@ -145,6 +145,8 @@ const SELECTOR_GAP: f64 = 6.0;
 const ANIMATION_STEPS: u64 = 18;
 static SELECTOR_ANIMATION: AtomicU64 = AtomicU64::new(0);
 static SELECTOR_EXPANDED: AtomicBool = AtomicBool::new(false);
+static SELECTOR_VISIBLE: AtomicBool = AtomicBool::new(true);
+static RECORDING_CONTROLS_VISIBLE: AtomicBool = AtomicBool::new(true);
 static WINDOW_SELECTOR_ACTIVE: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static BAR_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -356,7 +358,7 @@ pub fn toggle_recording_source_selector(
   if !window.is_visible()? {
     window.set_size(collapsed.size)?;
     window.set_position(collapsed.position)?;
-    window.show()?;
+    platform::show(&window)?;
   }
   SELECTOR_EXPANDED.store(true, Ordering::Relaxed);
   app.emit_to(
@@ -548,7 +550,8 @@ fn show_recording_source_selector(app: &AppHandle) -> tauri::Result<()> {
   SELECTOR_EXPANDED.store(false, Ordering::Relaxed);
   selector.set_size(collapsed.size)?;
   selector.set_position(collapsed.position)?;
-  selector.show()?;
+  platform::show(&selector)?;
+  platform::restore_recording_level(&selector)?;
   app.emit_to(
     WindowLabel::RecordingSourceSelector.as_str(),
     "recording-source-selector://collapsed",
@@ -578,13 +581,18 @@ fn show_recording_source_selector(app: &AppHandle) -> tauri::Result<()> {
 
 #[tauri::command]
 pub fn set_recording_source_selector_visible(app: AppHandle, visible: bool) -> tauri::Result<()> {
+  SELECTOR_VISIBLE.store(visible, Ordering::Relaxed);
   if visible {
-    show_recording_source_selector(&app)
+    if RECORDING_CONTROLS_VISIBLE.load(Ordering::Relaxed) {
+      show_recording_source_selector(&app)
+    } else {
+      Ok(())
+    }
   } else {
     SELECTOR_ANIMATION.fetch_add(1, Ordering::Relaxed);
     SELECTOR_EXPANDED.store(false, Ordering::Relaxed);
     if let Some(selector) = app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str()) {
-      selector.hide()?;
+      platform::hide(&selector)?;
     }
     Ok(())
   }
@@ -602,9 +610,25 @@ pub fn show_region_selector(
   region.set_size(size)?;
   region.set_position(position)?;
   region.show()?;
+  platform::restore_recording_level(&region)?;
 
-  #[cfg(target_os = "windows")]
   raise_recording_controls(&app)?;
+
+  #[cfg(target_os = "macos")]
+  tauri::async_runtime::spawn_blocking(move || {
+    // AppKit completes showing a previously hidden panel asynchronously and
+    // can order it above panels raised in the same run-loop turn.
+    std::thread::sleep(Duration::from_millis(75));
+    let ordering_app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+      let Some(region) = ordering_app.get_webview_window(WindowLabel::RegionSelector.as_str())
+      else {
+        return;
+      };
+      let _ = platform::restore_recording_level(&region);
+      let _ = raise_recording_controls(&ordering_app);
+    });
+  });
 
   Ok(())
 }
@@ -617,14 +641,17 @@ pub fn hide_region_selector(app: AppHandle) -> tauri::Result<()> {
   set_recording_controls_opacity(app, 1.0)
 }
 
-#[cfg(target_os = "windows")]
 fn raise_recording_controls(app: &AppHandle) -> tauri::Result<()> {
-  for label in [
-    WindowLabel::RecordingBar,
-    WindowLabel::RecordingSourceSelector,
-  ] {
-    if let Some(window) = app.get_webview_window(label.as_str()) {
-      platform::raise_without_activation(&window)?;
+  if !RECORDING_CONTROLS_VISIBLE.load(Ordering::Relaxed) {
+    return Ok(());
+  }
+
+  if let Some(bar) = app.get_webview_window(WindowLabel::RecordingBar.as_str()) {
+    platform::raise_without_activation(&bar)?;
+  }
+  if SELECTOR_VISIBLE.load(Ordering::Relaxed) {
+    if let Some(selector) = app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str()) {
+      platform::raise_without_activation(&selector)?;
     }
   }
   Ok(())
@@ -643,7 +670,6 @@ pub fn set_region_selector_passthrough(app: AppHandle, passthrough: bool) -> tau
     region.set_focus()?;
   }
 
-  #[cfg(target_os = "windows")]
   if passthrough {
     raise_recording_controls(&app)?;
   }
@@ -661,16 +687,17 @@ pub fn set_region_selector_opacity(app: AppHandle, opacity: f64) -> tauri::Resul
 
 #[tauri::command]
 pub fn set_recording_controls_opacity(app: AppHandle, opacity: f64) -> tauri::Result<()> {
-  for label in [
-    WindowLabel::RecordingBar,
-    WindowLabel::RecordingSourceSelector,
-  ] {
-    if let Some(window) = app.get_webview_window(label.as_str()) {
-      platform::set_opacity(&window, opacity)?;
+  RECORDING_CONTROLS_VISIBLE.store(opacity > 0.0, Ordering::Relaxed);
+
+  if let Some(bar) = app.get_webview_window(WindowLabel::RecordingBar.as_str()) {
+    platform::set_opacity(&bar, opacity)?;
+  }
+  if SELECTOR_VISIBLE.load(Ordering::Relaxed) {
+    if let Some(selector) = app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str()) {
+      platform::set_opacity(&selector, opacity)?;
     }
   }
   if opacity > 0.0 {
-    #[cfg(target_os = "windows")]
     raise_recording_controls(&app)?;
   } else {
     let _ = collapse_recording_source_selector(app.clone());
@@ -721,8 +748,16 @@ pub fn show_recording_ui(app: &AppHandle) -> tauri::Result<()> {
     .get_webview_window(WindowLabel::RecordingBar.as_str())
     .ok_or_else(|| tauri::Error::WindowNotFound)?;
   show(&bar, false)?;
+  platform::restore_recording_level(&bar)?;
 
-  show_recording_source_selector(app)
+  if SELECTOR_VISIBLE.load(Ordering::Relaxed) {
+    show_recording_source_selector(app)?;
+  }
+  app.emit_to(
+    WindowLabel::RecordingBar.as_str(),
+    "recording-ui://shown",
+    (),
+  )
 }
 
 pub fn hide_instead_of_close(app: &AppHandle, label: WindowLabel) {
