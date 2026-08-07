@@ -1,0 +1,10 @@
+html,
+body {
+  background-color: var(--color-content);
+  border-radius: 0;
+}
+
+.dark body,
+.dark .docs-story {
+  background-color: var(--color-neutral-800);
+}

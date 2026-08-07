@@ -1,0 +1,102 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/inter/standard.css";
+@import "@fontsource-variable/inter/standard-italic.css";
+@import "overlayscrollbars/styles/overlayscrollbars.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --font-sans:
+    "Inter Variable", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  --text-xxs: 0.6125rem;
+  --text-xxs--line-height: calc(1 / 0.6125);
+
+  --animate-gradient: gradient 10s ease-in-out infinite;
+
+  @keyframes gradient {
+    0% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
+    }
+  }
+
+  --blur-xs: 2px;
+  --blur-sm: 3px;
+  --blur-md: 4px;
+  --blur-lg: 5px;
+
+  --inset-shadow-full: inset 0 0 8px rgb(0 0 0 / 25%);
+
+  --color-content: white;
+  --color-content-fg: var(--color-neutral-800);
+
+  --color-neutral: var(--color-neutral-200);
+  --color-neutral-100: var(--color-neutral-300);
+
+  --color-success: var(--color-green-600);
+  --color-info: var(--color-sky-600);
+  --color-warning: var(--color-yellow-500);
+  --color-warning-100: var(--color-orange-400);
+  --color-error: var(--color-red-500);
+
+  --color-muted: var(--color-neutral-700);
+}
+
+@layer themes {
+  .dark {
+    --color-content: var(--color-neutral-800);
+    --color-content-fg: white;
+
+    --color-neutral: var(--color-neutral-700);
+    --color-neutral-100: var(--color-neutral-600);
+
+    --color-success: var(--color-green-600);
+    --color-info: var(--color-sky-500);
+    --color-warning: var(--color-yellow-500);
+    --color-warning-100: var(--color-orange-400);
+    --color-error: var(--color-red-500);
+
+    --color-muted: var(--color-neutral-400);
+  }
+}
+
+html,
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.os-theme-orbit-capture {
+  --os-size: 10px;
+  --os-padding-perpendicular: 2px;
+  --os-padding-axis: 2px;
+  --os-track-border-radius: 10px;
+  --os-handle-interactive-area-offset: 4px;
+  --os-handle-border-radius: 10px;
+  --os-handle-bg: var(--color-muted);
+  --os-handle-bg-hover: var(--color-content-fg);
+  --os-handle-bg-active: var(--color-content-fg);
+}

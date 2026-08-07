@@ -9,10 +9,19 @@ import sortDestructureKeys from "eslint-plugin-sort-destructure-keys";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
-const frontendFiles = ["src/**/*.{ts,tsx}", "*.config.ts"];
+const frontendFiles = [
+  ".storybook/**/*.ts",
+  "src/**/*.{ts,tsx}",
+  "*.config.ts",
+];
 
 export default defineConfig([
-  globalIgnores(["dist/**", "node_modules/**", "src-tauri/**"]),
+  globalIgnores([
+    "dist/**",
+    "node_modules/**",
+    "src-tauri/**",
+    "storybook-static/**",
+  ]),
   {
     extends: [eslint.configs.recommended],
     files: ["**/*.{js,mjs,cjs,ts,jsx,tsx}"],
@@ -124,7 +133,13 @@ export default defineConfig([
     files: ["src/**/*.{ts,tsx}"],
   },
   {
-    files: ["*.config.{js,ts}"],
+    files: [".storybook/**/*.ts", "*.config.{js,ts}"],
+    rules: {
+      "no-restricted-exports": "off",
+    },
+  },
+  {
+    files: ["src/**/*.stories.{ts,tsx}"],
     rules: {
       "no-restricted-exports": "off",
     },

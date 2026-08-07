@@ -2,6 +2,13 @@ allowBuilds:
   esbuild: true
   unrs-resolver: true
 minimumReleaseAgeExclude:
+  - "@storybook/addon-themes@10.5.7"
+  - "@storybook/addon-docs@10.5.7"
+  - "@storybook/builder-vite@10.5.7"
+  - "@storybook/csf-plugin@10.5.7"
+  - "@storybook/react-dom-shim@10.5.7"
+  - "@storybook/react-vite@10.5.7"
+  - "@storybook/react@10.5.7"
   - "@eslint-react/ast@5.18.3"
   - "@eslint-react/core@5.18.3"
   - "@eslint-react/eslint-plugin@5.18.3"
@@ -16,3 +23,4 @@ minimumReleaseAgeExclude:
   - eslint-plugin-react-web-api@5.18.3
   - eslint-plugin-react-x@5.18.3
   - vite@8.2.1
+  - storybook@10.5.7
