@@ -13,15 +13,25 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "label": "main",
-        "title": "Orbit Capture",
-        "width": 960,
-        "height": 640,
-        "minWidth": 720,
-        "minHeight": 520,
-        "center": true,
+        "label": "recording-bar",
+        "title": "Orbit Capture Recording Bar",
+        "url": "/recording-bar",
+        "width": 500,
+        "height": 92,
+        "acceptFirstMouse": true,
+        "alwaysOnTop": true,
+        "decorations": false,
+        "focus": false,
+        "resizable": false,
+        "shadow": true,
         "skipTaskbar": true,
-        "visible": false
+        "transparent": true,
+        "visible": false,
+        "windowEffects": {
+          "effects": ["underWindowBackground", "mica"],
+          "radius": 10,
+          "state": "active"
+        }
       }
     ],
     "security": {

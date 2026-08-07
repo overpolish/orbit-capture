@@ -6,10 +6,18 @@ mod windows;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let builder = tauri::Builder::default();
+  let builder = tauri::Builder::default().plugin(
+    tauri_plugin_window_state::Builder::default()
+      .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
+      .with_filter(|label| label == windows::WindowLabel::RecordingBar.as_str())
+      .skip_initial_state(windows::WindowLabel::RecordingBar.as_str())
+      .build(),
+  );
 
   #[cfg(target_os = "macos")]
-  let builder = builder.plugin(tauri_plugin_macos_permissions::init());
+  let builder = builder
+    .plugin(tauri_plugin_macos_permissions::init())
+    .plugin(tauri_nspanel::init());
 
   builder
     .manage(permissions::PermissionState::default())
@@ -27,15 +35,22 @@ pub fn run() {
       #[cfg(desktop)]
       tray::initialize(app)?;
 
-      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::Main);
+      windows::initialize_recording_bar(app.handle())?;
+      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingBar);
+      windows::initialize_recording_bar_position(app.handle())?;
 
       #[cfg(target_os = "macos")]
       {
         let snapshot = tauri::async_runtime::block_on(permissions::refresh(app.handle()));
         if !snapshot.has_required_recording_permissions() {
           permissions::show_permissions_window(app.handle())?;
+        } else {
+          windows::show_existing(app.handle(), windows::WindowLabel::RecordingBar, false)?;
         }
       }
+
+      #[cfg(not(target_os = "macos"))]
+      windows::show_existing(app.handle(), windows::WindowLabel::RecordingBar, false)?;
 
       permissions::start_watcher(app.handle().clone());
 

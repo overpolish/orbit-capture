@@ -60,7 +60,7 @@ const toggleButtonVariants = tv({
     size: { md: "text-md", sm: "text-xs" },
     variant: {
       ghost:
-        "p-1 transition-transform transform data-[hovered]:scale-110 data-[pressed]:scale-105",
+        "p-1 origin-center transform-gpu backface-hidden will-change-transform transition-transform data-[hovered]:scale-110 data-[pressed]:scale-105",
       solid: ["border-1 rounded-md", focusStyles],
     },
   },

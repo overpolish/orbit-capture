@@ -54,5 +54,5 @@ fn show_main_window(app: &AppHandle) {
     return;
   }
 
-  let _ = windows::show_existing(app, WindowLabel::Main);
+  let _ = windows::show_existing(app, WindowLabel::RecordingBar, false);
 }

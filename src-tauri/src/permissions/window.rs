@@ -30,5 +30,5 @@ pub fn show(app: &AppHandle) -> tauri::Result<()> {
     .build()
   })?;
 
-  windows::show(&window)
+  windows::show(&window, true)
 }
