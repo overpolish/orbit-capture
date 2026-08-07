@@ -1,6 +1,8 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
-
 import { usePermissionStore } from "../../permissions/store";
+import {
+  collapseRecordingSourceSelector,
+  hideRecordingUi,
+} from "../../recording-sources/api";
 
 import { RecordingBar } from "./recording-bar";
 
@@ -17,7 +19,10 @@ export function RecordingBarWindow() {
       }
       isMicrophoneLocked={hydrated && !permissions.microphone.granted}
       onCancel={() => {
-        void getCurrentWindow().hide();
+        void hideRecordingUi();
+      }}
+      onInteract={() => {
+        void collapseRecordingSourceSelector();
       }}
     />
   );

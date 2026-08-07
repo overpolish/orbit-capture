@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for Orbit Capture windows",
-  "windows": ["recording-bar", "permissions"],
+  "windows": ["recording-bar", "recording-source-selector", "permissions"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

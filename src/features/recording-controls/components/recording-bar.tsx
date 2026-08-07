@@ -43,6 +43,7 @@ type RecordingBarProps = {
   isLocked?: boolean;
   isMicrophoneLocked?: boolean;
   onCancel?: () => void;
+  onInteract?: () => void;
   onOptions?: () => void;
   onRecord?: () => void;
 };
@@ -109,6 +110,7 @@ export function RecordingBar({
   isLocked,
   isMicrophoneLocked,
   onCancel,
+  onInteract,
   onOptions,
   onRecord,
 }: RecordingBarProps) {
@@ -132,6 +134,7 @@ export function RecordingBar({
     <main
       className="fixed inset-0 flex items-center justify-center overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg"
       data-tauri-drag-region="deep"
+      onPointerDownCapture={onInteract}
     >
       <Overlay blur="sm" className="rounded-[10px]" isOpen={isLocked}>
         <Lock />

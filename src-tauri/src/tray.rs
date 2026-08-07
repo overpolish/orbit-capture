@@ -3,7 +3,7 @@ use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle};
 
-use crate::windows::{self, WindowLabel};
+use crate::windows;
 const OPEN_MENU_ID: &str = "open-orbit-capture";
 const QUIT_MENU_ID: &str = "quit-orbit-capture";
 const TRAY_ID: &str = "orbit-capture";
@@ -54,5 +54,5 @@ fn show_main_window(app: &AppHandle) {
     return;
   }
 
-  let _ = windows::show_existing(app, WindowLabel::RecordingBar, false);
+  let _ = windows::show_recording_ui(app);
 }

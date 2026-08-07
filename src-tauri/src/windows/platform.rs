@@ -33,8 +33,10 @@ tauri_panel! {
 }
 
 #[cfg(target_os = "macos")]
-pub fn initialize_recording_bar(window: &WebviewWindow) -> tauri::Result<()> {
-  let panel = window.to_panel::<RecordingBarPanel>()?;
+fn configure_panel<T: tauri_nspanel::FromWindow<tauri::Wry> + 'static>(
+  window: &WebviewWindow,
+) -> tauri::Result<()> {
+  let panel = window.to_panel::<T>()?;
 
   panel.set_level(PanelLevel::Custom(28).value());
   panel.set_style_mask(StyleMask::empty().nonactivating_panel().into());
@@ -53,12 +55,32 @@ pub fn initialize_recording_bar(window: &WebviewWindow) -> tauri::Result<()> {
   Ok(())
 }
 
+#[cfg(target_os = "macos")]
+pub fn initialize_recording_bar(window: &WebviewWindow) -> tauri::Result<()> {
+  configure_panel::<RecordingBarPanel>(window)
+}
+
+#[cfg(target_os = "macos")]
+pub fn initialize_recording_source_selector(window: &WebviewWindow) -> tauri::Result<()> {
+  configure_panel::<RecordingBarPanel>(window)
+}
+
 #[cfg(target_os = "windows")]
 pub fn initialize_recording_bar(window: &WebviewWindow) -> tauri::Result<()> {
   window.set_skip_taskbar(true)
 }
 
+#[cfg(target_os = "windows")]
+pub fn initialize_recording_source_selector(window: &WebviewWindow) -> tauri::Result<()> {
+  window.set_skip_taskbar(true)
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn initialize_recording_bar(_window: &WebviewWindow) -> tauri::Result<()> {
+  Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn initialize_recording_source_selector(_window: &WebviewWindow) -> tauri::Result<()> {
   Ok(())
 }

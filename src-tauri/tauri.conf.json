@@ -32,6 +32,27 @@
           "radius": 10,
           "state": "active"
         }
+      },
+      {
+        "label": "recording-source-selector",
+        "title": "Orbit Capture Recording Source Selector",
+        "url": "/recording-source-selector",
+        "width": 300,
+        "height": 40,
+        "acceptFirstMouse": true,
+        "alwaysOnTop": true,
+        "decorations": false,
+        "focus": false,
+        "resizable": false,
+        "shadow": true,
+        "skipTaskbar": true,
+        "transparent": true,
+        "visible": false,
+        "windowEffects": {
+          "effects": ["underWindowBackground", "mica"],
+          "radius": 10,
+          "state": "active"
+        }
       }
     ],
     "security": {

@@ -1,4 +1,5 @@
 mod permissions;
+mod recording_sources;
 
 #[cfg(desktop)]
 mod tray;
@@ -27,6 +28,10 @@ pub fn run() {
       permissions::request_permission,
       permissions::require_permissions,
       permissions::restart_app,
+      recording_sources::list_monitors,
+      windows::collapse_recording_source_selector,
+      windows::hide_recording_ui,
+      windows::toggle_recording_source_selector,
     ])
     .setup(|app| {
       #[cfg(target_os = "macos")]
@@ -36,8 +41,11 @@ pub fn run() {
       tray::initialize(app)?;
 
       windows::initialize_recording_bar(app.handle())?;
+      windows::initialize_recording_source_selector(app.handle())?;
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingBar);
+      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingSourceSelector);
       windows::initialize_recording_bar_position(app.handle())?;
+      windows::manage_recording_bar_movement(app.handle());
 
       #[cfg(target_os = "macos")]
       {
@@ -45,12 +53,12 @@ pub fn run() {
         if !snapshot.has_required_recording_permissions() {
           permissions::show_permissions_window(app.handle())?;
         } else {
-          windows::show_existing(app.handle(), windows::WindowLabel::RecordingBar, false)?;
+          windows::show_recording_ui(app.handle())?;
         }
       }
 
       #[cfg(not(target_os = "macos"))]
-      windows::show_existing(app.handle(), windows::WindowLabel::RecordingBar, false)?;
+      windows::show_recording_ui(app.handle())?;
 
       permissions::start_watcher(app.handle().clone());
 

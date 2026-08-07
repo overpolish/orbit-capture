@@ -22,6 +22,7 @@ tauri = { version = "2", features = ["image-ico", "image-png", "macos-private-ap
 tauri-plugin-window-state = "2.4.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+xcap = "0.9.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-plugin-macos-permissions = "2.3.0"
