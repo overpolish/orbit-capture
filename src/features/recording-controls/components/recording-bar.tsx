@@ -16,11 +16,10 @@ import {
   Volume2,
   VolumeOff,
 } from "lucide-react";
-import { ComponentProps, ReactNode, useState } from "react";
+import { ReactNode, useState } from "react";
 
 import { Button } from "../../../components/base/button/button";
 import { ToggleButton } from "../../../components/base/button/toggle-button";
-import { Keyboard } from "../../../components/base/keyboard/keyboard";
 import { Overlay } from "../../../components/base/overlay/overlay";
 import { RadioGroup } from "../../../components/base/radio-group/radio-group";
 import { Separator } from "../../../components/base/separator/separator";
@@ -46,11 +45,6 @@ type RecordingBarProps = {
   onCancel?: () => void;
   onOptions?: () => void;
   onRecord?: () => void;
-};
-
-const keyboardStyle: ComponentProps<typeof Keyboard> = {
-  size: "xs",
-  variant: "ghost",
 };
 
 const defaultInputs: RecordingInputs = {
@@ -151,7 +145,6 @@ export function RecordingBar({
       >
         <div className="flex flex-col items-center gap-1">
           <CircleX className="origin-center transform-gpu backface-hidden text-muted will-change-transform transition-[color,transform] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg" />
-          <Keyboard {...keyboardStyle}>Esc</Keyboard>
         </div>
       </Button>
 
@@ -169,28 +162,24 @@ export function RecordingBar({
         <IconRadio
           aria-label="Screen"
           icon={<Monitor size={30} />}
-          shortcut={<Keyboard {...keyboardStyle}>1</Keyboard>}
           subtext="Screen"
           value="screen"
         />
         <IconRadio
           aria-label="Region"
           icon={<SquareDashed size={30} />}
-          shortcut={<Keyboard {...keyboardStyle}>2</Keyboard>}
           subtext="Region"
           value="region"
         />
         <IconRadio
           aria-label="Window"
           icon={<AppWindowMac size={30} />}
-          shortcut={<Keyboard {...keyboardStyle}>3</Keyboard>}
           subtext="Window"
           value="window"
         />
         <IconRadio
           aria-label="Audio only"
           icon={<AudioLines size={30} />}
-          shortcut={<Keyboard {...keyboardStyle}>4</Keyboard>}
           subtext="Audio"
           value="audio"
         />
@@ -274,7 +263,6 @@ export function RecordingBar({
               className="origin-center transform-gpu backface-hidden will-change-transform transition-transform group-data-[hovered]:scale-110"
               size={40}
             />
-            <Keyboard {...keyboardStyle}>Enter</Keyboard>
           </div>
         </Button>
       </Sparkles>
