@@ -24,10 +24,9 @@ import { Overlay } from "../../../components/base/overlay/overlay";
 import { RadioGroup } from "../../../components/base/radio-group/radio-group";
 import { Separator } from "../../../components/base/separator/separator";
 import { Sparkles } from "../../../components/base/sparkles/sparkles";
+import { RecordingMode } from "../../recording-sources/types";
 
 import { IconRadio } from "./icon-radio";
-
-export type RecordingMode = "screen" | "region" | "window" | "audio";
 
 export type RecordingInputs = {
   camera: boolean;
@@ -44,6 +43,7 @@ type RecordingBarProps = {
   isMicrophoneLocked?: boolean;
   onCancel?: () => void;
   onInteract?: () => void;
+  onModeChange?: (mode: RecordingMode) => void;
   onOptions?: () => void;
   onPointerUp?: () => void;
   onRecord?: () => void;
@@ -112,6 +112,7 @@ export function RecordingBar({
   isMicrophoneLocked,
   onCancel,
   onInteract,
+  onModeChange,
   onOptions,
   onPointerUp,
   onRecord,
@@ -160,7 +161,9 @@ export function RecordingBar({
         aria-label="Recording type"
         className="min-w-0 grow"
         onChange={(value) => {
-          setMode(value as RecordingMode);
+          const nextMode = value as RecordingMode;
+          setMode(nextMode);
+          onModeChange?.(nextMode);
         }}
         orientation="horizontal"
         value={mode}

@@ -1,5 +1,6 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import { ChevronDown, Monitor } from "lucide-react";
+import { AppWindowMac, ChevronDown, Monitor } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "../../components/base/button/button";
@@ -7,11 +8,14 @@ import { Button } from "../../components/base/button/button";
 import {
   collapseRecordingSourceSelector,
   listMonitors,
+  listWindows,
   toggleRecordingSourceSelector,
 } from "./api";
 import { MonitorSelector } from "./monitor-selector";
 import { useRecordingSourceStore } from "./store";
-import { MonitorDetails, SelectorPlacement } from "./types";
+import { MonitorDetails, SelectorPlacement, WindowDetails } from "./types";
+import { WindowSelector } from "./window-selector";
+import { WindowUtilities } from "./window-utilities";
 
 const REFRESH_INTERVAL_MS = 1_500;
 
@@ -44,11 +48,18 @@ export function RecordingSourceSelectorWindow() {
   const [isExpanded, setIsExpanded] = useState(false);
   const [monitors, setMonitors] = useState<MonitorDetails[]>([]);
   const [placement, setPlacement] = useState<SelectorPlacement>("above");
-  const { selectedMonitor, setSelectedMonitor } = useRecordingSourceStore(
-    (state) => state,
-  );
+  const [windows, setWindows] = useState<WindowDetails[]>([]);
+  const [windowsError, setWindowsError] = useState<string | null>(null);
+  const [windowsLoading, setWindowsLoading] = useState(false);
+  const {
+    recordingMode,
+    selectedMonitor,
+    selectedWindow,
+    setSelectedMonitor,
+    setSelectedWindow,
+  } = useRecordingSourceStore((state) => state);
 
-  const refresh = useCallback(async () => {
+  const refreshMonitors = useCallback(async () => {
     const available = await listMonitors();
     setMonitors(available);
     const { selectedMonitor, setSelectedMonitor } =
@@ -59,9 +70,32 @@ export function RecordingSourceSelectorWindow() {
     }
   }, []);
 
+  const refreshWindows = useCallback(async () => {
+    setWindowsLoading(true);
+    setWindowsError(null);
+    try {
+      const available = await listWindows();
+      setWindows(available);
+      const { selectedWindow, setSelectedWindow } =
+        useRecordingSourceStore.getState();
+      if (
+        selectedWindow &&
+        !available.some((window) => window.id === selectedWindow.id)
+      ) {
+        setSelectedWindow(null);
+      }
+    } catch (error) {
+      setWindowsError(
+        error instanceof Error ? error.message : "Could not list windows",
+      );
+    } finally {
+      setWindowsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    void refreshMonitors();
+  }, [refreshMonitors]);
 
   useEffect(() => {
     let disposed = false;
@@ -77,7 +111,13 @@ export function RecordingSourceSelectorWindow() {
             ({ payload }) => {
               setPlacement(payload);
               setIsExpanded(true);
-              void refresh();
+              if (
+                useRecordingSourceStore.getState().recordingMode === "window"
+              ) {
+                void refreshWindows();
+              } else {
+                void refreshMonitors();
+              }
             },
           ),
           listen("recording-source-selector://collapsed", () => {
@@ -106,19 +146,19 @@ export function RecordingSourceSelectorWindow() {
       unlistenCollapsed?.();
       unlistenPlacement?.();
     };
-  }, [refresh]);
+  }, [refreshMonitors, refreshWindows]);
 
   useEffect(() => {
-    if (!isExpanded) return;
+    if (!isExpanded || recordingMode === "window") return;
 
     const interval = window.setInterval(() => {
-      void refresh();
+      void refreshMonitors();
     }, REFRESH_INTERVAL_MS);
 
     return () => {
       window.clearInterval(interval);
     };
-  }, [isExpanded, refresh]);
+  }, [isExpanded, recordingMode, refreshMonitors]);
 
   return (
     <main className="fixed inset-0 flex overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg">
@@ -127,32 +167,61 @@ export function RecordingSourceSelectorWindow() {
       >
         {isExpanded ? (
           <div
-            className={`min-h-0 grow overflow-hidden rounded-md inset-shadow-full ${placement === "below" ? "order-2" : "order-1"}`}
+            className={`flex min-h-0 grow flex-col gap-2 overflow-hidden ${placement === "below" ? "order-2" : "order-1"}`}
           >
-            <div className="flex h-full items-center justify-center">
-              <MonitorSelector
-                monitors={monitors}
-                onSelect={setSelectedMonitor}
-                selectedMonitor={selectedMonitor}
-              />
-            </div>
+            {recordingMode === "window" ? (
+              <>
+                <div className="min-h-0 grow overflow-hidden rounded-md">
+                  <WindowSelector
+                    error={windowsError}
+                    isLoading={windowsLoading}
+                    onSelect={setSelectedWindow}
+                    selectedWindow={selectedWindow}
+                    windows={windows}
+                  />
+                </div>
+                <WindowUtilities selectedWindow={selectedWindow} />
+              </>
+            ) : (
+              <div className="flex min-h-0 grow items-center justify-center overflow-hidden rounded-md inset-shadow-full">
+                <MonitorSelector
+                  monitors={monitors}
+                  onSelect={setSelectedMonitor}
+                  selectedMonitor={selectedMonitor}
+                />
+              </div>
+            )}
           </div>
         ) : null}
 
         <Button
-          className={`h-6 w-full min-w-0 justify-center overflow-hidden ${placement === "below" ? "order-1" : "order-2"}`}
+          className={`h-6 w-full min-w-0 shrink-0 justify-center overflow-hidden ${placement === "below" ? "order-1" : "order-2"}`}
           onPress={() => {
             void (isExpanded
               ? collapseRecordingSourceSelector()
-              : toggleRecordingSourceSelector());
+              : toggleRecordingSourceSelector(recordingMode === "window"));
           }}
           showFocus={false}
           size="sm"
           variant="soft"
         >
-          <Monitor aria-hidden className="shrink-0" size={12} />
+          {recordingMode === "window" ? (
+            selectedWindow?.appIconPath ? (
+              <img
+                alt=""
+                className="size-4 shrink-0 object-contain"
+                src={convertFileSrc(selectedWindow.appIconPath)}
+              />
+            ) : (
+              <AppWindowMac aria-hidden className="shrink-0" size={12} />
+            )
+          ) : (
+            <Monitor aria-hidden className="shrink-0" size={12} />
+          )}
           <span className="truncate">
-            {selectedMonitor?.name ?? "Choose a display"}
+            {recordingMode === "window"
+              ? (selectedWindow?.title ?? "Choose a window")
+              : (selectedMonitor?.name ?? "Choose a display")}
           </span>
           <ChevronDown
             aria-hidden

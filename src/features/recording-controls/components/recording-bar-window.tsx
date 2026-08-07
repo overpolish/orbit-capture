@@ -4,14 +4,19 @@ import {
   finishRecordingBarDrag,
   hideRecordingUi,
 } from "../../recording-sources/api";
+import { useRecordingSourceStore } from "../../recording-sources/store";
 
 import { RecordingBar } from "./recording-bar";
 
 export function RecordingBarWindow() {
   const { hydrated, permissions } = usePermissionStore((state) => state);
+  const { recordingMode, setRecordingMode } = useRecordingSourceStore(
+    (state) => state,
+  );
 
   return (
     <RecordingBar
+      initialMode={recordingMode}
       isCameraLocked={hydrated && !permissions.camera.granted}
       isLocked={
         hydrated &&
@@ -25,6 +30,7 @@ export function RecordingBarWindow() {
       onInteract={() => {
         void collapseRecordingSourceSelector();
       }}
+      onModeChange={setRecordingMode}
       onPointerUp={() => {
         void finishRecordingBarDrag();
       }}

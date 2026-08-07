@@ -127,10 +127,13 @@ const SELECTOR_COLLAPSED_WIDTH: f64 = 300.0;
 const SELECTOR_COLLAPSED_HEIGHT: f64 = 40.0;
 const SELECTOR_EXPANDED_WIDTH: f64 = 500.0;
 const SELECTOR_EXPANDED_HEIGHT: f64 = 250.0;
+const WINDOW_SELECTOR_EXPANDED_WIDTH: f64 = 750.0;
+const WINDOW_SELECTOR_EXPANDED_HEIGHT: f64 = 500.0;
 const SELECTOR_GAP: f64 = 6.0;
 const ANIMATION_STEPS: u64 = 18;
 static SELECTOR_ANIMATION: AtomicU64 = AtomicU64::new(0);
 static SELECTOR_EXPANDED: AtomicBool = AtomicBool::new(false);
+static WINDOW_SELECTOR_ACTIVE: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static BAR_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -169,8 +172,14 @@ fn selector_frames(
   let bar_top = bar_position.y;
   let bar_right = bar_left + bar_size.width;
   let bar_bottom = bar_top + bar_size.height;
-  let expanded_width = SELECTOR_EXPANDED_WIDTH;
-  let expanded_height = SELECTOR_EXPANDED_HEIGHT;
+  let (expanded_width, expanded_height) = if WINDOW_SELECTOR_ACTIVE.load(Ordering::Relaxed) {
+    (
+      WINDOW_SELECTOR_EXPANDED_WIDTH,
+      WINDOW_SELECTOR_EXPANDED_HEIGHT,
+    )
+  } else {
+    (SELECTOR_EXPANDED_WIDTH, SELECTOR_EXPANDED_HEIGHT)
+  };
   let collapsed_width = SELECTOR_COLLAPSED_WIDTH;
   let collapsed_height = SELECTOR_COLLAPSED_HEIGHT;
   let gap = SELECTOR_GAP;
@@ -299,13 +308,17 @@ fn contain_recording_bar(app: &AppHandle) -> tauri::Result<()> {
 }
 
 #[tauri::command]
-pub fn toggle_recording_source_selector(app: AppHandle) -> tauri::Result<()> {
+pub fn toggle_recording_source_selector(
+  app: AppHandle,
+  window_selector: bool,
+) -> tauri::Result<()> {
   let window = app
     .get_webview_window(WindowLabel::RecordingSourceSelector.as_str())
     .ok_or_else(|| tauri::Error::WindowNotFound)?;
   if SELECTOR_EXPANDED.load(Ordering::Relaxed) {
     return collapse_recording_source_selector(app);
   }
+  WINDOW_SELECTOR_ACTIVE.store(window_selector, Ordering::Relaxed);
   let (placement, collapsed, expanded) = selector_frames(&app)?;
 
   if !window.is_visible()? {
