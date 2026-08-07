@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 import { MonitorDetails, WindowDetails } from "./types";
 
@@ -42,3 +42,28 @@ export const finishRecordingBarDrag = () =>
   invoke<null>("finish_recording_bar_drag");
 
 export const hideRecordingUi = () => invoke<null>("hide_recording_ui");
+
+export const setRecordingSourceSelectorVisible = (visible: boolean) =>
+  invoke<null>("set_recording_source_selector_visible", { visible });
+
+export const showRegionSelector = (monitor: MonitorDetails) =>
+  invoke<null>("show_region_selector", {
+    position: monitor.physicalPosition,
+    size: monitor.physicalSize,
+  });
+
+export const hideRegionSelector = () => invoke<null>("hide_region_selector");
+
+export const setRegionSelectorPassthrough = (passthrough: boolean) =>
+  invoke<null>("set_region_selector_passthrough", { passthrough });
+
+export const setRegionSelectorOpacity = (opacity: number) =>
+  invoke<null>("set_region_selector_opacity", { opacity });
+
+export const setRecordingControlsOpacity = (opacity: number) =>
+  invoke<null>("set_recording_controls_opacity", { opacity });
+
+export const takeMonitorScreenshot = (
+  monitorId: number,
+  channel: Channel<ArrayBuffer>,
+) => invoke<null>("take_monitor_screenshot", { channel, monitorId });

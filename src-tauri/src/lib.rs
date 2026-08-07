@@ -37,6 +37,13 @@ pub fn run() {
       windows::collapse_recording_source_selector,
       windows::finish_recording_bar_drag,
       windows::hide_recording_ui,
+      windows::hide_region_selector,
+      windows::set_recording_controls_opacity,
+      windows::set_recording_source_selector_visible,
+      windows::set_region_selector_opacity,
+      windows::set_region_selector_passthrough,
+      windows::show_region_selector,
+      windows::take_monitor_screenshot,
       windows::toggle_recording_source_selector,
     ])
     .setup(|app| {
@@ -48,8 +55,10 @@ pub fn run() {
 
       windows::initialize_recording_bar(app.handle())?;
       windows::initialize_recording_source_selector(app.handle())?;
+      windows::initialize_region_selector(app.handle())?;
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingBar);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingSourceSelector);
+      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RegionSelector);
       windows::initialize_recording_bar_position(app.handle())?;
       windows::manage_recording_bar_movement(app.handle());
       windows::manage_recording_source_selector_dismissal(app.handle());

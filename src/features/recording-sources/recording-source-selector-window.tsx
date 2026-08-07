@@ -1,6 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import { AppWindowMac, ChevronDown, Monitor } from "lucide-react";
+import { AppWindowMac, ChevronDown, Monitor, SquareDashed } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "../../components/base/button/button";
@@ -9,6 +10,7 @@ import {
   collapseRecordingSourceSelector,
   listMonitors,
   listWindows,
+  showRegionSelector,
   toggleRecordingSourceSelector,
 } from "./api";
 import { MonitorSelector } from "./monitor-selector";
@@ -55,6 +57,7 @@ export function RecordingSourceSelectorWindow() {
     recordingMode,
     selectedMonitor,
     selectedWindow,
+    setRegionEditing,
     setSelectedMonitor,
     setSelectedWindow,
   } = useRecordingSourceStore((state) => state);
@@ -65,7 +68,10 @@ export function RecordingSourceSelectorWindow() {
     const { selectedMonitor, setSelectedMonitor } =
       useRecordingSourceStore.getState();
     const current = findCurrentMonitor(available, selectedMonitor);
-    if (current && current.id !== selectedMonitor?.id) {
+    if (
+      current &&
+      JSON.stringify(current) !== JSON.stringify(selectedMonitor)
+    ) {
       setSelectedMonitor(current);
     }
   }, []);
@@ -186,7 +192,12 @@ export function RecordingSourceSelectorWindow() {
               <div className="flex min-h-0 grow items-center justify-center overflow-hidden rounded-md inset-shadow-full">
                 <MonitorSelector
                   monitors={monitors}
-                  onSelect={setSelectedMonitor}
+                  onSelect={(monitor) => {
+                    setSelectedMonitor(monitor);
+                    if (recordingMode === "region") {
+                      void showRegionSelector(monitor);
+                    }
+                  }}
                   selectedMonitor={selectedMonitor}
                 />
               </div>
@@ -194,46 +205,75 @@ export function RecordingSourceSelectorWindow() {
           </div>
         ) : null}
 
-        <Button
-          className={`h-6 w-full min-w-0 shrink-0 justify-center overflow-hidden ${placement === "below" ? "order-1" : "order-2"}`}
-          onPress={() => {
-            void (isExpanded
-              ? collapseRecordingSourceSelector()
-              : toggleRecordingSourceSelector(recordingMode === "window"));
-          }}
-          showFocus={false}
-          size="sm"
-          variant="soft"
+        <div
+          className={`flex h-6 w-full shrink-0 gap-2 ${placement === "below" ? "order-1" : "order-2"}`}
         >
-          {recordingMode === "window" ? (
-            selectedWindow?.appIconPath ? (
-              <img
-                alt=""
-                className="size-4 shrink-0 object-contain"
-                src={convertFileSrc(selectedWindow.appIconPath)}
-              />
+          <Button
+            className="h-full min-w-0 grow justify-center overflow-hidden"
+            onPress={() => {
+              void (isExpanded
+                ? collapseRecordingSourceSelector()
+                : toggleRecordingSourceSelector(recordingMode === "window"));
+            }}
+            showFocus={false}
+            size="sm"
+            variant="soft"
+          >
+            {recordingMode === "window" ? (
+              selectedWindow?.appIconPath ? (
+                <img
+                  alt=""
+                  className="size-4 shrink-0 object-contain"
+                  src={convertFileSrc(selectedWindow.appIconPath)}
+                />
+              ) : (
+                <AppWindowMac aria-hidden className="shrink-0" size={12} />
+              )
             ) : (
-              <AppWindowMac aria-hidden className="shrink-0" size={12} />
-            )
-          ) : (
-            <Monitor aria-hidden className="shrink-0" size={12} />
-          )}
-          <span className="truncate">
-            {recordingMode === "window"
-              ? (selectedWindow?.title ?? "Choose a window")
-              : (selectedMonitor?.name ?? "Choose a display")}
-          </span>
-          <ChevronDown
-            aria-hidden
-            className={`transform-gpu transition-transform duration-200 ${
-              (isExpanded && placement === "below") ||
-              (!isExpanded && placement === "above")
-                ? "rotate-180"
-                : "rotate-0"
-            }`}
-            size={12}
-          />
-        </Button>
+              <Monitor aria-hidden className="shrink-0" size={12} />
+            )}
+            <span className="truncate">
+              {recordingMode === "window"
+                ? (selectedWindow?.title ?? "Choose a window")
+                : (selectedMonitor?.name ?? "Choose a display")}
+            </span>
+            <ChevronDown
+              aria-hidden
+              className={`transform-gpu transition-transform duration-200 ${
+                (isExpanded && placement === "below") ||
+                (!isExpanded && placement === "above")
+                  ? "rotate-180"
+                  : "rotate-0"
+              }`}
+              size={12}
+            />
+          </Button>
+
+          <AnimatePresence initial={false}>
+            {recordingMode === "region" ? (
+              <motion.div
+                animate={{ opacity: 1, width: "auto" }}
+                className="h-full overflow-hidden"
+                exit={{ opacity: 0, width: 0 }}
+                initial={{ opacity: 0, width: 0 }}
+              >
+                <Button
+                  className="h-full"
+                  onPress={() => {
+                    void collapseRecordingSourceSelector();
+                    setRegionEditing(true);
+                  }}
+                  showFocus={false}
+                  size="sm"
+                  variant="soft"
+                >
+                  <SquareDashed aria-hidden size={14} />
+                  Edit
+                </Button>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </div>
       </section>
     </main>
   );

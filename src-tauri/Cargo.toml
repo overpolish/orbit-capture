@@ -26,9 +26,9 @@ xcap = "0.9.8"
 image = "0.25.10"
 rapidfuzz = "0.5.0"
 rayon = "1.12.0"
-rdev = { git = "https://github.com/Narsil/rdev", rev = "c77b4e5456301cfa7f2226020f2a58f2f8d77c5d", features = ["serialize"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+rdev = { git = "https://github.com/Narsil/rdev", rev = "c77b4e5456301cfa7f2226020f2a58f2f8d77c5d", features = ["serialize"] }
 windows = { version = "0.62.2", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",

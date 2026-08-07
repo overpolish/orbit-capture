@@ -25,10 +25,16 @@ export function MonitorSelector({
 
   const bounds = monitors.reduce(
     (current, monitor) => ({
-      maxX: Math.max(current.maxX, monitor.position.x + monitor.size.width),
-      maxY: Math.max(current.maxY, monitor.position.y + monitor.size.height),
-      minX: Math.min(current.minX, monitor.position.x),
-      minY: Math.min(current.minY, monitor.position.y),
+      maxX: Math.max(
+        current.maxX,
+        monitor.layoutPosition.x + monitor.layoutSize.width,
+      ),
+      maxY: Math.max(
+        current.maxY,
+        monitor.layoutPosition.y + monitor.layoutSize.height,
+      ),
+      minX: Math.min(current.minX, monitor.layoutPosition.x),
+      minY: Math.min(current.minY, monitor.layoutPosition.y),
     }),
     {
       maxX: Number.NEGATIVE_INFINITY,
@@ -63,10 +69,10 @@ export function MonitorSelector({
             }}
             showFocus={false}
             style={{
-              height: `${String((monitor.size.height / layoutHeight) * 100)}%`,
-              left: `${String(((monitor.position.x - bounds.minX) / layoutWidth) * 100)}%`,
-              top: `${String(((monitor.position.y - bounds.minY) / layoutHeight) * 100)}%`,
-              width: `${String((monitor.size.width / layoutWidth) * 100)}%`,
+              height: `${String((monitor.layoutSize.height / layoutHeight) * 100)}%`,
+              left: `${String(((monitor.layoutPosition.x - bounds.minX) / layoutWidth) * 100)}%`,
+              top: `${String(((monitor.layoutPosition.y - bounds.minY) / layoutHeight) * 100)}%`,
+              width: `${String((monitor.layoutSize.width / layoutWidth) * 100)}%`,
             }}
             variant="soft"
           >

@@ -12,7 +12,11 @@ mod platform;
 pub struct MonitorDetails {
   id: u32,
   name: String,
+  layout_position: Position,
+  layout_size: Size,
   position: Position,
+  physical_position: Position,
+  physical_size: Size,
   size: Size,
   scale_factor: f32,
   is_primary: bool,
@@ -45,27 +49,59 @@ pub struct WindowDetails {
 }
 
 #[tauri::command]
-pub fn list_monitors() -> Result<Vec<MonitorDetails>, String> {
-  let monitors = xcap::Monitor::all().map_err(|error| error.to_string())?;
+pub fn list_monitors(app: AppHandle) -> Result<Vec<MonitorDetails>, String> {
+  let capture_monitors = xcap::Monitor::all().map_err(|error| error.to_string())?;
+  let tauri_monitors = app
+    .available_monitors()
+    .map_err(|error| error.to_string())?;
 
-  monitors
+  if capture_monitors.len() != tauri_monitors.len() {
+    return Err("Tauri and xcap returned different monitor counts".into());
+  }
+
+  // Tauri does not expose a capture API identifier, so, as in Orbit Cursor,
+  // monitor ordering is the only cross-API mapping available on both platforms.
+  capture_monitors
     .into_iter()
-    .map(|monitor| {
+    .zip(tauri_monitors)
+    .map(|(monitor, tauri_monitor)| {
+      let scale_factor = tauri_monitor.scale_factor();
+      let physical_position = tauri_monitor.position();
+      let physical_size = tauri_monitor.size();
+      let logical_position = physical_position.to_logical::<f64>(scale_factor);
+      let logical_size = physical_size.to_logical::<f64>(scale_factor);
+
       Ok(MonitorDetails {
         id: monitor.id().map_err(|error| error.to_string())?,
         name: monitor
           .friendly_name()
           .or_else(|_| monitor.name())
           .map_err(|error| error.to_string())?,
-        position: Position {
+        layout_position: Position {
           x: monitor.x().map_err(|error| error.to_string())?,
           y: monitor.y().map_err(|error| error.to_string())?,
         },
-        size: Size {
+        layout_size: Size {
           width: monitor.width().map_err(|error| error.to_string())?,
           height: monitor.height().map_err(|error| error.to_string())?,
         },
-        scale_factor: monitor.scale_factor().map_err(|error| error.to_string())?,
+        position: Position {
+          x: logical_position.x.round() as i32,
+          y: logical_position.y.round() as i32,
+        },
+        physical_position: Position {
+          x: physical_position.x,
+          y: physical_position.y,
+        },
+        physical_size: Size {
+          width: physical_size.width,
+          height: physical_size.height,
+        },
+        size: Size {
+          width: logical_size.width.round() as u32,
+          height: logical_size.height.round() as u32,
+        },
+        scale_factor: scale_factor as f32,
         is_primary: monitor.is_primary().map_err(|error| error.to_string())?,
         is_builtin: monitor.is_builtin().map_err(|error| error.to_string())?,
       })

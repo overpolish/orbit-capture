@@ -53,6 +53,21 @@
           "radius": 10,
           "state": "active"
         }
+      },
+      {
+        "label": "region-selector",
+        "title": "Orbit Capture Region Selector",
+        "url": "/region-selector",
+        "acceptFirstMouse": true,
+        "alwaysOnTop": true,
+        "decorations": false,
+        "focus": false,
+        "fullscreen": false,
+        "resizable": false,
+        "shadow": false,
+        "skipTaskbar": true,
+        "transparent": true,
+        "visible": false
       }
     ],
     "security": {
