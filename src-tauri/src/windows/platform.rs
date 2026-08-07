@@ -156,8 +156,8 @@ pub fn initialize_region_selector(window: &WebviewWindow) -> tauri::Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-pub fn restore_recording_level(_window: &WebviewWindow) -> tauri::Result<()> {
-  Ok(())
+pub fn restore_recording_level(window: &WebviewWindow) -> tauri::Result<()> {
+  raise_without_activation(window)
 }
 
 #[cfg(target_os = "windows")]
@@ -179,7 +179,8 @@ pub fn set_opacity(window: &WebviewWindow, opacity: f64) -> tauri::Result<()> {
       COLORREF(0),
       (opacity.clamp(0.0, 1.0) * 255.0).round() as u8,
       LWA_ALPHA,
-    )?;
+    )
+    .map_err(std::io::Error::other)?;
   }
   Ok(())
 }
@@ -200,7 +201,8 @@ pub fn raise_without_activation(window: &WebviewWindow) -> tauri::Result<()> {
       0,
       0,
       SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-    )?;
+    )
+    .map_err(std::io::Error::other)?;
   }
   Ok(())
 }

@@ -59,7 +59,7 @@
         "title": "Orbit Capture Region Selector",
         "url": "/region-selector",
         "acceptFirstMouse": true,
-        "alwaysOnTop": false,
+        "alwaysOnTop": true,
         "decorations": false,
         "focus": false,
         "fullscreen": false,

@@ -609,7 +609,8 @@ pub fn show_region_selector(
     .ok_or_else(|| tauri::Error::WindowNotFound)?;
   region.set_size(size)?;
   region.set_position(position)?;
-  region.show()?;
+  platform::set_opacity(&region, 1.0)?;
+  platform::show(&region)?;
   platform::restore_recording_level(&region)?;
 
   raise_recording_controls(&app)?;
