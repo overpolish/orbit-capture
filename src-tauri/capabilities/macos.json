@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "macos-permissions",
+  "description": "macOS permission access for Orbit Capture",
+  "windows": ["main", "permissions"],
+  "platforms": ["macOS"],
+  "permissions": ["macos-permissions:default"]
+}

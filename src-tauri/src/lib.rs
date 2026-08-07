@@ -1,15 +1,43 @@
+mod permissions;
+
 #[cfg(desktop)]
 mod tray;
+mod windows;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  let builder = tauri::Builder::default();
+
+  #[cfg(target_os = "macos")]
+  let builder = builder.plugin(tauri_plugin_macos_permissions::init());
+
+  builder
+    .manage(permissions::PermissionState::default())
+    .invoke_handler(tauri::generate_handler![
+      permissions::open_permission_settings,
+      permissions::permission_snapshot,
+      permissions::request_permission,
+      permissions::require_permissions,
+      permissions::restart_app,
+    ])
     .setup(|app| {
       #[cfg(target_os = "macos")]
       app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
       #[cfg(desktop)]
       tray::initialize(app)?;
+
+      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::Main);
+
+      #[cfg(target_os = "macos")]
+      {
+        let snapshot = tauri::async_runtime::block_on(permissions::refresh(app.handle()));
+        if !snapshot.has_required_recording_permissions() {
+          permissions::show_permissions_window(app.handle())?;
+        }
+      }
+
+      permissions::start_watcher(app.handle().clone());
 
       Ok(())
     })

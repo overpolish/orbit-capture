@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="80 175 864 849">
+  <path
+    fill="currentColor"
+    d="M466 198c-22-5-43 3-54 21-10 16-10 33-1 52l143 267c11 21 29 31 49 29 20-3 34-16 40-39l28-108 102-48c20-9 30-24 28-42-2-17-14-29-35-36L466 198Z"
+  />
+  <path
+    fill="none"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-width="116"
+    d="M477 555C283 621 150 782 111 1016"
+  />
+  <path
+    fill="none"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-width="116"
+    d="M715 555c190 65 318 207 363 414"
+  />
+</svg>

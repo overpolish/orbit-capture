@@ -1,9 +1,9 @@
 use tauri::image::Image;
 use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{App, AppHandle, Manager, WindowEvent};
+use tauri::{App, AppHandle};
 
-const MAIN_WINDOW_LABEL: &str = "main";
+use crate::windows::{self, WindowLabel};
 const OPEN_MENU_ID: &str = "open-orbit-capture";
 const QUIT_MENU_ID: &str = "quit-orbit-capture";
 const TRAY_ID: &str = "orbit-capture";
@@ -44,23 +44,15 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
     })
     .build(app)?;
 
-  if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-    let window_to_hide = window.clone();
-    window.on_window_event(move |event| {
-      if let WindowEvent::CloseRequested { api, .. } = event {
-        api.prevent_close();
-        let _ = window_to_hide.hide();
-      }
-    });
-  }
-
   Ok(())
 }
 
 fn show_main_window(app: &AppHandle) {
-  if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-    let _ = window.show();
-    let _ = window.unminimize();
-    let _ = window.set_focus();
+  #[cfg(target_os = "macos")]
+  if !crate::permissions::has_required_recording_permissions(app) {
+    let _ = crate::permissions::show_permissions_window(app);
+    return;
   }
+
+  let _ = windows::show_existing(app, WindowLabel::Main);
 }

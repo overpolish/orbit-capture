@@ -74,6 +74,21 @@ body {
   min-width: 320px;
   min-height: 100%;
   overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+:where(input, textarea, [contenteditable="true"]) {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 body {
