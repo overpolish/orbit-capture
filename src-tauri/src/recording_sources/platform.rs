@@ -209,8 +209,9 @@ mod windows_platform {
         WindowsAndMessaging::{
           DestroyIcon, GetIconInfo, GetWindowLongPtrW, GetWindowRect, SetWindowLongPtrW,
           SetWindowPos, GWL_EXSTYLE, GWL_STYLE, ICONINFO, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-          SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME,
-          WS_EX_STATICEDGE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+          SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER, WS_CAPTION, WS_DLGFRAME,
+          WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_WINDOWEDGE,
+          WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
         },
       },
     },
@@ -407,11 +408,19 @@ mod windows_platform {
         .entry(window.0 as isize)
         .or_insert((style, extended_style));
 
-      let style = style
-        & !(WS_CAPTION.0 | WS_THICKFRAME.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0 | WS_SYSMENU.0)
-          as isize;
+      let style = (style
+        & !(WS_OVERLAPPEDWINDOW.0
+          | WS_CAPTION.0
+          | WS_BORDER.0
+          | WS_DLGFRAME.0
+          | WS_THICKFRAME.0
+          | WS_MINIMIZEBOX.0
+          | WS_MAXIMIZEBOX.0
+          | WS_SYSMENU.0) as isize)
+        | WS_POPUP.0 as isize;
       let extended_style = extended_style
-        & !(WS_EX_DLGMODALFRAME.0 | WS_EX_CLIENTEDGE.0 | WS_EX_STATICEDGE.0) as isize;
+        & !(WS_EX_DLGMODALFRAME.0 | WS_EX_CLIENTEDGE.0 | WS_EX_STATICEDGE.0 | WS_EX_WINDOWEDGE.0)
+          as isize;
       SetWindowLongPtrW(window, GWL_STYLE, style);
       SetWindowLongPtrW(window, GWL_EXSTYLE, extended_style);
       SetWindowPos(
@@ -429,13 +438,20 @@ mod windows_platform {
 
   pub fn restore_border(id: u32, pid: u32, title: &str) -> Result<(), String> {
     let window = find_window(id, pid, title)?;
-    let (style, extended_style) = ORIGINAL_STYLES
+    let original = ORIGINAL_STYLES
       .get_or_init(Default::default)
       .lock()
       .map_err(|error| error.to_string())?
-      .remove(&(window.0 as isize))
-      .ok_or_else(|| "Orbit Capture has no saved border style for this window".to_string())?;
+      .remove(&(window.0 as isize));
     unsafe {
+      let (style, extended_style) = original.unwrap_or_else(|| {
+        (
+          GetWindowLongPtrW(window, GWL_STYLE) | WS_OVERLAPPEDWINDOW.0 as isize,
+          GetWindowLongPtrW(window, GWL_EXSTYLE)
+            | WS_EX_WINDOWEDGE.0 as isize
+            | WS_EX_CLIENTEDGE.0 as isize,
+        )
+      });
       SetWindowLongPtrW(window, GWL_STYLE, style);
       SetWindowLongPtrW(window, GWL_EXSTYLE, extended_style);
       SetWindowPos(

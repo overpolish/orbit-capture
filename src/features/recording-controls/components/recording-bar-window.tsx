@@ -30,7 +30,10 @@ export function RecordingBarWindow() {
       onInteract={() => {
         void collapseRecordingSourceSelector();
       }}
-      onModeChange={setRecordingMode}
+      onModeChange={(mode) => {
+        void collapseRecordingSourceSelector();
+        setRecordingMode(mode);
+      }}
       onPointerUp={() => {
         void finishRecordingBarDrag();
       }}

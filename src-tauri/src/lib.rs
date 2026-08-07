@@ -52,6 +52,7 @@ pub fn run() {
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingSourceSelector);
       windows::initialize_recording_bar_position(app.handle())?;
       windows::manage_recording_bar_movement(app.handle());
+      windows::manage_recording_source_selector_dismissal(app.handle());
 
       #[cfg(target_os = "macos")]
       {

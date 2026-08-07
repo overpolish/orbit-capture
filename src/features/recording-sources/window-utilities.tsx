@@ -5,7 +5,6 @@ import {
   SquareDot,
 } from "lucide-react";
 
-import { Button } from "../../components/base/button/button";
 import { AspectRatio } from "../../components/shared/aspect-ratio/aspect-ratio";
 import { CheckOnClickButton } from "../../components/shared/check-on-click-button/check-on-click-button";
 
@@ -69,7 +68,7 @@ export function WindowUtilities({ selectedWindow }: WindowUtilitiesProps) {
             <SquareBottomDashedScissors size={14} />
             Borderless
           </CheckOnClickButton>
-          <Button
+          <CheckOnClickButton
             isDisabled={!selectedWindow}
             onPress={() => {
               run(restoreWindowBorder);
@@ -80,7 +79,7 @@ export function WindowUtilities({ selectedWindow }: WindowUtilitiesProps) {
           >
             <PencilLine size={14} />
             Restore border
-          </Button>
+          </CheckOnClickButton>
         </div>
       ) : null}
     </div>

@@ -155,7 +155,13 @@ fn selector_frames(
   let bar = app
     .get_webview_window(WindowLabel::RecordingBar.as_str())
     .ok_or_else(|| tauri::Error::WindowNotFound)?;
+  #[cfg(target_os = "windows")]
+  let bar_position = bar.inner_position()?;
+  #[cfg(not(target_os = "windows"))]
   let bar_position = bar.outer_position()?;
+  #[cfg(target_os = "windows")]
+  let bar_size = bar.inner_size()?;
+  #[cfg(not(target_os = "windows"))]
   let bar_size = bar.outer_size()?;
   let monitor = bar
     .current_monitor()?
@@ -167,6 +173,17 @@ fn selector_frames(
   let monitor_size = monitor.size().to_logical::<f64>(scale);
   let bar_position = bar_position.to_logical::<f64>(scale);
   let bar_size = bar_size.to_logical::<f64>(scale);
+  #[cfg(target_os = "windows")]
+  let selector_frame_offset = {
+    let selector = app
+      .get_webview_window(WindowLabel::RecordingSourceSelector.as_str())
+      .ok_or_else(|| tauri::Error::WindowNotFound)?;
+    let inner = selector.inner_position()?.to_logical::<f64>(scale);
+    let outer = selector.outer_position()?.to_logical::<f64>(scale);
+    LogicalPosition::new(inner.x - outer.x, inner.y - outer.y)
+  };
+  #[cfg(not(target_os = "windows"))]
+  let selector_frame_offset = LogicalPosition::new(0.0, 0.0);
   let monitor_right = monitor_position.x + monitor_size.width;
   let bar_left = bar_position.x;
   let bar_top = bar_position.y;
@@ -190,9 +207,6 @@ fn selector_frames(
     SelectorPlacement::Below
   };
   let center_x = (bar_left + bar_right) / 2.0;
-  #[cfg(target_os = "windows")]
-  let expanded_x = bar_left.clamp(monitor_position.x, monitor_right - expanded_width);
-  #[cfg(not(target_os = "windows"))]
   let expanded_x =
     (center_x - expanded_width / 2.0).clamp(monitor_position.x, monitor_right - expanded_width);
   let collapsed_x =
@@ -208,11 +222,17 @@ fn selector_frames(
   Ok((
     placement,
     SelectorFrame {
-      position: LogicalPosition::new(collapsed_x, collapsed_y),
+      position: LogicalPosition::new(
+        collapsed_x - selector_frame_offset.x,
+        collapsed_y - selector_frame_offset.y,
+      ),
       size: LogicalSize::new(collapsed_width, collapsed_height),
     },
     SelectorFrame {
-      position: LogicalPosition::new(expanded_x, expanded_y),
+      position: LogicalPosition::new(
+        expanded_x - selector_frame_offset.x,
+        expanded_y - selector_frame_offset.y,
+      ),
       size: LogicalSize::new(expanded_width, expanded_height),
     },
   ))
@@ -353,6 +373,64 @@ pub fn manage_recording_bar_movement(app: &AppHandle) {
     #[cfg(target_os = "windows")]
     watch_for_recording_bar_mouse_up(app.clone());
   });
+}
+
+pub fn manage_recording_source_selector_dismissal(app: &AppHandle) {
+  use std::sync::{Arc, Mutex};
+
+  use rdev::{listen, Button, EventType};
+
+  let app = app.clone();
+  let mouse_position = Arc::new(Mutex::new((0.0, 0.0)));
+  std::thread::spawn(move || {
+    let position = mouse_position.clone();
+    let result = listen(move |event| match event.event_type {
+      EventType::MouseMove { x, y } => {
+        if let Ok(mut position) = position.lock() {
+          *position = (x, y);
+        }
+      }
+      EventType::ButtonRelease(Button::Left) => {
+        if !SELECTOR_EXPANDED.load(Ordering::Relaxed) {
+          return;
+        }
+        let Some(selector) = app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str())
+        else {
+          return;
+        };
+        let Ok((x, y)) = position.lock().map(|position| *position) else {
+          return;
+        };
+        if !coordinate_is_in_window(x, y, &selector) {
+          let _ = collapse_recording_source_selector(app.clone());
+        }
+      }
+      _ => {}
+    });
+
+    if let Err(error) = result {
+      eprintln!("Could not monitor clicks for source selector dismissal: {error:?}");
+    }
+  });
+}
+
+fn coordinate_is_in_window(x: f64, y: f64, window: &WebviewWindow) -> bool {
+  let Ok(position) = window.outer_position() else {
+    return false;
+  };
+  let Ok(size) = window.outer_size() else {
+    return false;
+  };
+  let Ok(scale) = window.scale_factor() else {
+    return false;
+  };
+  let position = position.to_logical::<f64>(scale);
+  let size = size.to_logical::<f64>(scale);
+
+  x >= position.x
+    && x <= position.x + size.width
+    && y >= position.y
+    && y <= position.y + size.height
 }
 
 #[cfg(target_os = "windows")]
