@@ -14,7 +14,6 @@ const listBoxItemVariants = tv({
     "rounded-md cursor-default transition-colors inline-flex gap-2 items-center justify-between bg-content text-content-fg",
     "truncate",
     "data-[hovered]:bg-neutral",
-    "data-[selected]:[&_svg]:text-success",
     focusStyles,
     elementFocusVisible,
   ],
@@ -71,7 +70,7 @@ export const ListBoxItem = ({
                 initial={{ scale: 0 }}
               >
                 <Check
-                  className="transition-colors"
+                  className="text-success transition-colors"
                   size={size === "md" ? 16 : 14}
                   strokeWidth={3}
                 />

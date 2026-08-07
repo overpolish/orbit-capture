@@ -6,6 +6,8 @@
     "recording-bar",
     "recording-source-selector",
     "region-selector",
+    "recording-options",
+    "standalone-listbox",
     "permissions"
   ],
   "permissions": [

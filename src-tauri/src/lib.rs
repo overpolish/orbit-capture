@@ -1,4 +1,7 @@
+mod audio_preview;
+mod camera_preview;
 mod permissions;
+mod recording_inputs;
 mod recording_sources;
 
 #[cfg(desktop)]
@@ -21,14 +24,23 @@ pub fn run() {
     .plugin(tauri_nspanel::init());
 
   builder
+    .manage(audio_preview::AudioPreviewState::default())
+    .manage(camera_preview::CameraPreviewState::default())
     .manage(permissions::PermissionState::default())
     .invoke_handler(tauri::generate_handler![
+      audio_preview::start_audio_preview,
+      audio_preview::stop_audio_preview,
+      camera_preview::start_camera_preview,
+      camera_preview::stop_camera_preview,
       permissions::open_permission_settings,
       permissions::permission_snapshot,
       permissions::request_permission,
       permissions::require_permissions,
       permissions::restart_app,
+      recording_inputs::list_cameras,
+      recording_inputs::list_microphones,
       recording_sources::center_window,
+      recording_sources::list_applications,
       recording_sources::list_monitors,
       recording_sources::list_windows,
       recording_sources::make_window_borderless,
@@ -36,15 +48,19 @@ pub fn run() {
       recording_sources::restore_window_border,
       windows::collapse_recording_source_selector,
       windows::finish_recording_bar_drag,
+      windows::hide_recording_options,
       windows::hide_recording_ui,
       windows::hide_region_selector,
+      windows::hide_standalone_listbox,
       windows::set_recording_controls_opacity,
       windows::set_recording_source_selector_visible,
       windows::set_region_selector_opacity,
       windows::set_region_selector_passthrough,
       windows::show_region_selector,
+      windows::show_standalone_listbox,
       windows::take_monitor_screenshot,
       windows::toggle_recording_source_selector,
+      windows::toggle_recording_options,
     ])
     .setup(|app| {
       #[cfg(target_os = "macos")]
@@ -56,9 +72,13 @@ pub fn run() {
       windows::initialize_recording_bar(app.handle())?;
       windows::initialize_recording_source_selector(app.handle())?;
       windows::initialize_region_selector(app.handle())?;
+      windows::initialize_recording_options(app.handle())?;
+      windows::initialize_standalone_listbox(app.handle())?;
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingBar);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingSourceSelector);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RegionSelector);
+      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingOptions);
+      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::StandaloneListbox);
       windows::initialize_recording_bar_position(app.handle())?;
       windows::manage_recording_bar_movement(app.handle());
       windows::manage_recording_source_selector_dismissal(app.handle());

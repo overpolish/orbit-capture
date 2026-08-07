@@ -88,7 +88,7 @@ const selectVariants = tv({
   },
 });
 
-type SelectProps<T extends object> = AriaSelectProps<T> &
+type SelectProps<T extends object> = Omit<AriaSelectProps<T>, "children"> &
   VariantProps<typeof selectVariants> & {
     children?: ReactNode | ((item: T) => ReactNode);
     className?: string;

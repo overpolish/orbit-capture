@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+  collections::{HashMap, HashSet},
+  path::{Path, PathBuf},
+};
 
 use image::DynamicImage;
 use rayon::prelude::*;
@@ -46,6 +49,15 @@ pub struct WindowDetails {
   size: Size,
   app_icon_path: Option<PathBuf>,
   thumbnail_path: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationDetails {
+  id: String,
+  label: String,
+  icon_path: Option<PathBuf>,
+  process_ids: Vec<u32>,
 }
 
 #[tauri::command]
@@ -120,6 +132,113 @@ pub async fn list_windows(app: AppHandle) -> Result<Vec<WindowDetails>, String> 
   tauri::async_runtime::spawn_blocking(move || enumerate_windows(&cache_dir))
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+#[cfg(target_os = "macos")]
+pub async fn list_applications(app: AppHandle) -> Result<Vec<ApplicationDetails>, String> {
+  let cache_dir = app
+    .path()
+    .temp_dir()
+    .map_err(|error| error.to_string())?
+    .join("OrbitCapture")
+    .join("application-sources");
+  let applications = platform::audio_applications().await?;
+  tauri::async_runtime::spawn_blocking(move || {
+    enumerate_audio_applications(&cache_dir, applications)
+  })
+  .await
+  .map_err(|error| error.to_string())?
+}
+
+#[cfg(target_os = "macos")]
+fn enumerate_audio_applications(
+  cache_dir: &Path,
+  candidates: Vec<platform::AudioApplication>,
+) -> Result<Vec<ApplicationDetails>, String> {
+  std::fs::create_dir_all(cache_dir).map_err(|error| error.to_string())?;
+  let mut applications = HashMap::<String, (String, Option<PathBuf>, HashSet<u32>)>::new();
+
+  for candidate in candidates {
+    let application = applications.entry(candidate.id).or_insert_with(|| {
+      (
+        candidate.label,
+        platform::app_icon(cache_dir, candidate.pid),
+        HashSet::new(),
+      )
+    });
+    application.2.insert(candidate.pid);
+  }
+
+  application_details(applications)
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "macos"))]
+pub async fn list_applications(app: AppHandle) -> Result<Vec<ApplicationDetails>, String> {
+  let cache_dir = app
+    .path()
+    .temp_dir()
+    .map_err(|error| error.to_string())?
+    .join("OrbitCapture")
+    .join("application-sources");
+  tauri::async_runtime::spawn_blocking(move || enumerate_applications(&cache_dir))
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[cfg(not(target_os = "macos"))]
+fn enumerate_applications(cache_dir: &Path) -> Result<Vec<ApplicationDetails>, String> {
+  std::fs::create_dir_all(cache_dir).map_err(|error| error.to_string())?;
+  let current_pid = std::process::id();
+  let mut applications = HashMap::<String, (String, Option<PathBuf>, HashSet<u32>)>::new();
+
+  for window in xcap::Window::all().map_err(|error| error.to_string())? {
+    let Ok(pid) = window.pid() else { continue };
+    if pid == current_pid {
+      continue;
+    }
+    let Some(id) = platform::app_identity(pid) else {
+      continue;
+    };
+    let Ok(label) = window.app_name() else {
+      continue;
+    };
+    if label.trim().is_empty() {
+      continue;
+    }
+
+    let application = applications.entry(id).or_insert_with(|| {
+      (
+        label.trim().to_string(),
+        platform::app_icon(cache_dir, pid),
+        HashSet::new(),
+      )
+    });
+    application.2.insert(pid);
+  }
+
+  application_details(applications)
+}
+
+fn application_details(
+  applications: HashMap<String, (String, Option<PathBuf>, HashSet<u32>)>,
+) -> Result<Vec<ApplicationDetails>, String> {
+  let mut result = applications
+    .into_iter()
+    .map(|(id, (label, icon_path, process_ids))| {
+      let mut process_ids = process_ids.into_iter().collect::<Vec<_>>();
+      process_ids.sort_unstable();
+      ApplicationDetails {
+        id,
+        label,
+        icon_path,
+        process_ids,
+      }
+    })
+    .collect::<Vec<_>>();
+  result.sort_by_cached_key(|application| application.label.to_lowercase());
+  Ok(result)
 }
 
 fn enumerate_windows(cache_dir: &Path) -> Result<Vec<WindowDetails>, String> {

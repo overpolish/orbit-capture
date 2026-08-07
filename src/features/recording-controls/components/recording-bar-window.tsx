@@ -8,6 +8,11 @@ import {
 import { usePermissionStore } from "../../permissions/store";
 import { PermissionKind, PermissionStatus } from "../../permissions/types";
 import {
+  hideRecordingOptions,
+  toggleRecordingOptions,
+} from "../../recording-inputs/api";
+import { useRecordingInputStore } from "../../recording-inputs/store";
+import {
   collapseRecordingSourceSelector,
   finishRecordingBarDrag,
   hideRecordingUi,
@@ -47,6 +52,7 @@ export function RecordingBarWindow() {
   const { hydrated, permissions } = usePermissionStore((state) => state);
   const { recordingMode, selectedMonitor, setRecordingMode, setRegionEditing } =
     useRecordingSourceStore((state) => state);
+  const { inputs, setInput } = useRecordingInputStore((state) => state);
 
   useEffect(() => {
     setRegionEditing(false);
@@ -79,6 +85,7 @@ export function RecordingBarWindow() {
   return (
     <RecordingBar
       initialMode={recordingMode}
+      inputs={inputs}
       isCameraLocked={!hydrated || !permissions.camera.granted}
       isLocked={
         hydrated &&
@@ -93,8 +100,10 @@ export function RecordingBarWindow() {
       onCancel={() => {
         void hideRecordingUi();
       }}
+      onInputChange={setInput}
       onInteract={() => {
         void collapseRecordingSourceSelector();
+        void hideRecordingOptions();
       }}
       onMicrophoneLockedPress={() => {
         grantPermission("microphone", permissions.microphone);
@@ -103,6 +112,11 @@ export function RecordingBarWindow() {
         setRecordingMode(mode);
         void collapseRecordingSourceSelector().then(() =>
           synchronizeRecordingUi(mode, selectedMonitor),
+        );
+      }}
+      onOptions={(anchorX) => {
+        void collapseRecordingSourceSelector().then(() =>
+          toggleRecordingOptions(anchorX),
         );
       }}
       onPointerUp={() => {

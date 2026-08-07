@@ -3,13 +3,55 @@ use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
 use {
-  cidre::{ax, cf, cg},
+  cidre::{ax, cf, cg, sc},
   objc2::AnyThread,
-  objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSRunningApplication},
+  objc2_app_kit::{
+    NSApplicationActivationPolicy, NSBitmapImageFileType, NSBitmapImageRep, NSRunningApplication,
+  },
   objc2_foundation::{NSDictionary, NSString},
   rapidfuzz::fuzz::ratio,
   std::collections::HashSet,
 };
+
+#[cfg(target_os = "macos")]
+pub struct AudioApplication {
+  pub id: String,
+  pub label: String,
+  pub pid: u32,
+}
+
+#[cfg(target_os = "macos")]
+pub async fn audio_applications() -> Result<Vec<AudioApplication>, String> {
+  let current_pid = std::process::id();
+  let content = sc::ShareableContent::current()
+    .await
+    .map_err(|error| error.to_string())?;
+
+  Ok(
+    content
+      .apps()
+      .iter()
+      .filter_map(|application| {
+        let pid = u32::try_from(application.process_id()).ok()?;
+        let running_application =
+          NSRunningApplication::runningApplicationWithProcessIdentifier(pid as i32)?;
+        if running_application.activationPolicy() != NSApplicationActivationPolicy::Regular {
+          return None;
+        }
+        let id = application.bundle_id().to_string();
+        let label = application.app_name().to_string();
+        if pid == current_pid || id.trim().is_empty() || label.trim().is_empty() {
+          return None;
+        }
+        Some(AudioApplication {
+          id,
+          label: label.trim().to_owned(),
+          pid,
+        })
+      })
+      .collect(),
+  )
+}
 
 #[cfg(target_os = "macos")]
 pub fn app_icon(cache_dir: &Path, pid: u32) -> Option<PathBuf> {
@@ -333,6 +375,20 @@ mod windows_platform {
     }
   }
 
+  pub fn app_identity(pid: u32) -> Option<String> {
+    unsafe {
+      let process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid).ok()?;
+      let mut buffer = [0_u16; 260];
+      let length = K32GetModuleFileNameExW(Some(process), None, &mut buffer);
+      let _ = CloseHandle(process);
+      (length > 0).then(|| {
+        OsString::from_wide(&buffer[..length as usize])
+          .to_string_lossy()
+          .to_lowercase()
+      })
+    }
+  }
+
   unsafe fn cleanup_icon(
     icon: windows::Win32::UI::WindowsAndMessaging::HICON,
     info: ICONINFO,
@@ -470,5 +526,6 @@ mod windows_platform {
 
 #[cfg(target_os = "windows")]
 pub use windows_platform::{
-  app_icon, center_window, make_borderless, resize_window, restore_border, selectable_window_ids,
+  app_icon, app_identity, center_window, make_borderless, resize_window, restore_border,
+  selectable_window_ids,
 };

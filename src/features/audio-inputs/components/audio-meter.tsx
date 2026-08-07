@@ -12,6 +12,8 @@ const decibelToPercentage = (decibel: number): number => {
   return Math.pow(normalized, power) * 100;
 };
 
+let nextMeterId = 0;
+
 const ticksForWidth = (width: number) => {
   const ticks = [-48, -24];
   if (width > 70) ticks.push(-12);
@@ -97,6 +99,12 @@ export const AudioMeter = ({
   radius = 2,
   width = 150,
 }: AudioMeterProps) => {
+  const idRef = useRef<number | null>(null);
+  idRef.current ??= nextMeterId++;
+  const id = idRef.current;
+  const fillId = `meter-fill-${id.toString()}`;
+  const meterClipId = `meter-clip-${id.toString()}`;
+  const peakClipId = `peak-clip-${id.toString()}`;
   const percentage = decibelToPercentage(decibels);
   const peakPercentage = decibelToPercentage(Math.min(peak, -0.5));
 
@@ -137,7 +145,7 @@ export const AudioMeter = ({
         width={width}
       >
         <defs>
-          <linearGradient id="meterFill" x1="0%" x2="100%" y1="0%" y2="0%">
+          <linearGradient id={fillId} x1="0%" x2="100%" y1="0%" y2="0%">
             <stop offset="0%" stopColor="var(--color-success)" />
             <stop offset="65%" stopColor="var(--color-success)" />
             <stop offset="85%" stopColor="var(--color-warning)" />
@@ -146,11 +154,11 @@ export const AudioMeter = ({
             <stop offset="100%" stopColor="var(--color-warning-100)" />{" "}
           </linearGradient>
 
-          <clipPath id="meterClip">
+          <clipPath id={meterClipId}>
             <rect height="100%" width={percentage.toString() + "%"} />
           </clipPath>
 
-          <clipPath id="peakClip">
+          <clipPath id={peakClipId}>
             {peak >= -60 && (
               <rect
                 height="100%"
@@ -163,8 +171,16 @@ export const AudioMeter = ({
         </defs>
 
         <rect className="fill-muted/20" {...METER} width="100%" />
-        <rect clipPath="url(#meterClip)" fill="url(#meterFill)" {...METER} />
-        <rect clipPath="url(#peakClip)" fill="url(#meterFill)" {...METER} />
+        <rect
+          clipPath={`url(#${meterClipId})`}
+          fill={`url(#${fillId})`}
+          {...METER}
+        />
+        <rect
+          clipPath={`url(#${peakClipId})`}
+          fill={`url(#${fillId})`}
+          {...METER}
+        />
       </svg>
 
       {(!hideTicks || !hidePeakTick) && (

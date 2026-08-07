@@ -17,7 +17,7 @@ import {
   Volume2,
   VolumeOff,
 } from "lucide-react";
-import { ReactNode, useState } from "react";
+import { ReactNode, useRef, useState } from "react";
 
 import { Button } from "../../../components/base/button/button";
 import { ToggleButton } from "../../../components/base/button/toggle-button";
@@ -25,30 +25,26 @@ import { Overlay } from "../../../components/base/overlay/overlay";
 import { RadioGroup } from "../../../components/base/radio-group/radio-group";
 import { Separator } from "../../../components/base/separator/separator";
 import { Sparkles } from "../../../components/base/sparkles/sparkles";
+import { RecordingInputs } from "../../recording-inputs/types";
 import { RecordingMode } from "../../recording-sources/types";
 
 import { IconRadio } from "./icon-radio";
 
-export type RecordingInputs = {
-  camera: boolean;
-  microphone: boolean;
-  showCursor: boolean;
-  systemAudio: boolean;
-};
-
 type RecordingBarProps = {
   initialInputs?: Partial<RecordingInputs>;
   initialMode?: RecordingMode;
+  inputs?: RecordingInputs;
   isCameraLocked?: boolean;
   isLocked?: boolean;
   isMicrophoneLocked?: boolean;
   mode?: RecordingMode;
   onCameraLockedPress?: () => void;
   onCancel?: () => void;
+  onInputChange?: (input: keyof RecordingInputs, selected: boolean) => void;
   onInteract?: () => void;
   onMicrophoneLockedPress?: () => void;
   onModeChange?: (mode: RecordingMode) => void;
-  onOptions?: () => void;
+  onOptions?: (anchorX: number) => void;
   onPointerUp?: () => void;
   onRecord?: () => void;
   onScreenshot?: () => void;
@@ -112,12 +108,14 @@ function InputToggle({
 export function RecordingBar({
   initialInputs,
   initialMode = "screen",
+  inputs: controlledInputs,
   isCameraLocked,
   isLocked,
   isMicrophoneLocked,
   mode: controlledMode,
   onCameraLockedPress,
   onCancel,
+  onInputChange,
   onInteract,
   onMicrophoneLockedPress,
   onModeChange,
@@ -128,15 +126,25 @@ export function RecordingBar({
 }: RecordingBarProps) {
   const [uncontrolledMode, setUncontrolledMode] =
     useState<RecordingMode>(initialMode);
-  const [inputs, setInputs] = useState<RecordingInputs>({
-    ...defaultInputs,
-    ...initialInputs,
-  });
+  const [uncontrolledInputs, setUncontrolledInputs] = useState<RecordingInputs>(
+    {
+      ...defaultInputs,
+      ...initialInputs,
+    },
+  );
+  const optionsButtonRef = useRef<HTMLButtonElement>(null);
 
   const mode = controlledMode ?? uncontrolledMode;
+  const inputs = controlledInputs ?? uncontrolledInputs;
 
   const setInput = (input: keyof RecordingInputs, selected: boolean) => {
-    setInputs((current) => ({ ...current, [input]: selected }));
+    if (controlledInputs === undefined) {
+      setUncontrolledInputs((current) => ({
+        ...current,
+        [input]: selected,
+      }));
+    }
+    onInputChange?.(input, selected);
   };
 
   const isAudioOnly = mode === "audio";
@@ -150,7 +158,7 @@ export function RecordingBar({
     <main
       className="flex h-full min-h-[92px] w-full min-w-[628px] items-center justify-center overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg"
       data-tauri-drag-region="deep"
-      onPointerDownCapture={onInteract}
+      onPointerDown={onInteract}
       onPointerUpCapture={onPointerUp}
     >
       <Overlay
@@ -267,15 +275,26 @@ export function RecordingBar({
           />
         </div>
 
-        <Button
-          className="origin-center transform-gpu backface-hidden justify-center will-change-transform transition-transform data-[hovered]:scale-110"
-          onPress={onOptions}
-          showFocus={false}
-          size="sm"
-          variant="ghost"
+        <div
+          className="flex justify-center"
+          onPointerDown={(event) => {
+            event.stopPropagation();
+          }}
         >
-          Options
-        </Button>
+          <Button
+            className="origin-center transform-gpu backface-hidden justify-center will-change-transform transition-transform data-[hovered]:scale-110"
+            onPress={() => {
+              const bounds = optionsButtonRef.current?.getBoundingClientRect();
+              if (bounds) onOptions?.(bounds.left + bounds.width / 2);
+            }}
+            ref={optionsButtonRef}
+            showFocus={false}
+            size="sm"
+            variant="ghost"
+          >
+            Options
+          </Button>
+        </div>
       </div>
 
       <Button

@@ -16,8 +16,10 @@ pub enum WindowLabel {
   #[cfg(target_os = "macos")]
   Permissions,
   RecordingBar,
+  RecordingOptions,
   RegionSelector,
   RecordingSourceSelector,
+  StandaloneListbox,
 }
 
 impl WindowLabel {
@@ -26,8 +28,10 @@ impl WindowLabel {
       #[cfg(target_os = "macos")]
       Self::Permissions => "permissions",
       Self::RecordingBar => "recording-bar",
+      Self::RecordingOptions => "recording-options",
       Self::RegionSelector => "region-selector",
       Self::RecordingSourceSelector => "recording-source-selector",
+      Self::StandaloneListbox => "standalone-listbox",
     }
   }
 }
@@ -135,6 +139,22 @@ pub fn initialize_region_selector(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
+pub fn initialize_recording_options(app: &AppHandle) -> tauri::Result<()> {
+  if let Some(window) = app.get_webview_window(WindowLabel::RecordingOptions.as_str()) {
+    platform::initialize_recording_options(&window)?;
+  }
+
+  Ok(())
+}
+
+pub fn initialize_standalone_listbox(app: &AppHandle) -> tauri::Result<()> {
+  if let Some(window) = app.get_webview_window(WindowLabel::StandaloneListbox.as_str()) {
+    platform::initialize_standalone_listbox(&window)?;
+  }
+
+  Ok(())
+}
+
 const SELECTOR_COLLAPSED_WIDTH: f64 = 300.0;
 const SELECTOR_COLLAPSED_HEIGHT: f64 = 40.0;
 const SELECTOR_EXPANDED_WIDTH: f64 = 500.0;
@@ -142,12 +162,17 @@ const SELECTOR_EXPANDED_HEIGHT: f64 = 250.0;
 const WINDOW_SELECTOR_EXPANDED_WIDTH: f64 = 750.0;
 const WINDOW_SELECTOR_EXPANDED_HEIGHT: f64 = 500.0;
 const SELECTOR_GAP: f64 = 6.0;
+const RECORDING_OPTIONS_WIDTH: f64 = 240.0;
+const RECORDING_OPTIONS_HEIGHT: f64 = 270.0;
+const RECORDING_OPTIONS_GAP: f64 = 6.0;
 const ANIMATION_STEPS: u64 = 18;
 static SELECTOR_ANIMATION: AtomicU64 = AtomicU64::new(0);
 static SELECTOR_EXPANDED: AtomicBool = AtomicBool::new(false);
 static SELECTOR_VISIBLE: AtomicBool = AtomicBool::new(true);
 static RECORDING_CONTROLS_VISIBLE: AtomicBool = AtomicBool::new(true);
 static WINDOW_SELECTOR_ACTIVE: AtomicBool = AtomicBool::new(false);
+static RECORDING_OPTIONS_VISIBLE: AtomicBool = AtomicBool::new(false);
+static STANDALONE_LISTBOX_VISIBLE: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static BAR_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -250,6 +275,34 @@ fn selector_frames(
       size: LogicalSize::new(expanded_width, expanded_height),
     },
   ))
+}
+
+fn recording_options_frame(app: &AppHandle, anchor_x: f64) -> tauri::Result<LogicalPosition<f64>> {
+  let bar = app
+    .get_webview_window(WindowLabel::RecordingBar.as_str())
+    .ok_or_else(|| tauri::Error::WindowNotFound)?;
+  let monitor = bar
+    .current_monitor()?
+    .or(app.primary_monitor()?)
+    .ok_or_else(|| tauri::Error::WindowNotFound)?;
+  let scale = monitor.scale_factor();
+  let monitor_position = monitor.position().to_logical::<f64>(scale);
+  let monitor_size = monitor.size().to_logical::<f64>(scale);
+  let bar_position = bar.outer_position()?.to_logical::<f64>(scale);
+  let bar_size = bar.outer_size()?.to_logical::<f64>(scale);
+  let monitor_right = monitor_position.x + monitor_size.width;
+  let monitor_bottom = monitor_position.y + monitor_size.height;
+  let x = (bar_position.x + anchor_x - RECORDING_OPTIONS_WIDTH / 2.0)
+    .clamp(monitor_position.x, monitor_right - RECORDING_OPTIONS_WIDTH);
+  let available_above = bar_position.y - monitor_position.y;
+  let y = if available_above >= RECORDING_OPTIONS_HEIGHT + RECORDING_OPTIONS_GAP {
+    bar_position.y - RECORDING_OPTIONS_HEIGHT - RECORDING_OPTIONS_GAP
+  } else {
+    (bar_position.y + bar_size.height + RECORDING_OPTIONS_GAP)
+      .min(monitor_bottom - RECORDING_OPTIONS_HEIGHT)
+  };
+
+  Ok(LogicalPosition::new(x, y))
 }
 
 fn animate_selector(window: WebviewWindow, from: SelectorFrame, to: SelectorFrame) {
@@ -371,6 +424,92 @@ pub fn toggle_recording_source_selector(
   Ok(())
 }
 
+#[tauri::command]
+pub fn toggle_recording_options(app: AppHandle, anchor_x: f64) -> tauri::Result<()> {
+  if RECORDING_OPTIONS_VISIBLE.load(Ordering::Relaxed) {
+    return hide_recording_options(app);
+  }
+
+  let window = app
+    .get_webview_window(WindowLabel::RecordingOptions.as_str())
+    .ok_or_else(|| tauri::Error::WindowNotFound)?;
+  window.set_size(LogicalSize::new(
+    RECORDING_OPTIONS_WIDTH,
+    RECORDING_OPTIONS_HEIGHT,
+  ))?;
+  window.set_position(recording_options_frame(&app, anchor_x)?)?;
+  RECORDING_OPTIONS_VISIBLE.store(true, Ordering::Relaxed);
+  platform::show(&window)?;
+  platform::restore_recording_level(&window)?;
+  app.emit_to(
+    WindowLabel::RecordingOptions.as_str(),
+    "recording-options://opened",
+    (),
+  )
+}
+
+#[tauri::command]
+pub fn hide_recording_options(app: AppHandle) -> tauri::Result<()> {
+  RECORDING_OPTIONS_VISIBLE.store(false, Ordering::Relaxed);
+  hide_standalone_listbox(app.clone())?;
+  crate::audio_preview::stop_all(&app);
+  crate::camera_preview::stop_all(&app);
+  if let Some(window) = app.get_webview_window(WindowLabel::RecordingOptions.as_str()) {
+    platform::hide(&window)?;
+  }
+  app.emit_to(
+    WindowLabel::RecordingOptions.as_str(),
+    "recording-options://closed",
+    (),
+  )
+}
+
+#[tauri::command]
+pub fn show_standalone_listbox(
+  app: AppHandle,
+  parent_window_label: String,
+  offset: LogicalPosition<f64>,
+  size: LogicalSize<f64>,
+) -> tauri::Result<()> {
+  let parent = app
+    .get_webview_window(&parent_window_label)
+    .ok_or_else(|| tauri::Error::WindowNotFound)?;
+  let window = app
+    .get_webview_window(WindowLabel::StandaloneListbox.as_str())
+    .ok_or_else(|| tauri::Error::WindowNotFound)?;
+  let scale = parent.scale_factor()?;
+  let parent_position = parent.outer_position()?.to_logical::<f64>(scale);
+  let mut position =
+    LogicalPosition::new(parent_position.x + offset.x, parent_position.y + offset.y);
+
+  if let Some(monitor) = parent.current_monitor()?.or(app.primary_monitor()?) {
+    let monitor_scale = monitor.scale_factor();
+    let monitor_position = monitor.position().to_logical::<f64>(monitor_scale);
+    let monitor_size = monitor.size().to_logical::<f64>(monitor_scale);
+    let max_x = monitor_position.x + (monitor_size.width - size.width).max(0.0);
+    let max_y = monitor_position.y + (monitor_size.height - size.height).max(0.0);
+    position.x = position.x.clamp(monitor_position.x, max_x);
+    position.y = position.y.clamp(monitor_position.y, max_y);
+  }
+
+  window.set_size(size)?;
+  window.set_position(position)?;
+  STANDALONE_LISTBOX_VISIBLE.store(true, Ordering::Relaxed);
+  platform::show(&window)?;
+  platform::restore_recording_level(&window)
+}
+
+#[tauri::command]
+pub fn hide_standalone_listbox(app: AppHandle) -> tauri::Result<()> {
+  STANDALONE_LISTBOX_VISIBLE.store(false, Ordering::Relaxed);
+  if let Some(window) = app.get_webview_window(WindowLabel::StandaloneListbox.as_str()) {
+    platform::hide(&window)?;
+  }
+  app.emit("standalone-listbox://closed", ())?;
+
+  Ok(())
+}
+
 pub fn manage_recording_bar_movement(app: &AppHandle) {
   let Some(window) = app.get_webview_window(WindowLabel::RecordingBar.as_str()) else {
     return;
@@ -383,6 +522,7 @@ pub fn manage_recording_bar_movement(app: &AppHandle) {
     }
 
     let _ = reposition_recording_source_selector(&app);
+    let _ = hide_recording_options(app.clone());
 
     #[cfg(target_os = "windows")]
     watch_for_recording_bar_mouse_up(app.clone());
@@ -406,19 +546,19 @@ pub fn manage_recording_source_selector_dismissal(app: &AppHandle) {
         }
       }
       EventType::ButtonRelease(Button::Left) => {
-        if !SELECTOR_EXPANDED.load(Ordering::Relaxed) {
-          return;
-        }
-        let Some(selector) = app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str())
-        else {
-          return;
-        };
         let Ok((x, y)) = position.lock().map(|position| *position) else {
           return;
         };
-        if !coordinate_is_in_window(x, y, &selector) {
-          let _ = collapse_recording_source_selector(app.clone());
+        if SELECTOR_EXPANDED.load(Ordering::Relaxed) {
+          if let Some(selector) =
+            app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str())
+          {
+            if !coordinate_is_in_window(x, y, &selector) {
+              let _ = collapse_recording_source_selector(app.clone());
+            }
+          }
         }
+        dismiss_recording_options_if_outside(&app, x, y);
       }
       _ => {}
     });
@@ -439,18 +579,22 @@ pub fn manage_recording_source_selector_dismissal(app: &AppHandle) {
 
     loop {
       let is_pressed = EventSrcState::CombinedSession.button_state(MouseButton::Left);
-      if was_pressed && !is_pressed && SELECTOR_EXPANDED.load(Ordering::Relaxed) {
-        let Some(selector) = app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str())
-        else {
-          break;
-        };
+      if was_pressed && !is_pressed {
         let Some(event) = Event::with_src(None) else {
           break;
         };
         let position = event.location();
-        if !coordinate_is_in_window(position.x, position.y, &selector) {
-          let _ = collapse_recording_source_selector(app.clone());
+        if SELECTOR_EXPANDED.load(Ordering::Relaxed) {
+          let Some(selector) =
+            app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str())
+          else {
+            break;
+          };
+          if !coordinate_is_in_window(position.x, position.y, &selector) {
+            let _ = collapse_recording_source_selector(app.clone());
+          }
         }
+        dismiss_recording_options_if_outside(&app, position.x, position.y);
       }
 
       was_pressed = is_pressed;
@@ -479,6 +623,26 @@ fn coordinate_is_in_window(x: f64, y: f64, window: &WebviewWindow) -> bool {
     && x <= position.x + size.width
     && y >= position.y
     && y <= position.y + size.height
+}
+
+fn dismiss_recording_options_if_outside(app: &AppHandle, x: f64, y: f64) {
+  if !RECORDING_OPTIONS_VISIBLE.load(Ordering::Relaxed) {
+    return;
+  }
+
+  let is_in = |label: WindowLabel| {
+    app
+      .get_webview_window(label.as_str())
+      .is_some_and(|window| coordinate_is_in_window(x, y, &window))
+  };
+  let inside_options = is_in(WindowLabel::RecordingOptions);
+  let inside_listbox =
+    STANDALONE_LISTBOX_VISIBLE.load(Ordering::Relaxed) && is_in(WindowLabel::StandaloneListbox);
+  let inside_bar = is_in(WindowLabel::RecordingBar);
+
+  if !inside_options && !inside_listbox && !inside_bar {
+    let _ = hide_recording_options(app.clone());
+  }
 }
 
 #[cfg(target_os = "windows")]
@@ -731,6 +895,7 @@ pub async fn take_monitor_screenshot(monitor_id: u32, channel: Channel) -> Resul
 pub fn hide_recording_ui(app: AppHandle) -> tauri::Result<()> {
   SELECTOR_ANIMATION.fetch_add(1, Ordering::Relaxed);
   SELECTOR_EXPANDED.store(false, Ordering::Relaxed);
+  hide_recording_options(app.clone())?;
   if let Some(selector) = app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str()) {
     selector.hide()?;
   }
@@ -763,11 +928,16 @@ pub fn show_recording_ui(app: &AppHandle) -> tauri::Result<()> {
 
 pub fn hide_instead_of_close(app: &AppHandle, label: WindowLabel) {
   if let Some(window) = app.get_webview_window(label.as_str()) {
+    let app = app.clone();
     let window_to_hide = window.clone();
     window.on_window_event(move |event| {
       if let WindowEvent::CloseRequested { api, .. } = event {
         api.prevent_close();
-        let _ = window_to_hide.hide();
+        if matches!(label, WindowLabel::RecordingOptions) {
+          let _ = hide_recording_options(app.clone());
+        } else {
+          let _ = window_to_hide.hide();
+        }
       }
     });
   }

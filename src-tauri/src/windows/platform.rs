@@ -81,6 +81,16 @@ pub fn initialize_region_selector(window: &WebviewWindow) -> tauri::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+pub fn initialize_recording_options(window: &WebviewWindow) -> tauri::Result<()> {
+  configure_panel::<RecordingBarPanel>(window, 30)
+}
+
+#[cfg(target_os = "macos")]
+pub fn initialize_standalone_listbox(window: &WebviewWindow) -> tauri::Result<()> {
+  configure_panel::<RecordingBarPanel>(window, 31)
+}
+
+#[cfg(target_os = "macos")]
 pub fn set_opacity(window: &WebviewWindow, opacity: f64) -> tauri::Result<()> {
   let panel = registered_panel(window)?;
   let app = window.app_handle().clone();
@@ -100,6 +110,8 @@ pub fn restore_recording_level(window: &WebviewWindow) -> tauri::Result<()> {
     "region-selector" => 27,
     "recording-bar" => 28,
     "recording-source-selector" => 29,
+    "recording-options" => 30,
+    "standalone-listbox" => 31,
     _ => return Ok(()),
   };
   let panel = registered_panel(window)?;
@@ -151,6 +163,18 @@ pub fn initialize_recording_source_selector(window: &WebviewWindow) -> tauri::Re
 
 #[cfg(target_os = "windows")]
 pub fn initialize_region_selector(window: &WebviewWindow) -> tauri::Result<()> {
+  window.set_always_on_top(true)?;
+  window.set_skip_taskbar(true)
+}
+
+#[cfg(target_os = "windows")]
+pub fn initialize_recording_options(window: &WebviewWindow) -> tauri::Result<()> {
+  window.set_always_on_top(true)?;
+  window.set_skip_taskbar(true)
+}
+
+#[cfg(target_os = "windows")]
+pub fn initialize_standalone_listbox(window: &WebviewWindow) -> tauri::Result<()> {
   window.set_always_on_top(true)?;
   window.set_skip_taskbar(true)
 }
@@ -229,6 +253,16 @@ pub fn initialize_recording_source_selector(_window: &WebviewWindow) -> tauri::R
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn initialize_region_selector(_window: &WebviewWindow) -> tauri::Result<()> {
+  Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn initialize_recording_options(_window: &WebviewWindow) -> tauri::Result<()> {
+  Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn initialize_standalone_listbox(_window: &WebviewWindow) -> tauri::Result<()> {
   Ok(())
 }
 

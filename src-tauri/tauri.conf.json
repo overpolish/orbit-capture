@@ -68,18 +68,66 @@
         "skipTaskbar": true,
         "transparent": true,
         "visible": false
+      },
+      {
+        "label": "recording-options",
+        "title": "Orbit Capture Recording Options",
+        "url": "/recording-options",
+        "width": 240,
+        "height": 270,
+        "acceptFirstMouse": true,
+        "alwaysOnTop": false,
+        "decorations": false,
+        "focus": false,
+        "resizable": false,
+        "shadow": true,
+        "skipTaskbar": true,
+        "transparent": true,
+        "visible": false,
+        "windowEffects": {
+          "effects": ["underWindowBackground", "mica"],
+          "radius": 10,
+          "state": "active"
+        }
+      },
+      {
+        "label": "standalone-listbox",
+        "title": "Orbit Capture Listbox",
+        "url": "/standalone-listbox",
+        "width": 208,
+        "height": 40,
+        "acceptFirstMouse": true,
+        "alwaysOnTop": false,
+        "decorations": false,
+        "focus": false,
+        "resizable": false,
+        "shadow": true,
+        "skipTaskbar": true,
+        "transparent": true,
+        "visible": false,
+        "windowEffects": {
+          "effects": ["underWindowBackground", "mica"],
+          "radius": 10,
+          "state": "active"
+        }
       }
     ],
     "security": {
       "assetProtocol": {
         "enable": true,
-        "scope": ["$TEMP/OrbitCapture/window-selector/**"]
+        "scope": [
+          "$TEMP/OrbitCapture/application-sources/**",
+          "$TEMP/OrbitCapture/window-selector/**"
+        ]
       },
       "csp": null
     }
   },
   "bundle": {
     "active": true,
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    },
     "targets": "all",
     "icon": [
       "icons/32x32.png",
