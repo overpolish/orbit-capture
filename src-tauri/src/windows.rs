@@ -291,6 +291,7 @@ static SELECTOR_VISIBLE: AtomicBool = AtomicBool::new(true);
 static RECORDING_CONTROLS_VISIBLE: AtomicBool = AtomicBool::new(true);
 static WINDOW_SELECTOR_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RECORDING_OPTIONS_VISIBLE: AtomicBool = AtomicBool::new(false);
+static REGION_SELECTOR_EDITING: AtomicBool = AtomicBool::new(false);
 static STANDALONE_LISTBOX_VISIBLE: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static BAR_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -1132,6 +1133,7 @@ pub fn show_region_selector(
   platform::restore_recording_level(&region)?;
 
   raise_recording_controls(&app)?;
+  apply_region_selector_interactivity(&app)?;
 
   #[cfg(target_os = "macos")]
   tauri::async_runtime::spawn_blocking(move || {
@@ -1176,24 +1178,45 @@ fn raise_recording_controls(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
-#[tauri::command]
-pub fn set_region_selector_passthrough(app: AppHandle, passthrough: bool) -> tauri::Result<()> {
-  let region = app
-    .get_webview_window(WindowLabel::RegionSelector.as_str())
-    .ok_or_else(|| tauri::Error::WindowNotFound)?;
-  region.set_ignore_cursor_events(passthrough)?;
-  if passthrough {
+/// The region overlay may take clicks only while the user is actively editing
+/// the region, and only outside a recording. Every other time it is on screen -
+/// displaying the chosen frame, or standing in as the recording boundary - it
+/// has to let clicks through to whatever is underneath.
+const fn region_selector_is_interactive(is_editing: bool, is_recording_idle: bool) -> bool {
+  is_editing && is_recording_idle
+}
+
+/// Re-asserts that invariant against the window.
+///
+/// This has to be called by everything that shows the overlay, because
+/// `platform::show` turns cursor events back on every time it runs. Leaving it
+/// to the caller to remember is what made the desktop stop accepting clicks
+/// after a re-show.
+fn apply_region_selector_interactivity(app: &AppHandle) -> tauri::Result<()> {
+  let Some(region) = app.get_webview_window(WindowLabel::RegionSelector.as_str()) else {
+    return Ok(());
+  };
+  let is_interactive = region_selector_is_interactive(
+    REGION_SELECTOR_EDITING.load(Ordering::Relaxed),
+    crate::recording::is_idle(app),
+  );
+
+  region.set_ignore_cursor_events(!is_interactive)?;
+  if is_interactive {
+    region.set_focus()?;
+  } else {
     #[cfg(target_os = "macos")]
     platform::resign_key(&region)?;
-  } else {
-    region.set_focus()?;
-  }
-
-  if passthrough {
-    raise_recording_controls(&app)?;
+    raise_recording_controls(app)?;
   }
 
   Ok(())
+}
+
+#[tauri::command]
+pub fn set_region_selector_passthrough(app: AppHandle, passthrough: bool) -> tauri::Result<()> {
+  REGION_SELECTOR_EDITING.store(!passthrough, Ordering::Relaxed);
+  apply_region_selector_interactivity(&app)
 }
 
 #[tauri::command]
@@ -1314,6 +1337,14 @@ mod tests {
     width: 1440,
     height: 850,
   };
+
+  #[test]
+  fn the_region_overlay_takes_clicks_only_while_editing_outside_a_recording() {
+    assert!(region_selector_is_interactive(true, true));
+    assert!(!region_selector_is_interactive(false, true));
+    assert!(!region_selector_is_interactive(true, false));
+    assert!(!region_selector_is_interactive(false, false));
+  }
 
   #[test]
   fn centres_the_pill_below_the_work_area_top_when_it_was_never_dragged() {

@@ -4,6 +4,7 @@ mod permissions;
 mod recording;
 mod recording_inputs;
 mod recording_sources;
+mod screenshots;
 
 #[cfg(desktop)]
 mod tray;
@@ -11,13 +12,15 @@ mod windows;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let builder = tauri::Builder::default().plugin(
-    tauri_plugin_window_state::Builder::default()
-      .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
-      .with_filter(|label| label == windows::WindowLabel::RecordingBar.as_str())
-      .skip_initial_state(windows::WindowLabel::RecordingBar.as_str())
-      .build(),
-  );
+  let builder = tauri::Builder::default()
+    .plugin(tauri_plugin_clipboard_manager::init())
+    .plugin(
+      tauri_plugin_window_state::Builder::default()
+        .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
+        .with_filter(|label| label == windows::WindowLabel::RecordingBar.as_str())
+        .skip_initial_state(windows::WindowLabel::RecordingBar.as_str())
+        .build(),
+    );
 
   #[cfg(target_os = "macos")]
   let builder = builder
@@ -54,6 +57,7 @@ pub fn run() {
       recording_sources::make_window_borderless,
       recording_sources::resize_window,
       recording_sources::restore_window_border,
+      screenshots::capture_still,
       windows::collapse_recording_source_selector,
       windows::finish_recording_bar_drag,
       windows::finish_recording_dock_drag,

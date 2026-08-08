@@ -19,8 +19,31 @@ export const NoMonitorSelected: Story = {
   args: { hasSelectedMonitor: false },
 };
 
+/** Screen recording denied: nothing on the bar works, so it blurs. */
 export const PermissionsLocked: Story = {
+  args: { isLocked: true, isScreenshotLocked: true },
+};
+
+/** Accessibility denied but screen recording granted: stills still work. */
+export const ScreenshotOnly: Story = {
   args: { isLocked: true },
+};
+
+export const ScreenshotSavesToFile: Story = {
+  args: { screenshotToClipboard: false },
+};
+
+/** Mid-save: the button is inert and pulsing until the file actually exists. */
+export const ScreenshotPending: Story = {
+  args: { screenshotState: "pending" },
+};
+
+export const ScreenshotDone: Story = {
+  args: { screenshotState: "done" },
+};
+
+export const ScreenshotFailed: Story = {
+  args: { screenshotState: "failed" },
 };
 
 export const OptionalPermissionsLocked: Story = {

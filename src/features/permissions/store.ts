@@ -28,6 +28,11 @@ export const selectCanRecordScreen = (state: PermissionStore) =>
   state.permissions.accessibility.granted &&
   state.permissions.screenRecording.granted;
 
+// Stills go through ScreenCaptureKit/WGC only; the accessibility grant is a
+// recording concern (cursor and input capture), so it is not required here.
+export const selectCanScreenshot = (state: PermissionStore) =>
+  state.permissions.screenRecording.granted;
+
 export const selectCanRecordCamera = (state: PermissionStore) =>
   state.permissions.camera.granted;
 

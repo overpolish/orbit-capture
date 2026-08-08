@@ -157,38 +157,12 @@ pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
   })
 }
 
+/// Every window this app floats over the desktop is an overlay: always on top,
+/// off the taskbar, and excluded from capture so it can never appear in a
+/// screenshot or recording - including the ones this app takes itself. That
+/// exclusion is what removes the need to hide the UI before capturing.
 #[cfg(target_os = "windows")]
-pub fn initialize_recording_bar(window: &WebviewWindow) -> tauri::Result<()> {
-  window.set_always_on_top(true)?;
-  window.set_skip_taskbar(true)
-}
-
-#[cfg(target_os = "windows")]
-pub fn initialize_recording_source_selector(window: &WebviewWindow) -> tauri::Result<()> {
-  window.set_always_on_top(true)?;
-  window.set_skip_taskbar(true)
-}
-
-#[cfg(target_os = "windows")]
-pub fn initialize_region_selector(window: &WebviewWindow) -> tauri::Result<()> {
-  window.set_always_on_top(true)?;
-  window.set_skip_taskbar(true)
-}
-
-#[cfg(target_os = "windows")]
-pub fn initialize_recording_options(window: &WebviewWindow) -> tauri::Result<()> {
-  window.set_always_on_top(true)?;
-  window.set_skip_taskbar(true)
-}
-
-#[cfg(target_os = "windows")]
-pub fn initialize_standalone_listbox(window: &WebviewWindow) -> tauri::Result<()> {
-  window.set_always_on_top(true)?;
-  window.set_skip_taskbar(true)
-}
-
-#[cfg(target_os = "windows")]
-pub fn initialize_recording_dock(window: &WebviewWindow) -> tauri::Result<()> {
+fn initialize_overlay(window: &WebviewWindow) -> tauri::Result<()> {
   use windows::Win32::{
     Foundation::HWND,
     UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE},
@@ -196,15 +170,42 @@ pub fn initialize_recording_dock(window: &WebviewWindow) -> tauri::Result<()> {
 
   window.set_always_on_top(true)?;
   window.set_skip_taskbar(true)?;
-
-  // Keeps the pill out of every capture and screenshot taken of this machine,
-  // including the ones this app takes itself.
   unsafe {
     SetWindowDisplayAffinity(HWND(window.hwnd()?.0), WDA_EXCLUDEFROMCAPTURE)
       .map_err(std::io::Error::other)?;
   }
 
   Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub fn initialize_recording_bar(window: &WebviewWindow) -> tauri::Result<()> {
+  initialize_overlay(window)
+}
+
+#[cfg(target_os = "windows")]
+pub fn initialize_recording_source_selector(window: &WebviewWindow) -> tauri::Result<()> {
+  initialize_overlay(window)
+}
+
+#[cfg(target_os = "windows")]
+pub fn initialize_region_selector(window: &WebviewWindow) -> tauri::Result<()> {
+  initialize_overlay(window)
+}
+
+#[cfg(target_os = "windows")]
+pub fn initialize_recording_options(window: &WebviewWindow) -> tauri::Result<()> {
+  initialize_overlay(window)
+}
+
+#[cfg(target_os = "windows")]
+pub fn initialize_standalone_listbox(window: &WebviewWindow) -> tauri::Result<()> {
+  initialize_overlay(window)
+}
+
+#[cfg(target_os = "windows")]
+pub fn initialize_recording_dock(window: &WebviewWindow) -> tauri::Result<()> {
+  initialize_overlay(window)
 }
 
 #[cfg(target_os = "windows")]

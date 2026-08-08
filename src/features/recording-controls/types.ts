@@ -41,6 +41,9 @@ export type StartRecordingOptions = {
   windowId?: number | null;
 };
 
+/** What the screenshot button is currently reflecting. */
+export type ScreenshotState = "done" | "failed" | "idle" | "pending";
+
 export type RecordingErrorPhase = "start" | "pause" | "resume" | "stop";
 
 export type RecordingError = {

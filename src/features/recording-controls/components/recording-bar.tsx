@@ -3,9 +3,12 @@ import {
   AudioLines,
   Camera,
   CameraOff,
+  Check,
   Circle,
   CircleX,
+  FolderDown,
   ImageDown,
+  Images,
   Lock,
   Mic,
   MicOff,
@@ -25,10 +28,11 @@ import { Overlay } from "../../../components/base/overlay/overlay";
 import { RadioGroup } from "../../../components/base/radio-group/radio-group";
 import { Separator } from "../../../components/base/separator/separator";
 import { Sparkles } from "../../../components/base/sparkles/sparkles";
+import { cn } from "../../../lib/styling";
 import { RecordingInputs } from "../../recording-inputs/types";
 import { RecordingMode } from "../../recording-sources/types";
 import { canStartRecording } from "../can-record";
-import { RecordingStatus } from "../types";
+import { RecordingStatus, ScreenshotState } from "../types";
 
 import { IconRadio } from "./icon-radio";
 
@@ -41,6 +45,7 @@ type RecordingBarProps = {
   isCameraLocked?: boolean;
   isLocked?: boolean;
   isMicrophoneLocked?: boolean;
+  isScreenshotLocked?: boolean;
   mode?: RecordingMode;
   onCameraLockedPress?: () => void;
   onCancel?: () => void;
@@ -52,6 +57,9 @@ type RecordingBarProps = {
   onPointerUp?: () => void;
   onRecord?: () => void;
   onScreenshot?: () => void;
+  onScreenshotToClipboardChange?: (toClipboard: boolean) => void;
+  screenshotState?: ScreenshotState;
+  screenshotToClipboard?: boolean;
   status?: RecordingStatus;
 };
 
@@ -119,6 +127,7 @@ export function RecordingBar({
   isCameraLocked,
   isLocked,
   isMicrophoneLocked,
+  isScreenshotLocked,
   mode: controlledMode,
   onCameraLockedPress,
   onCancel,
@@ -130,6 +139,9 @@ export function RecordingBar({
   onPointerUp,
   onRecord,
   onScreenshot,
+  onScreenshotToClipboardChange,
+  screenshotState = "idle",
+  screenshotToClipboard = true,
   status = "idle",
 }: RecordingBarProps) {
   const [uncontrolledMode, setUncontrolledMode] =
@@ -160,6 +172,9 @@ export function RecordingBar({
   // The bar is hidden by Rust while a recording runs; disabling it as well
   // keeps a stale window from starting a second one.
   const isRecordingActive = status !== "idle";
+  const isCapturingStill = screenshotState === "pending";
+  const canScreenshot =
+    isScreenCapture && !isScreenshotLocked && !isRecordingActive;
   const canRecord =
     !isRecordingActive &&
     canStartRecording({
@@ -182,7 +197,7 @@ export function RecordingBar({
       <Overlay
         blur="sm"
         className="rounded-[10px]"
-        isOpen={isLocked && isScreenCapture}
+        isOpen={Boolean(isScreenshotLocked) && isScreenCapture}
       >
         <Lock />
       </Overlay>
@@ -319,19 +334,40 @@ export function RecordingBar({
         </div>
       </div>
 
-      <Button
-        aria-label="Take screenshot"
-        className="group self-stretch cursor-default"
-        isDisabled={!isScreenCapture || isLocked || isRecordingActive}
-        onPress={onScreenshot}
-        showFocus={false}
-        variant="ghost"
-      >
-        <ImageDown
-          className="origin-center transform-gpu backface-hidden will-change-transform transition-transform group-data-[hovered]:scale-110"
-          size={40}
+      <div className="flex flex-col items-center justify-center self-stretch">
+        <Button
+          aria-label="Take screenshot"
+          className="group cursor-default p-1"
+          isDisabled={!canScreenshot || isCapturingStill}
+          onPress={onScreenshot}
+          showFocus={false}
+          variant="ghost"
+        >
+          {screenshotState === "done" ? (
+            <Check className="text-success" size={40} strokeWidth={3} />
+          ) : (
+            <ImageDown
+              className={cn(
+                "origin-center transform-gpu backface-hidden will-change-transform transition-[color,transform] group-data-[hovered]:scale-110",
+                isCapturingStill && "animate-pulse text-muted",
+                screenshotState === "failed" && "text-error",
+              )}
+              size={40}
+            />
+          )}
+        </Button>
+
+        <InputToggle
+          isDisabled={!canScreenshot}
+          isSelected={screenshotToClipboard}
+          label="Copy screenshot to clipboard"
+          off={<FolderDown size={16} />}
+          on={<Images size={16} />}
+          onChange={(selected) => {
+            onScreenshotToClipboardChange?.(selected);
+          }}
         />
-      </Button>
+      </div>
 
       <Sparkles
         icon={Sparkle}

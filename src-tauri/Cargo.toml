@@ -23,13 +23,18 @@ tauri-plugin-window-state = "2.4.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 xcap = "0.9.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+tauri-plugin-clipboard-manager = "2.3.2"
 image = "0.25.10"
 rapidfuzz = "0.5.0"
 rayon = "1.12.0"
 cpal = "0.18.1"
 yuv = "0.8.16"
+quantette = "0.6.0"
+png = "0.18.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
+xcap = { version = "0.9.8", features = ["wgc"] }
 nokhwa = { version = "0.10.11", default-features = false, features = ["decoding", "input-msmf", "output-threaded"] }
 rdev = { git = "https://github.com/Narsil/rdev", rev = "c77b4e5456301cfa7f2226020f2a58f2f8d77c5d", features = ["serialize"] }
 windows = { version = "0.62.2", features = [
@@ -49,8 +54,21 @@ wasapi = "0.23.0"
 nokhwa = { version = "0.10.11", default-features = false, features = ["decoding", "input-avfoundation", "output-threaded"] }
 tauri-plugin-macos-permissions = "2.3.0"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
-tokio = { version = "1", features = ["macros", "time"] }
-cidre = { version = "0.19.0", default-features = false, features = ["async", "ax", "cg", "macos_13_0", "ns", "sc"] }
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+cidre = { version = "0.19.0", default-features = false, features = ["async", "ax", "cg", "macos_14_0", "ns", "sc"] }
 objc2 = "0.6.4"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"
+
+# Screenshot encoding is tight numeric work: colour quantization and deflate.
+# Unoptimized, a Retina capture takes over eleven seconds to save in a dev
+# build instead of under half a second, so `tauri dev` optimizes dependencies
+# and this crate's own pixel loops. Release builds are unaffected.
+#
+# Measured on a 3456x2234 capture: 11.8s -> 1.2s with dependencies optimized,
+# -> 0.45s with this crate at opt-level 1, which costs ~0.3s per rebuild.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.orbit-capture]
+opt-level = 1

@@ -26,11 +26,13 @@ export const ALL_SYSTEM_AUDIO: SystemAudioSource = {
 type RecordingInputStore = {
   cameraFlippedById: Record<string, boolean>;
   inputs: RecordingInputs;
+  screenshotToClipboard: boolean;
   selectedCamera: InputDevice | null;
   selectedMicrophone: InputDevice | null;
   selectedSystemAudio: SystemAudioSource[];
   setCameraFlipped: (cameraId: string, flipped: boolean) => void;
   setInput: (input: keyof RecordingInputs, selected: boolean) => void;
+  setScreenshotToClipboard: (toClipboard: boolean) => void;
   setSelectedCamera: (camera: InputDevice | null) => void;
   setSelectedMicrophone: (microphone: InputDevice | null) => void;
   setSelectedSystemAudio: (sources: SystemAudioSource[]) => void;
@@ -46,6 +48,7 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
         showCursor: true,
         systemAudio: false,
       },
+      screenshotToClipboard: true,
       selectedCamera: null,
       selectedMicrophone: null,
       selectedSystemAudio: [ALL_SYSTEM_AUDIO],
@@ -61,6 +64,9 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
         set((state) => ({
           inputs: { ...state.inputs, [input]: selected },
         }));
+      },
+      setScreenshotToClipboard: (screenshotToClipboard) => {
+        set({ screenshotToClipboard });
       },
       setSelectedCamera: (selectedCamera) => {
         set({ selectedCamera });

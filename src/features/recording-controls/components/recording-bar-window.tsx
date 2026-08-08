@@ -1,5 +1,5 @@
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   openPermissionSettings,
@@ -9,6 +9,7 @@ import {
   selectCanRecordCamera,
   selectCanRecordMicrophone,
   selectCanRecordScreen,
+  selectCanScreenshot,
   usePermissionStore,
 } from "../../permissions/store";
 import { PermissionKind, PermissionStatus } from "../../permissions/types";
@@ -26,13 +27,20 @@ import {
   showRegionSelector,
 } from "../../recording-sources/api";
 import { useRecordingSourceStore } from "../../recording-sources/store";
+import { captureStill, ScreenshotTarget } from "../../screenshots/api";
 import { startRecording } from "../api";
 import { selectStatus, useRecordingStore } from "../store";
-import { RecordingError, StartRecordingOptions } from "../types";
+import {
+  RecordingError,
+  ScreenshotState,
+  StartRecordingOptions,
+} from "../types";
 
 import { RecordingBar } from "./recording-bar";
 
 const RECORDING_ERROR_EVENT = "recording://error";
+/** How long the screenshot button holds its outcome before going back to idle. */
+const SCREENSHOT_FEEDBACK_MS = 2000;
 
 const synchronizeRecordingUi = async (
   mode = useRecordingSourceStore.getState().recordingMode,
@@ -71,6 +79,23 @@ const startRecordingOptions = (): StartRecordingOptions => {
   };
 };
 
+/** Mirrors how `startRecordingOptions` pairs a region with its monitor. */
+const screenshotTarget = (): ScreenshotTarget | null => {
+  const { recordingMode, region, selectedMonitor, selectedWindow } =
+    useRecordingSourceStore.getState();
+
+  if (recordingMode === "window") {
+    return selectedWindow
+      ? { kind: "window", windowId: selectedWindow.id }
+      : null;
+  }
+  if (!selectedMonitor) return null;
+
+  return recordingMode === "region"
+    ? { kind: "region", monitorId: selectedMonitor.id, region }
+    : { kind: "screen", monitorId: selectedMonitor.id };
+};
+
 const grantPermission = (
   permission: PermissionKind,
   status: PermissionStatus,
@@ -85,9 +110,13 @@ export function RecordingBarWindow() {
   const canRecordCamera = usePermissionStore(selectCanRecordCamera);
   const canRecordMicrophone = usePermissionStore(selectCanRecordMicrophone);
   const canRecordScreen = usePermissionStore(selectCanRecordScreen);
+  const canScreenshot = usePermissionStore(selectCanScreenshot);
   const hydrated = usePermissionStore((state) => state.hydrated);
   const permissions = usePermissionStore((state) => state.permissions);
   const status = useRecordingStore(selectStatus);
+  const [screenshotState, setScreenshotState] =
+    useState<ScreenshotState>("idle");
+  const screenshotResetRef = useRef<number | undefined>(undefined);
   const {
     recordingMode,
     selectedMonitor,
@@ -95,11 +124,19 @@ export function RecordingBarWindow() {
     setRecordingMode,
     setRegionEditing,
   } = useRecordingSourceStore((state) => state);
-  const { inputs, setInput } = useRecordingInputStore((state) => state);
+  const { inputs, screenshotToClipboard, setInput, setScreenshotToClipboard } =
+    useRecordingInputStore((state) => state);
 
   useEffect(() => {
     setRegionEditing(false);
   }, [setRegionEditing]);
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(screenshotResetRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     void synchronizeRecordingUi();
@@ -156,6 +193,7 @@ export function RecordingBarWindow() {
       isCameraLocked={!hydrated || !canRecordCamera}
       isLocked={hydrated && !canRecordScreen}
       isMicrophoneLocked={!hydrated || !canRecordMicrophone}
+      isScreenshotLocked={hydrated && !canScreenshot}
       mode={recordingMode}
       onCameraLockedPress={() => {
         grantPermission("camera", permissions.camera);
@@ -190,6 +228,36 @@ export function RecordingBarWindow() {
           console.error("Could not start the recording", error);
         });
       }}
+      onScreenshot={() => {
+        const target = screenshotTarget();
+        if (!target) return;
+
+        // The check has to mean the file exists. Saving encodes a few hundred
+        // milliseconds of pixels, so claiming success on the press would be a
+        // lie for exactly the case that takes long enough to notice.
+        window.clearTimeout(screenshotResetRef.current);
+        setScreenshotState("pending");
+        captureStill({
+          showCursor: inputs.showCursor,
+          target,
+          toClipboard: screenshotToClipboard,
+        })
+          .then(() => {
+            setScreenshotState("done");
+          })
+          .catch((error: unknown) => {
+            console.error("Could not take the screenshot", error);
+            setScreenshotState("failed");
+          })
+          .finally(() => {
+            screenshotResetRef.current = window.setTimeout(() => {
+              setScreenshotState("idle");
+            }, SCREENSHOT_FEEDBACK_MS);
+          });
+      }}
+      onScreenshotToClipboardChange={setScreenshotToClipboard}
+      screenshotState={screenshotState}
+      screenshotToClipboard={screenshotToClipboard}
       status={status}
     />
   );

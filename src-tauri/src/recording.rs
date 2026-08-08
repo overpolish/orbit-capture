@@ -405,7 +405,9 @@ fn prepare_windows(app: &AppHandle, options: &StartRecordingOptions) -> Result<(
 fn restore_windows(app: &AppHandle) {
   let _ = windows::hide_recording_dock(app);
   if windows::is_region_selector_visible(app) {
-    let _ = windows::set_region_selector_passthrough(app.clone(), false);
+    // Interactivity is deliberately not touched here. The overlay is about to
+    // be hidden, and when the bar shows it again `show_region_selector`
+    // re-asserts the invariant for us.
     let _ = windows::hide_region_selector(app.clone());
   }
 }
