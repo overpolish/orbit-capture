@@ -30,7 +30,11 @@ pub fn show(app: &AppHandle) -> tauri::Result<()> {
     .transparent(true)
     .effects(WindowEffectsConfig {
       color: None,
-      effects: vec![Effect::UnderWindowBackground],
+      // `UnderWindowBackground` is macOS-only; `Mica` is its Windows
+      // counterpart. Listing both lets each platform pick the one it honors —
+      // without Mica, the transparent window has no backdrop on Windows and
+      // shows through wherever the web content isn't fully opaque.
+      effects: vec![Effect::UnderWindowBackground, Effect::Mica],
       radius: Some(10.0),
       state: Some(EffectState::Active),
     })

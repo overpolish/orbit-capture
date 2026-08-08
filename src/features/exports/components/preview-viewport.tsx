@@ -6,8 +6,21 @@ const FIT = 1;
 /** Small captures can still be magnified even when that passes native pixels. */
 const MIN_MAX_ZOOM = 4;
 /** Pinch deltas are small and arrive continuously, so the rate stays gentle. */
-const ZOOM_RATE = 0.01;
+const PINCH_ZOOM_RATE = 0.01;
+/**
+ * A mouse-wheel notch carries a far larger delta than a pinch step (~100 vs a
+ * handful), so it needs a much smaller rate to land near one comfortable zoom
+ * step per notch instead of jumping across the whole range.
+ */
+const WHEEL_ZOOM_RATE = 0.0015;
 const RESET_TRANSITION = "transform 160ms ease-out";
+
+/**
+ * Only the Mac trackpad distinguishes a pinch (wheel event with `ctrlKey`) from
+ * a two-finger scroll, so only there does a plain scroll pan. Everywhere else a
+ * plain scroll wheel zooms directly, and panning is click-and-drag.
+ */
+const isMac = navigator.userAgent.includes("Mac");
 
 type Transform = { x: number; y: number; zoom: number };
 type Geometry = {
@@ -192,11 +205,16 @@ export function PreviewViewport({
       clearTransition();
       const current = transformRef.current;
 
-      // A trackpad pinch arrives as a wheel event with ctrlKey set. Only that
-      // zooms; a plain two-finger scroll pans, the way Preview does it.
-      if (event.ctrlKey) {
+      // On a Mac trackpad a pinch arrives as a wheel event with ctrlKey set:
+      // only that zooms, and a plain two-finger scroll pans, the way Preview
+      // does it. Everywhere else the scroll wheel zooms directly (Ctrl+wheel
+      // still zooms too). The rate follows the gesture, not the modifier: a
+      // Mac pinch takes the gentle pinch rate, any wheel takes the wheel rate.
+      const isPinch = isMac && event.ctrlKey;
+      if (!isMac || event.ctrlKey) {
+        const rate = isPinch ? PINCH_ZOOM_RATE : WHEEL_ZOOM_RATE;
         const next = clamp(
-          current.zoom * Math.exp(-event.deltaY * ZOOM_RATE),
+          current.zoom * Math.exp(-event.deltaY * rate),
           FIT,
           maxZoom(),
         );
