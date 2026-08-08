@@ -212,6 +212,10 @@ pub async fn start_audio_preview(
   process_ids: Option<Vec<u32>>,
   channel: Channel<AudioPreviewEvent>,
 ) -> Result<(), String> {
+  // Process loopback is a WASAPI concept, so no other platform reads these.
+  #[cfg(not(target_os = "windows"))]
+  let _ = &process_ids;
+
   match kind {
     AudioPreviewKind::Microphone => {
       let (device, config, sample_format) = microphone(device_id.as_deref())?;

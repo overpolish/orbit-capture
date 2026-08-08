@@ -55,7 +55,9 @@ export const CheckOnClickButton = ({
     <Button
       {...props}
       className={cn(className, "relative")}
-      isDisabled={isClicked}
+      // The caller's own disabled state has to survive, or a button that is
+      // meant to be unavailable stays pressable between checks.
+      isDisabled={Boolean(props.isDisabled) || isClicked}
       onPress={handlePress}
     >
       {children}

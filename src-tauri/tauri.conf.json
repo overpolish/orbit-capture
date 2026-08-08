@@ -110,6 +110,27 @@
           "radius": 10,
           "state": "active"
         }
+      },
+      {
+        "label": "recording-dock",
+        "title": "Orbit Capture Recording Dock",
+        "url": "/recording-dock",
+        "width": 216,
+        "height": 44,
+        "acceptFirstMouse": true,
+        "alwaysOnTop": true,
+        "decorations": false,
+        "focus": false,
+        "resizable": false,
+        "shadow": true,
+        "skipTaskbar": true,
+        "transparent": true,
+        "visible": false,
+        "windowEffects": {
+          "effects": ["underWindowBackground", "mica"],
+          "radius": 10,
+          "state": "active"
+        }
       }
     ],
     "security": {

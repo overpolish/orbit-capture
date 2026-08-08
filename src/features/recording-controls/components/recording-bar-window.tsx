@@ -5,7 +5,12 @@ import {
   openPermissionSettings,
   requestPermission,
 } from "../../permissions/api";
-import { usePermissionStore } from "../../permissions/store";
+import {
+  selectCanRecordCamera,
+  selectCanRecordMicrophone,
+  selectCanRecordScreen,
+  usePermissionStore,
+} from "../../permissions/store";
 import { PermissionKind, PermissionStatus } from "../../permissions/types";
 import {
   hideRecordingOptions,
@@ -21,13 +26,22 @@ import {
   showRegionSelector,
 } from "../../recording-sources/api";
 import { useRecordingSourceStore } from "../../recording-sources/store";
+import { startRecording } from "../api";
+import { selectStatus, useRecordingStore } from "../store";
+import { RecordingError, StartRecordingOptions } from "../types";
 
 import { RecordingBar } from "./recording-bar";
+
+const RECORDING_ERROR_EVENT = "recording://error";
 
 const synchronizeRecordingUi = async (
   mode = useRecordingSourceStore.getState().recordingMode,
   monitor = useRecordingSourceStore.getState().selectedMonitor,
 ) => {
+  // A rehydrate mid-recording must not re-show the chrome that starting the
+  // recording deliberately hid.
+  if (useRecordingStore.getState().snapshot.status !== "idle") return;
+
   const hasSourceSelector = !["audio", "camera"].includes(mode);
 
   await setRecordingSourceSelectorVisible(hasSourceSelector);
@@ -36,6 +50,25 @@ const synchronizeRecordingUi = async (
   } else {
     await hideRegionSelector();
   }
+};
+
+const startRecordingOptions = (): StartRecordingOptions => {
+  const { recordingMode, region, selectedMonitor, selectedWindow } =
+    useRecordingSourceStore.getState();
+  const { inputs, selectedCamera, selectedMicrophone } =
+    useRecordingInputStore.getState();
+  const wantsCamera = inputs.camera || recordingMode === "camera";
+
+  return {
+    cameraId: wantsCamera ? (selectedCamera?.id ?? null) : null,
+    microphoneId: inputs.microphone ? (selectedMicrophone?.id ?? null) : null,
+    mode: recordingMode,
+    monitorId: selectedMonitor?.id ?? null,
+    region: recordingMode === "region" ? region : null,
+    showCursor: inputs.showCursor,
+    systemAudio: inputs.systemAudio,
+    windowId: selectedWindow?.id ?? null,
+  };
 };
 
 const grantPermission = (
@@ -49,9 +82,19 @@ const grantPermission = (
 };
 
 export function RecordingBarWindow() {
-  const { hydrated, permissions } = usePermissionStore((state) => state);
-  const { recordingMode, selectedMonitor, setRecordingMode, setRegionEditing } =
-    useRecordingSourceStore((state) => state);
+  const canRecordCamera = usePermissionStore(selectCanRecordCamera);
+  const canRecordMicrophone = usePermissionStore(selectCanRecordMicrophone);
+  const canRecordScreen = usePermissionStore(selectCanRecordScreen);
+  const hydrated = usePermissionStore((state) => state.hydrated);
+  const permissions = usePermissionStore((state) => state.permissions);
+  const status = useRecordingStore(selectStatus);
+  const {
+    recordingMode,
+    selectedMonitor,
+    selectedWindow,
+    setRecordingMode,
+    setRegionEditing,
+  } = useRecordingSourceStore((state) => state);
   const { inputs, setInput } = useRecordingInputStore((state) => state);
 
   useEffect(() => {
@@ -60,7 +103,7 @@ export function RecordingBarWindow() {
 
   useEffect(() => {
     void synchronizeRecordingUi();
-  }, [recordingMode, selectedMonitor]);
+  }, [recordingMode, selectedMonitor, status]);
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
@@ -82,17 +125,37 @@ export function RecordingBarWindow() {
     };
   }, []);
 
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let disposed = false;
+
+    // There is no toast surface, so a failure is logged and the UI simply
+    // follows the state Rust reverted to.
+    void listen<RecordingError>(RECORDING_ERROR_EVENT, ({ payload }) => {
+      console.error(`Recording ${payload.phase} failed: ${payload.message}`);
+    }).then((listener) => {
+      if (disposed) {
+        listener();
+      } else {
+        unlisten = listener;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   return (
     <RecordingBar
+      hasSelectedMonitor={selectedMonitor !== null}
+      hasSelectedWindow={selectedWindow !== null}
       initialMode={recordingMode}
       inputs={inputs}
-      isCameraLocked={!hydrated || !permissions.camera.granted}
-      isLocked={
-        hydrated &&
-        (!permissions.accessibility.granted ||
-          !permissions.screenRecording.granted)
-      }
-      isMicrophoneLocked={!hydrated || !permissions.microphone.granted}
+      isCameraLocked={!hydrated || !canRecordCamera}
+      isLocked={hydrated && !canRecordScreen}
+      isMicrophoneLocked={!hydrated || !canRecordMicrophone}
       mode={recordingMode}
       onCameraLockedPress={() => {
         grantPermission("camera", permissions.camera);
@@ -122,6 +185,12 @@ export function RecordingBarWindow() {
       onPointerUp={() => {
         void finishRecordingBarDrag();
       }}
+      onRecord={() => {
+        startRecording(startRecordingOptions()).catch((error: unknown) => {
+          console.error("Could not start the recording", error);
+        });
+      }}
+      status={status}
     />
   );
 }

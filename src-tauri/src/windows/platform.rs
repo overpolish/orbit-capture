@@ -90,6 +90,13 @@ pub fn initialize_standalone_listbox(window: &WebviewWindow) -> tauri::Result<()
   configure_panel::<RecordingBarPanel>(window, 31)
 }
 
+// The pill sits above every other panel so it stays reachable over the
+// click-through region overlay and over fullscreen apps.
+#[cfg(target_os = "macos")]
+pub fn initialize_recording_dock(window: &WebviewWindow) -> tauri::Result<()> {
+  configure_panel::<RecordingBarPanel>(window, 32)
+}
+
 #[cfg(target_os = "macos")]
 pub fn set_opacity(window: &WebviewWindow, opacity: f64) -> tauri::Result<()> {
   let panel = registered_panel(window)?;
@@ -112,6 +119,7 @@ pub fn restore_recording_level(window: &WebviewWindow) -> tauri::Result<()> {
     "recording-source-selector" => 29,
     "recording-options" => 30,
     "standalone-listbox" => 31,
+    "recording-dock" => 32,
     _ => return Ok(()),
   };
   let panel = registered_panel(window)?;
@@ -177,6 +185,26 @@ pub fn initialize_recording_options(window: &WebviewWindow) -> tauri::Result<()>
 pub fn initialize_standalone_listbox(window: &WebviewWindow) -> tauri::Result<()> {
   window.set_always_on_top(true)?;
   window.set_skip_taskbar(true)
+}
+
+#[cfg(target_os = "windows")]
+pub fn initialize_recording_dock(window: &WebviewWindow) -> tauri::Result<()> {
+  use windows::Win32::{
+    Foundation::HWND,
+    UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE},
+  };
+
+  window.set_always_on_top(true)?;
+  window.set_skip_taskbar(true)?;
+
+  // Keeps the pill out of every capture and screenshot taken of this machine,
+  // including the ones this app takes itself.
+  unsafe {
+    SetWindowDisplayAffinity(HWND(window.hwnd()?.0), WDA_EXCLUDEFROMCAPTURE)
+      .map_err(std::io::Error::other)?;
+  }
+
+  Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -263,6 +291,11 @@ pub fn initialize_recording_options(_window: &WebviewWindow) -> tauri::Result<()
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn initialize_standalone_listbox(_window: &WebviewWindow) -> tauri::Result<()> {
+  Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn initialize_recording_dock(_window: &WebviewWindow) -> tauri::Result<()> {
   Ok(())
 }
 

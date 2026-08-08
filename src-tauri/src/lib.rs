@@ -1,6 +1,7 @@
 mod audio_preview;
 mod camera_preview;
 mod permissions;
+mod recording;
 mod recording_inputs;
 mod recording_sources;
 
@@ -27,6 +28,7 @@ pub fn run() {
     .manage(audio_preview::AudioPreviewState::default())
     .manage(camera_preview::CameraPreviewState::default())
     .manage(permissions::PermissionState::default())
+    .manage(recording::RecordingState::default())
     .invoke_handler(tauri::generate_handler![
       audio_preview::start_audio_preview,
       audio_preview::stop_audio_preview,
@@ -37,6 +39,12 @@ pub fn run() {
       permissions::request_permission,
       permissions::require_permissions,
       permissions::restart_app,
+      recording::cancel_recording,
+      recording::get_recording_snapshot,
+      recording::pause_recording,
+      recording::resume_recording,
+      recording::start_recording,
+      recording::stop_recording,
       recording_inputs::list_cameras,
       recording_inputs::list_microphones,
       recording_sources::center_window,
@@ -48,6 +56,7 @@ pub fn run() {
       recording_sources::restore_window_border,
       windows::collapse_recording_source_selector,
       windows::finish_recording_bar_drag,
+      windows::finish_recording_dock_drag,
       windows::hide_recording_options,
       windows::hide_recording_ui,
       windows::hide_region_selector,
@@ -74,13 +83,16 @@ pub fn run() {
       windows::initialize_region_selector(app.handle())?;
       windows::initialize_recording_options(app.handle())?;
       windows::initialize_standalone_listbox(app.handle())?;
+      windows::initialize_recording_dock(app.handle())?;
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingBar);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingSourceSelector);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RegionSelector);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingOptions);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::StandaloneListbox);
+      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingDock);
       windows::initialize_recording_bar_position(app.handle())?;
       windows::manage_recording_bar_movement(app.handle());
+      windows::manage_recording_dock_movement(app.handle());
       windows::manage_recording_source_selector_dismissal(app.handle());
 
       #[cfg(target_os = "macos")]

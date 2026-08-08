@@ -1,0 +1,49 @@
+import { RecordingMode, Region } from "../recording-sources/types";
+
+export const recordingStatuses = [
+  "idle",
+  "starting",
+  "recording",
+  "paused",
+  "stopping",
+] as const;
+
+export type RecordingStatus = (typeof recordingStatuses)[number];
+
+/**
+ * Timestamps are stamped by Rust in epoch milliseconds so that a window which
+ * reloads, or joins late, derives exactly the same elapsed time as every other.
+ */
+export type RecordingSnapshot = {
+  accumulatedMs: number;
+  mode: RecordingMode | null;
+  pausedAtMs: number | null;
+  startedAtMs: number | null;
+  status: RecordingStatus;
+};
+
+export const initialRecordingSnapshot: RecordingSnapshot = {
+  accumulatedMs: 0,
+  mode: null,
+  pausedAtMs: null,
+  startedAtMs: null,
+  status: "idle",
+};
+
+export type StartRecordingOptions = {
+  mode: RecordingMode;
+  showCursor: boolean;
+  systemAudio: boolean;
+  cameraId?: string | null;
+  microphoneId?: string | null;
+  monitorId?: number | null;
+  region?: Region | null;
+  windowId?: number | null;
+};
+
+export type RecordingErrorPhase = "start" | "pause" | "resume" | "stop";
+
+export type RecordingError = {
+  message: string;
+  phase: RecordingErrorPhase;
+};

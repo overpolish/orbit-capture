@@ -2,6 +2,7 @@ import { type Meta, type StoryObj } from "@storybook/react-vite";
 
 import { RecordingBar } from "./recording-bar";
 const meta = {
+  args: { hasSelectedMonitor: true },
   component: RecordingBar,
   parameters: {
     layout: "centered",
@@ -13,6 +14,10 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
+
+export const NoMonitorSelected: Story = {
+  args: { hasSelectedMonitor: false },
+};
 
 export const PermissionsLocked: Story = {
   args: { isLocked: true },
@@ -39,6 +44,10 @@ export const Region: Story = {
 
 export const Window: Story = {
   args: { initialMode: "window" },
+};
+
+export const WindowSelected: Story = {
+  args: { hasSelectedWindow: true, initialMode: "window" },
 };
 
 export const CameraOnly: Story = {
@@ -69,4 +78,8 @@ export const AudioOnlyWithSystemAudio: Story = {
     initialInputs: { systemAudio: true },
     initialMode: "audio",
   },
+};
+
+export const Starting: Story = {
+  args: { status: "starting" },
 };

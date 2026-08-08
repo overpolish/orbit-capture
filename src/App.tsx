@@ -1,6 +1,8 @@
 import { PermissionSync } from "./features/permissions/permission-sync";
 import { PermissionsWindow } from "./features/permissions/permissions-window";
 import { RecordingBarWindow } from "./features/recording-controls/components/recording-bar-window";
+import { RecordingDockWindow } from "./features/recording-controls/components/recording-dock-window";
+import { RecordingStateSync } from "./features/recording-controls/recording-state-sync";
 import { RecordingInputSync } from "./features/recording-inputs/recording-input-sync";
 import { RecordingOptionsWindow } from "./features/recording-inputs/recording-options-window";
 import { RecordingSourceSelectorWindow } from "./features/recording-sources/recording-source-selector-window";
@@ -14,6 +16,8 @@ export function App() {
     switch (window.location.pathname) {
       case "/permissions":
         return <PermissionsWindow />;
+      case "/recording-dock":
+        return <RecordingDockWindow />;
       case "/recording-source-selector":
         return <RecordingSourceSelectorWindow />;
       case "/region-selector":
@@ -32,6 +36,7 @@ export function App() {
       <PermissionSync />
       <RecordingInputSync />
       <RecordingSourceSync />
+      <RecordingStateSync />
       <StandaloneListboxSync />
       {content}
     </>
