@@ -234,7 +234,7 @@ mod windows_platform {
   use image::{ImageBuffer, Rgba};
   use rapidfuzz::fuzz::ratio;
   use windows::{
-    core::PCWSTR,
+    core::{PCWSTR, PWSTR},
     Win32::{
       Foundation::{CloseHandle, HWND, RECT},
       Graphics::Gdi::{
@@ -242,9 +242,9 @@ mod windows_platform {
         MonitorFromWindow, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
         MONITORINFO, MONITOR_DEFAULTTONEAREST,
       },
-      System::{
-        ProcessStatus::K32GetModuleFileNameExW,
-        Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+      System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
       },
       UI::{
         Shell::ExtractIconExW,
@@ -285,22 +285,40 @@ mod windows_platform {
       .ok_or_else(|| format!("Could not find window '{title}'"))
   }
 
-  pub fn app_icon(cache_dir: &Path, pid: u32) -> Option<PathBuf> {
+  /// Full path of a process's executable image.
+  ///
+  /// Uses `PROCESS_QUERY_LIMITED_INFORMATION` + `QueryFullProcessImageNameW`
+  /// rather than `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` +
+  /// `GetModuleFileNameEx`: the heavier rights are denied when the target runs
+  /// at a higher integrity level (e.g. an elevated app while we are not), which
+  /// left elevated windows with no icon at all. The limited right crosses that
+  /// boundary, and reading the icon afterwards touches the file on disk, not the
+  /// process, so it needs nothing more.
+  fn process_image_path(pid: u32) -> Option<PathBuf> {
     unsafe {
-      let process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid).ok()?;
-      let mut buffer = [0_u16; 260];
-      let length = K32GetModuleFileNameExW(Some(process), None, &mut buffer);
+      let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+      let mut buffer = [0_u16; 1024];
+      let mut length = buffer.len() as u32;
+      let result = QueryFullProcessImageNameW(
+        process,
+        PROCESS_NAME_WIN32,
+        PWSTR::from_raw(buffer.as_mut_ptr()),
+        &mut length,
+      );
       let _ = CloseHandle(process);
-      if length == 0 {
-        return None;
-      }
+      result.ok()?;
+      (length > 0).then(|| PathBuf::from(OsString::from_wide(&buffer[..length as usize])))
+    }
+  }
 
-      let executable = PathBuf::from(OsString::from_wide(&buffer[..length as usize]));
-      let name = executable.file_stem()?.to_string_lossy();
-      let path = cache_dir.join(format!("app-{name}.png"));
-      if path.exists() {
-        return Some(path);
-      }
+  pub fn app_icon(cache_dir: &Path, pid: u32) -> Option<PathBuf> {
+    let executable = process_image_path(pid)?;
+    let name = executable.file_stem()?.to_string_lossy();
+    let path = cache_dir.join(format!("app-{name}.png"));
+    if path.exists() {
+      return Some(path);
+    }
+    unsafe {
       let executable_wide = OsStr::new(&executable)
         .encode_wide()
         .chain(std::iter::once(0))
@@ -376,17 +394,7 @@ mod windows_platform {
   }
 
   pub fn app_identity(pid: u32) -> Option<String> {
-    unsafe {
-      let process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid).ok()?;
-      let mut buffer = [0_u16; 260];
-      let length = K32GetModuleFileNameExW(Some(process), None, &mut buffer);
-      let _ = CloseHandle(process);
-      (length > 0).then(|| {
-        OsString::from_wide(&buffer[..length as usize])
-          .to_string_lossy()
-          .to_lowercase()
-      })
-    }
+    Some(process_image_path(pid)?.to_string_lossy().to_lowercase())
   }
 
   unsafe fn cleanup_icon(
