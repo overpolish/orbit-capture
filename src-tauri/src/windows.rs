@@ -15,6 +15,7 @@ mod platform;
 
 #[derive(Clone, Copy)]
 pub enum WindowLabel {
+  Export,
   #[cfg(target_os = "macos")]
   Permissions,
   RecordingBar,
@@ -28,6 +29,7 @@ pub enum WindowLabel {
 impl WindowLabel {
   pub const fn as_str(self) -> &'static str {
     match self {
+      Self::Export => "export",
       #[cfg(target_os = "macos")]
       Self::Permissions => "permissions",
       Self::RecordingBar => "recording-bar",
@@ -48,7 +50,6 @@ pub const CAPTURE_EXCLUDED_WINDOW_LABELS: &[&str] = &[
   WindowLabel::RegionSelector.as_str(),
 ];
 
-#[cfg(target_os = "macos")]
 pub fn get_or_create<F>(
   app: &AppHandle,
   label: WindowLabel,
@@ -269,6 +270,14 @@ pub fn initialize_recording_dock(app: &AppHandle) -> tauri::Result<()> {
   }
 
   Ok(())
+}
+
+pub fn initialize_export(window: &WebviewWindow) -> tauri::Result<()> {
+  platform::initialize_export(window)
+}
+
+pub fn raise_export(window: &WebviewWindow) -> tauri::Result<()> {
+  platform::raise_export(window)
 }
 
 const SELECTOR_COLLAPSED_WIDTH: f64 = 300.0;
@@ -1315,10 +1324,16 @@ pub fn hide_instead_of_close(app: &AppHandle, label: WindowLabel) {
     window.on_window_event(move |event| {
       if let WindowEvent::CloseRequested { api, .. } = event {
         api.prevent_close();
-        if matches!(label, WindowLabel::RecordingOptions) {
-          let _ = hide_recording_options(app.clone());
-        } else {
-          let _ = window_to_hide.hide();
+        match label {
+          WindowLabel::RecordingOptions => {
+            let _ = hide_recording_options(app.clone());
+          }
+          // Closing the export window is the same act as cancelling: the
+          // pending capture goes with it rather than lingering unseen.
+          WindowLabel::Export => crate::exports::discard(&app),
+          _ => {
+            let _ = window_to_hide.hide();
+          }
         }
       }
     });

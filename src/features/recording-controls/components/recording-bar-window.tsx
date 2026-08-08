@@ -243,7 +243,9 @@ export function RecordingBarWindow() {
           toClipboard: screenshotToClipboard,
         })
           .then(() => {
-            setScreenshotState("done");
+            // With the clipboard off the export window opens instead, and its
+            // appearance is the feedback; a check would claim a file exists.
+            setScreenshotState(screenshotToClipboard ? "done" : "idle");
           })
           .catch((error: unknown) => {
             console.error("Could not take the screenshot", error);

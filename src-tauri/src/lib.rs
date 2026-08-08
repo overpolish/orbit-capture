@@ -1,5 +1,6 @@
 mod audio_preview;
 mod camera_preview;
+mod exports;
 mod permissions;
 mod recording;
 mod recording_inputs;
@@ -14,6 +15,7 @@ mod windows;
 pub fn run() {
   let builder = tauri::Builder::default()
     .plugin(tauri_plugin_clipboard_manager::init())
+    .plugin(tauri_plugin_dialog::init())
     .plugin(
       tauri_plugin_window_state::Builder::default()
         .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
@@ -30,6 +32,7 @@ pub fn run() {
   builder
     .manage(audio_preview::AudioPreviewState::default())
     .manage(camera_preview::CameraPreviewState::default())
+    .manage(exports::ExportState::default())
     .manage(permissions::PermissionState::default())
     .manage(recording::RecordingState::default())
     .invoke_handler(tauri::generate_handler![
@@ -37,6 +40,13 @@ pub fn run() {
       audio_preview::stop_audio_preview,
       camera_preview::start_camera_preview,
       camera_preview::stop_camera_preview,
+      exports::browse_export_directory,
+      exports::cancel_export,
+      exports::copy_export_to_clipboard,
+      exports::get_export_preview,
+      exports::get_export_snapshot,
+      exports::save_export,
+      exports::set_export_directory,
       permissions::open_permission_settings,
       permissions::permission_snapshot,
       permissions::request_permission,
@@ -97,6 +107,7 @@ pub fn run() {
       windows::initialize_recording_bar_position(app.handle())?;
       windows::manage_recording_bar_movement(app.handle());
       windows::manage_recording_dock_movement(app.handle());
+      exports::initialize(app.handle());
       windows::manage_recording_source_selector_dismissal(app.handle());
 
       #[cfg(target_os = "macos")]

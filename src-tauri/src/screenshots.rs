@@ -18,8 +18,6 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::recording::Region;
 
-const FILE_EXTENSION: &str = "png";
-
 /// A captured still: straight (non-premultiplied) RGBA8, packed rows, top down.
 /// That is what both the clipboard and the PNG encoder want.
 pub struct CapturedImage {
@@ -132,7 +130,7 @@ pub fn unique_path(
 
 /// Where a still goes when it is not going to the clipboard. Both are the
 /// platform's own screenshot destination.
-fn screenshot_directory(app: &AppHandle) -> Result<PathBuf, String> {
+pub fn screenshot_directory(app: &AppHandle) -> Result<PathBuf, String> {
   let path = app.path();
 
   #[cfg(target_os = "macos")]
@@ -269,7 +267,7 @@ fn encode_truecolor_png(image: &CapturedImage) -> Result<Vec<u8>, String> {
 ///
 /// Measured on a synthetic 3456x2234 desktop: 4.57 MB originally, 2.78 MB
 /// losslessly, 0.57 MB here, in ~390ms.
-fn encode_png(image: &CapturedImage) -> Result<Vec<u8>, String> {
+pub fn encode_png(image: &CapturedImage) -> Result<Vec<u8>, String> {
   if !is_opaque(&image.rgba) {
     return encode_truecolor_png(image);
   }
@@ -280,20 +278,6 @@ fn encode_png(image: &CapturedImage) -> Result<Vec<u8>, String> {
     .ok_or_else(|| "The capture could not be reduced to a palette".to_owned())?;
 
   encode_indexed_png(&palette, &indices, image.width, image.height)
-}
-
-fn save_png(app: &AppHandle, image: &CapturedImage) -> Result<PathBuf, String> {
-  let directory = screenshot_directory(app)?;
-  std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-
-  let stem = screenshot_file_stem(Local::now().naive_local());
-  let path = unique_path(&directory, &stem, FILE_EXTENSION, &|candidate| {
-    candidate.exists()
-  });
-
-  std::fs::write(&path, encode_png(image)?).map_err(|error| error.to_string())?;
-
-  Ok(path)
 }
 
 async fn capture(
@@ -345,13 +329,15 @@ pub async fn capture_still(
     return Ok(None);
   }
 
-  // Encoding is several hundred milliseconds of solid CPU, which has no
-  // business running on one of the async runtime's worker threads.
-  let saving = app.clone();
-  tauri::async_runtime::spawn_blocking(move || save_png(&saving, &image))
-    .await
-    .map_err(|error| error.to_string())?
-    .map(Some)
+  // With the clipboard off, the export window takes over: the user names the
+  // file and picks where it goes, so nothing is written here.
+  crate::exports::present_screenshot(
+    &app,
+    image,
+    screenshot_file_stem(Local::now().naive_local()),
+  )?;
+
+  Ok(None)
 }
 
 #[cfg(test)]

@@ -1,3 +1,5 @@
+import { ExportSync } from "./features/exports/export-sync";
+import { ExportWindow } from "./features/exports/export-window";
 import { PermissionSync } from "./features/permissions/permission-sync";
 import { PermissionsWindow } from "./features/permissions/permissions-window";
 import { RecordingBarWindow } from "./features/recording-controls/components/recording-bar-window";
@@ -14,6 +16,8 @@ import { StandaloneListboxWindow } from "./features/standalone-listbox/standalon
 export function App() {
   const content = (() => {
     switch (window.location.pathname) {
+      case "/export":
+        return <ExportWindow />;
       case "/permissions":
         return <PermissionsWindow />;
       case "/recording-dock":
@@ -33,6 +37,7 @@ export function App() {
 
   return (
     <>
+      <ExportSync />
       <PermissionSync />
       <RecordingInputSync />
       <RecordingSourceSync />

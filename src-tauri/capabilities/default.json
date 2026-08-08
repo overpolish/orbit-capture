@@ -3,6 +3,7 @@
   "identifier": "default",
   "description": "Capability for Orbit Capture windows",
   "windows": [
+    "export",
     "recording-bar",
     "recording-dock",
     "recording-source-selector",

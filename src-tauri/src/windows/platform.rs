@@ -97,6 +97,38 @@ pub fn initialize_recording_dock(window: &WebviewWindow) -> tauri::Result<()> {
   configure_panel::<RecordingBarPanel>(window, 32)
 }
 
+/// The export window is an ordinary focusable window, so it gets none of the
+/// panel treatment - only the capture exclusion, so that taking a screenshot
+/// while it is open never pictures it. On macOS every window this process owns
+/// is already excluded by owning-process, so there is nothing to do.
+#[cfg(target_os = "macos")]
+pub fn initialize_export(_window: &WebviewWindow) -> tauri::Result<()> {
+  Ok(())
+}
+
+/// Above every panel this app owns, which run 27 to 32.
+#[cfg(target_os = "macos")]
+const EXPORT_WINDOW_LEVEL: isize = 33;
+
+/// Lifts the export window over our own overlays.
+///
+/// `always_on_top` only puts an ordinary window at the floating level, which is
+/// below all of our panels, so a region capture would open the window beneath
+/// its own overlay. A window level is independent of key/focus state, so this
+/// does not stop the file name field from taking input.
+#[cfg(target_os = "macos")]
+pub fn raise_export(window: &WebviewWindow) -> tauri::Result<()> {
+  use objc2_app_kit::NSWindow;
+
+  let address = window.ns_window()? as usize;
+  window.app_handle().run_on_main_thread(move || {
+    // SAFETY: Tauri hands back a live NSWindow for a macOS webview window, and
+    // this closure runs on the thread that owns it.
+    let ns_window: &NSWindow = unsafe { &*(address as *const NSWindow) };
+    ns_window.setLevel(EXPORT_WINDOW_LEVEL);
+  })
+}
+
 #[cfg(target_os = "macos")]
 pub fn set_opacity(window: &WebviewWindow, opacity: f64) -> tauri::Result<()> {
   let panel = registered_panel(window)?;
@@ -163,13 +195,18 @@ pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
 /// exclusion is what removes the need to hide the UI before capturing.
 #[cfg(target_os = "windows")]
 fn initialize_overlay(window: &WebviewWindow) -> tauri::Result<()> {
+  window.set_always_on_top(true)?;
+  window.set_skip_taskbar(true)?;
+  exclude_from_capture(window)
+}
+
+#[cfg(target_os = "windows")]
+fn exclude_from_capture(window: &WebviewWindow) -> tauri::Result<()> {
   use windows::Win32::{
     Foundation::HWND,
     UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE},
   };
 
-  window.set_always_on_top(true)?;
-  window.set_skip_taskbar(true)?;
   unsafe {
     SetWindowDisplayAffinity(HWND(window.hwnd()?.0), WDA_EXCLUDEFROMCAPTURE)
       .map_err(std::io::Error::other)?;
@@ -206,6 +243,18 @@ pub fn initialize_standalone_listbox(window: &WebviewWindow) -> tauri::Result<()
 #[cfg(target_os = "windows")]
 pub fn initialize_recording_dock(window: &WebviewWindow) -> tauri::Result<()> {
   initialize_overlay(window)
+}
+
+#[cfg(target_os = "windows")]
+pub fn initialize_export(window: &WebviewWindow) -> tauri::Result<()> {
+  exclude_from_capture(window)
+}
+
+/// The overlays are all topmost, so re-asserting z-order on show puts the
+/// export window at the front of that band without taking focus off it.
+#[cfg(target_os = "windows")]
+pub fn raise_export(window: &WebviewWindow) -> tauri::Result<()> {
+  raise_without_activation(window)
 }
 
 #[cfg(target_os = "windows")]
@@ -297,6 +346,16 @@ pub fn initialize_standalone_listbox(_window: &WebviewWindow) -> tauri::Result<(
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn initialize_recording_dock(_window: &WebviewWindow) -> tauri::Result<()> {
+  Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn initialize_export(_window: &WebviewWindow) -> tauri::Result<()> {
+  Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn raise_export(_window: &WebviewWindow) -> tauri::Result<()> {
   Ok(())
 }
 

@@ -32,6 +32,7 @@ cpal = "0.18.1"
 yuv = "0.8.16"
 quantette = "0.6.0"
 png = "0.18.1"
+tauri-plugin-dialog = "2.7.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 xcap = { version = "0.9.8", features = ["wgc"] }
