@@ -29,7 +29,7 @@ import { RadioGroup } from "../../../components/base/radio-group/radio-group";
 import { Separator } from "../../../components/base/separator/separator";
 import { Sparkles } from "../../../components/base/sparkles/sparkles";
 import { cn } from "../../../lib/styling";
-import { RecordingInputs } from "../../recording-inputs/types";
+import { RecordingFps, RecordingInputs } from "../../recording-inputs/types";
 import { RecordingMode } from "../../recording-sources/types";
 import { canStartRecording } from "../can-record";
 import { RecordingStatus, ScreenshotState } from "../types";
@@ -37,8 +37,10 @@ import { RecordingStatus, ScreenshotState } from "../types";
 import { IconRadio } from "./icon-radio";
 
 type RecordingBarProps = {
+  fps?: RecordingFps;
   hasSelectedMonitor?: boolean;
   hasSelectedWindow?: boolean;
+  initialFps?: RecordingFps;
   initialInputs?: Partial<RecordingInputs>;
   initialMode?: RecordingMode;
   inputs?: RecordingInputs;
@@ -49,6 +51,7 @@ type RecordingBarProps = {
   mode?: RecordingMode;
   onCameraLockedPress?: () => void;
   onCancel?: () => void;
+  onFpsChange?: (fps: RecordingFps) => void;
   onInputChange?: (input: keyof RecordingInputs, selected: boolean) => void;
   onInteract?: () => void;
   onMicrophoneLockedPress?: () => void;
@@ -119,8 +122,10 @@ function InputToggle({
 }
 
 export function RecordingBar({
+  fps: controlledFps,
   hasSelectedMonitor = false,
   hasSelectedWindow = false,
+  initialFps = 60,
   initialInputs,
   initialMode = "screen",
   inputs: controlledInputs,
@@ -131,6 +136,7 @@ export function RecordingBar({
   mode: controlledMode,
   onCameraLockedPress,
   onCancel,
+  onFpsChange,
   onInputChange,
   onInteract,
   onMicrophoneLockedPress,
@@ -146,6 +152,8 @@ export function RecordingBar({
 }: RecordingBarProps) {
   const [uncontrolledMode, setUncontrolledMode] =
     useState<RecordingMode>(initialMode);
+  const [uncontrolledFps, setUncontrolledFps] =
+    useState<RecordingFps>(initialFps);
   const [uncontrolledInputs, setUncontrolledInputs] = useState<RecordingInputs>(
     {
       ...defaultInputs,
@@ -155,6 +163,7 @@ export function RecordingBar({
   const optionsButtonRef = useRef<HTMLButtonElement>(null);
 
   const mode = controlledMode ?? uncontrolledMode;
+  const fps = controlledFps ?? uncontrolledFps;
   const inputs = controlledInputs ?? uncontrolledInputs;
 
   const setInput = (input: keyof RecordingInputs, selected: boolean) => {
@@ -189,7 +198,7 @@ export function RecordingBar({
 
   return (
     <main
-      className="window-surface flex h-full min-h-[92px] w-full min-w-[628px] items-center justify-center overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg"
+      className="window-surface flex h-full min-h-[92px] w-full min-w-[648px] items-center justify-center overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg"
       data-tauri-drag-region="deep"
       onPointerDown={onInteract}
       onPointerUpCapture={onPointerUp}
@@ -334,7 +343,10 @@ export function RecordingBar({
         </div>
       </div>
 
-      <div className="flex flex-col items-center justify-center self-stretch">
+      {/* `mr-3` rather than a gap on the row: everything to the left of here
+          is separated by rules, and only these last two columns - which grew a
+          toggle each underneath them - need air between them. */}
+      <div className="mr-3 flex flex-col items-center justify-center self-stretch">
         <Button
           aria-label="Take screenshot"
           className="group cursor-default p-1"
@@ -375,21 +387,37 @@ export function RecordingBar({
         scale={{ max: 0.5, min: 0.2 }}
         sparklesCount={canRecord ? 2 : 0}
       >
-        <Button
-          aria-label="Start recording"
-          className="group self-stretch cursor-default"
-          isDisabled={!canRecord}
-          onPress={onRecord}
-          showFocus={false}
-          variant="ghost"
-        >
-          <div className="flex flex-col items-center gap-1">
+        {/* Padding rather than margin: this sits inside the sparkle wrapper's
+            inline-block, so the space has to come from within it to widen the
+            column at all. */}
+        <div className="flex flex-col items-center justify-center self-stretch pr-2">
+          <Button
+            aria-label="Start recording"
+            className="group cursor-default p-1"
+            isDisabled={!canRecord}
+            onPress={onRecord}
+            showFocus={false}
+            variant="ghost"
+          >
             <Circle
               className="origin-center transform-gpu backface-hidden will-change-transform transition-transform group-data-[hovered]:scale-110"
               size={40}
             />
-          </div>
-        </Button>
+          </Button>
+
+          <InputToggle
+            isDisabled={isRecordingActive}
+            isSelected={fps === 60}
+            label="Frames per second"
+            off={<span className="text-xxs tabular-nums">30</span>}
+            on={<span className="text-xxs tabular-nums">60</span>}
+            onChange={(smooth) => {
+              const nextFps: RecordingFps = smooth ? 60 : 30;
+              if (controlledFps === undefined) setUncontrolledFps(nextFps);
+              onFpsChange?.(nextFps);
+            }}
+          />
+        </div>
       </Sparkles>
     </main>
   );

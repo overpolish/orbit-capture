@@ -4,10 +4,12 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::windows::{self, WindowLabel};
 
-const WIDTH: f64 = 460.0;
+const WIDTH: f64 = 560.0;
 /// A close-enough first paint. The window resizes itself to the content's
 /// measured height as soon as it mounts, so this only avoids a visible jump.
-const HEIGHT: f64 = 530.0;
+/// Sized for a recording with one audio track, which lands near 590; a
+/// screenshot settles a little under it and a silent recording a little over.
+const HEIGHT: f64 = 600.0;
 
 /// Built at runtime rather than declared in `tauri.conf.json`, like the
 /// permissions window: it is an ordinary focusable window, and deliberately
@@ -28,6 +30,7 @@ pub fn show(app: &AppHandle) -> tauri::Result<()> {
     .shadow(true)
     .skip_taskbar(true)
     .transparent(true)
+    .accept_first_mouse(true)
     .effects(WindowEffectsConfig {
       color: None,
       // `UnderWindowBackground` is macOS-only; `Mica` is its Windows

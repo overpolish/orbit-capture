@@ -16,7 +16,7 @@
         "label": "recording-bar",
         "title": "Orbit Capture Recording Bar",
         "url": "/recording-bar",
-        "width": 628,
+        "width": 648,
         "height": 92,
         "acceptFirstMouse": true,
         "alwaysOnTop": false,
@@ -137,6 +137,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
+          "$APPDATA/Recordings/*",
           "$TEMP/OrbitCapture/application-sources/**",
           "$TEMP/OrbitCapture/window-selector/**"
         ]

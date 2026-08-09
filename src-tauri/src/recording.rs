@@ -1,22 +1,44 @@
+mod encoding;
+#[cfg(target_os = "macos")]
+mod microphone;
+#[cfg(target_os = "macos")]
+mod platform;
+#[cfg(not(target_os = "macos"))]
+mod platform_unsupported;
+
 use std::{
   path::PathBuf,
   sync::{
     atomic::{AtomicU64, Ordering},
+    mpsc::Receiver,
     Mutex, RwLock,
   },
   time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use chrono::{Local, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State};
 
 use crate::windows;
 
+#[cfg(target_os = "macos")]
+use platform as capture;
+#[cfg(not(target_os = "macos"))]
+use platform_unsupported as capture;
+
+pub use encoding::FinalizeInfo;
+
 const RECORDING_STATE_EVENT: &str = "recording://state";
 const RECORDING_ERROR_EVENT: &str = "recording://error";
-// The stub finalize keeps the `Stopping` state on screen long enough for the
-// pill's finishing affordance to be exercised before real muxing exists.
-const FINALIZE_DELAY_MS: u64 = 250;
+/// The folder working files are written to, under the app's data directory.
+const RECORDINGS_DIRECTORY: &str = "Recordings";
+/// How long a start may go without producing a frame before it is called a
+/// failure. Permission prompts and display wake-ups are the slow cases and
+/// both resolve well inside this.
+const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
+/// Frame rates the bar offers.
+pub const DEFAULT_FPS: u32 = 60;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,9 +95,31 @@ pub struct StartRecordingOptions {
   #[serde(default)]
   pub system_audio: bool,
   #[serde(default)]
+  pub system_audio_application_ids: Vec<String>,
+  #[cfg(target_os = "windows")]
+  #[serde(default)]
+  pub system_audio_process_ids: Vec<u32>,
+  #[serde(default)]
   pub microphone_id: Option<String>,
   #[serde(default)]
   pub camera_id: Option<String>,
+  #[serde(default = "default_fps")]
+  pub fps: u32,
+}
+
+/// A source snapshot taken when Record is pressed. Bundle identifiers resolve
+/// ScreenCaptureKit applications on macOS; process identifiers are retained
+/// alongside them for the eventual WASAPI implementation on Windows.
+#[derive(Clone, Debug, Default)]
+pub struct SystemAudioSelection {
+  pub application_ids: Vec<String>,
+  pub enabled: bool,
+  #[cfg(target_os = "windows")]
+  pub process_ids: Vec<u32>,
+}
+
+const fn default_fps() -> u32 {
+  DEFAULT_FPS
 }
 
 /// Epoch-millisecond timestamps are stamped by Rust so every window - including
@@ -90,11 +134,15 @@ pub struct RecordingSnapshot {
   pub paused_at_ms: Option<u64>,
 }
 
-/// Handles owned by the capture pipeline. Empty until real capture lands.
-#[derive(Debug, Default)]
+/// Everything a running recording is, from the state machine's side: a live
+/// capture session and the file it is filling.
 struct CaptureHandles {
-  excluded_window_labels: Vec<String>,
-  output_path: Option<PathBuf>,
+  output_path: PathBuf,
+  session: capture::CaptureSession,
+  source_scale_factor: f32,
+  /// Stamped when capture begins, so the suggested file name reads as the
+  /// moment the user started rather than the moment they stopped.
+  started_at: NaiveDateTime,
 }
 
 #[derive(Default)]
@@ -298,9 +346,19 @@ fn store_handles(app: &AppHandle, handles: CaptureHandles) {
 }
 
 // ---------------------------------------------------------------------------
-// Capture seams. These are deliberately no-ops with the shapes the real
-// pipeline needs so encoding can drop in without reshaping the state machine.
+// Capture. Every entry point here is called from a blocking task, never from
+// the thread that services the UI, and never with a recording lock held.
 // ---------------------------------------------------------------------------
+
+/// Where working files live: inside the app's own data directory, so a
+/// recording that is never saved leaves nothing in a folder the user looks at.
+pub fn recordings_directory(app: &AppHandle) -> Result<PathBuf, String> {
+  app
+    .path()
+    .app_data_dir()
+    .map(|directory| directory.join(RECORDINGS_DIRECTORY))
+    .map_err(|error| error.to_string())
+}
 
 /// Defence in depth, run before anything is hidden or transitioned. The Record
 /// button is already gated on a selected source, but a mode without one could
@@ -320,60 +378,113 @@ fn validate_options(options: &StartRecordingOptions) -> Result<(), String> {
   }
 }
 
+/// Opens the capture and the file behind it. Blocking, and slow enough to be
+/// worth keeping off the thread that draws.
 fn begin_capture(
   app: &AppHandle,
   options: &StartRecordingOptions,
-) -> Result<CaptureHandles, String> {
-  // These configure the real encoder; the stub only proves that they arrive
-  // intact.
+) -> Result<(CaptureHandles, Receiver<Result<(), String>>), String> {
+  // The slices that add these have their own sources to resolve; the Record
+  // button is already gated so none of them can arrive here yet.
   let _ = (
     options.camera_id.as_deref(),
-    options.microphone_id.as_deref(),
-    options.monitor_id,
     options.region.map(|region| (region.position, region.size)),
-    options.show_cursor,
-    options.system_audio,
     options.window_id,
   );
+  if options.mode != RecordingMode::Screen {
+    return Err("That kind of recording is not available yet".to_owned());
+  }
+  let monitor_id = options
+    .monitor_id
+    .ok_or_else(|| "No monitor is selected to record".to_owned())?;
+  let source_scale_factor = xcap::Monitor::all()
+    .map_err(|error| error.to_string())?
+    .into_iter()
+    .find(|monitor| monitor.id().ok() == Some(monitor_id))
+    .ok_or_else(|| "The selected monitor is no longer available".to_owned())?
+    .scale_factor()
+    .map_err(|error| error.to_string())?;
 
-  // The real pipeline hands these labels to ScreenCaptureKit (macOS) and to the
-  // Windows capture graph so the app's own overlays never land in the file.
-  let excluded_window_labels = windows::CAPTURE_EXCLUDED_WINDOW_LABELS
-    .iter()
-    .filter(|label| app.get_webview_window(label).is_some())
-    .map(|label| (*label).to_owned())
-    .collect();
+  let directory = recordings_directory(app)?;
+  std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+  let started_at = Local::now().naive_local();
+  let output_path = directory.join(encoding::temp_file_name(started_at));
 
-  Ok(CaptureHandles {
-    excluded_window_labels,
-    output_path: None,
-  })
+  // Reported at most once per recording, from the writer thread, however many
+  // frames the failure goes on to affect.
+  let reporter = app.clone();
+  let on_failure = Box::new(move |reason: String| {
+    emit_error(&reporter, "capture", &reason);
+  });
+
+  let (session, first_frame) = capture::begin_blocking(
+    monitor_id,
+    options.show_cursor,
+    SystemAudioSelection {
+      application_ids: options.system_audio_application_ids.clone(),
+      enabled: options.system_audio,
+      #[cfg(target_os = "windows")]
+      process_ids: options.system_audio_process_ids.clone(),
+    },
+    options.microphone_id.clone(),
+    options.fps,
+    output_path.clone(),
+    on_failure,
+  )
+  .inspect_err(|_| {
+    // A start that never got going leaves an empty container behind.
+    let _ = std::fs::remove_file(&output_path);
+  })?;
+
+  Ok((
+    CaptureHandles {
+      output_path,
+      session,
+      source_scale_factor,
+      started_at,
+    },
+    first_frame,
+  ))
 }
 
-fn pause_capture(_handles: &mut CaptureHandles) {
-  // Real capture suspends the encoder segment here.
+fn pause_capture(handles: &CaptureHandles) {
+  handles.session.pause();
 }
 
-fn resume_capture(_handles: &mut CaptureHandles) -> Result<(), String> {
-  // Real resume spawns a fresh encoder segment, which can fail.
-  Ok(())
+fn resume_capture(handles: &CaptureHandles) -> Result<(), String> {
+  handles.session.resume()
 }
 
-fn finalize_capture(handles: CaptureHandles) -> Result<Option<PathBuf>, String> {
-  // Real finalize muxes the segments that were captured with
-  // `excluded_window_labels` kept out of frame, then returns the file's path.
+/// Finishes the movie, returning it alongside the name to suggest for it.
+fn finalize_capture(handles: CaptureHandles) -> Result<(FinalizeInfo, String), String> {
   let CaptureHandles {
-    excluded_window_labels,
     output_path,
+    session,
+    source_scale_factor,
+    started_at,
   } = handles;
-  let _ = excluded_window_labels;
 
-  Ok(output_path)
+  let mut info = session.stop().inspect_err(|_| {
+    // Nothing playable came out, so nothing is left lying around either.
+    let _ = std::fs::remove_file(&output_path);
+  })?;
+  info.source_scale_factor = source_scale_factor;
+
+  Ok((info, crate::screenshots::capture_file_stem(started_at)))
 }
 
 fn discard_capture(handles: Option<CaptureHandles>) {
-  // Real discard deletes the segment files written under `output_path`.
-  let _ = handles.and_then(|handles| handles.output_path);
+  let Some(CaptureHandles {
+    output_path,
+    session,
+    ..
+  }) = handles
+  else {
+    return;
+  };
+
+  session.cancel();
+  let _ = std::fs::remove_file(output_path);
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +508,11 @@ fn prepare_windows(app: &AppHandle, options: &StartRecordingOptions) -> Result<(
     windows::hide_region_selector(app.clone()).map_err(to_message)?;
   }
 
-  windows::show_recording_dock(app).map_err(to_message)?;
+  // The pill is deliberately not shown here. Opening a capture takes long
+  // enough to see, and a pill that appears before there is anything to stop
+  // invites stopping a recording that has not started. It goes up with the
+  // first frame instead - which is where it appeared to arrive when opening a
+  // capture was instant.
 
   Ok(())
 }
@@ -425,6 +540,16 @@ fn show_recording_ui(app: &AppHandle) {
 // is callable from both the commands below and the tray menu.
 // ---------------------------------------------------------------------------
 
+/// Unwinds a start that could not be completed, from wherever it failed.
+fn abandon_start(app: &AppHandle, error: &str) {
+  emit_error(app, "start", error);
+  state(app).cancel();
+  discard_capture(take_handles(app));
+  restore_windows(app);
+  let _ = transition(app, RecordingStatus::Idle, None);
+  show_recording_ui(app);
+}
+
 pub fn start(app: &AppHandle, options: StartRecordingOptions) -> Result<(), String> {
   validate_options(&options)?;
   // A second start while `Starting` is rejected here, not merely by a
@@ -432,30 +557,54 @@ pub fn start(app: &AppHandle, options: StartRecordingOptions) -> Result<(), Stri
   transition(app, RecordingStatus::Starting, Some(options.mode))?;
   let generation = state(app).begin_start();
 
-  let handles = prepare_windows(app, &options).and_then(|()| begin_capture(app, &options));
-  let handles = match handles {
-    Ok(handles) => handles,
-    Err(error) => {
-      emit_error(app, "start", &error);
-      state(app).cancel();
-      discard_capture(take_handles(app));
-      restore_windows(app);
-      let _ = transition(app, RecordingStatus::Idle, None);
-      show_recording_ui(app);
-      return Err(error);
-    }
-  };
-  store_handles(app, handles);
+  if let Err(error) = prepare_windows(app, &options) {
+    abandon_start(app, &error);
+    return Err(error);
+  }
 
   let app = app.clone();
-  tauri::async_runtime::spawn(async move {
-    // Real capture confirms its first frame here; the stub keeps the async
-    // shape and the stale-start guard that goes with it.
+  // Opening a capture talks to the window server and waits on it. `tokio` is
+  // macOS-only in this crate, so this is a blocking task the way finalize is -
+  // and either way it must not run on the thread that draws.
+  tauri::async_runtime::spawn_blocking(move || {
     if !state(&app).is_current(generation) {
       return;
     }
-    if let Err(error) = transition(&app, RecordingStatus::Recording, None) {
-      emit_error(&app, "start", &error);
+
+    let (handles, first_frame) = match begin_capture(&app, &options) {
+      Ok(started) => started,
+      Err(error) => return abandon_start(&app, &error),
+    };
+    // Cancelling while the capture was opening: the handles were never
+    // stored, so this is the only place that can still tear them down.
+    if !state(&app).is_current(generation) {
+      return discard_capture(Some(handles));
+    }
+    store_handles(&app, handles);
+
+    // Nothing is recording until a frame has actually been written. Moving to
+    // `Recording` any earlier would start a clock the file cannot honour.
+    let confirmed = first_frame
+      .recv_timeout(FIRST_FRAME_TIMEOUT)
+      .unwrap_or_else(|_| Err("The recording produced no frames".to_owned()));
+    if !state(&app).is_current(generation) {
+      // Cancelling usually takes the handles itself, but it can land in the
+      // instant between the check above and the store, in which case they are
+      // still here and nothing else will ever come back for them.
+      return discard_capture(take_handles(&app));
+    }
+
+    match confirmed {
+      Ok(()) => {
+        if let Err(error) = transition(&app, RecordingStatus::Recording, None) {
+          emit_error(&app, "start", &error);
+          return;
+        }
+        if let Err(error) = windows::show_recording_dock(&app) {
+          emit_error(&app, "start", &error.to_string());
+        }
+      }
+      Err(error) => abandon_start(&app, &error),
     }
   });
 
@@ -471,7 +620,7 @@ pub fn pause(app: &AppHandle) -> Result<(), String> {
     .handles
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner())
-    .as_mut()
+    .as_ref()
   {
     pause_capture(handles);
   }
@@ -486,11 +635,11 @@ pub fn resume(app: &AppHandle) -> Result<(), String> {
 
   let resumed = {
     let state = state(app);
-    let mut handles = state
+    let handles = state
       .handles
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());
-    handles.as_mut().map_or(Ok(()), resume_capture)
+    handles.as_ref().map_or(Ok(()), resume_capture)
   };
   if let Err(error) = resumed {
     emit_error(app, "resume", &error);
@@ -522,20 +671,25 @@ pub fn stop(app: &AppHandle) -> Result<(), String> {
   // `tokio` is macOS-only in this crate, so the finalize wait uses a blocking
   // task the way the window animations do.
   tauri::async_runtime::spawn_blocking(move || {
-    std::thread::sleep(Duration::from_millis(FINALIZE_DELAY_MS));
+    let finalized = take_handles(&app).map(finalize_capture);
 
-    let finalized = take_handles(&app).map_or(Ok(None), finalize_capture);
-    match finalized {
-      // The saved recording is surfaced to the user once capture is real.
-      Ok(_path) => {}
-      Err(error) => emit_error(&app, "stop", &error),
-    }
-
+    // The chrome comes back before the export window opens, so the export
+    // window is the last thing raised and therefore the frontmost.
     restore_windows(&app);
     if let Err(error) = transition(&app, RecordingStatus::Idle, None) {
       emit_error(&app, "stop", &error);
     }
     show_recording_ui(&app);
+
+    match finalized {
+      Some(Ok((info, suggested_file_stem))) => {
+        if let Err(error) = crate::exports::present_recording(&app, info, suggested_file_stem) {
+          emit_error(&app, "stop", &error);
+        }
+      }
+      Some(Err(error)) => emit_error(&app, "stop", &error),
+      None => {}
+    }
   });
 
   Ok(())
@@ -778,8 +932,19 @@ mod tests {
   }
 
   #[test]
-  fn excludes_the_pill_and_the_region_overlay_from_capture() {
-    assert!(windows::CAPTURE_EXCLUDED_WINDOW_LABELS.contains(&"recording-dock"));
-    assert!(windows::CAPTURE_EXCLUDED_WINDOW_LABELS.contains(&"region-selector"));
+  fn defaults_the_frame_rate_when_an_older_bar_omits_it() {
+    let options: StartRecordingOptions =
+      serde_json::from_str(r#"{"mode":"screen","monitorId":7}"#).unwrap();
+
+    assert_eq!(options.fps, DEFAULT_FPS);
+    assert_eq!(options.monitor_id, Some(7));
+  }
+
+  #[test]
+  fn takes_the_frame_rate_the_bar_sends() {
+    let options: StartRecordingOptions =
+      serde_json::from_str(r#"{"mode":"screen","monitorId":7,"fps":30}"#).unwrap();
+
+    assert_eq!(options.fps, 30);
   }
 }

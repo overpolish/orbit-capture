@@ -3,6 +3,7 @@ name = "orbit-capture"
 version = "0.1.0"
 description = "Reliable screen and audio recording for macOS and Windows"
 authors = ["overpolish"]
+license = "GPL-3.0-or-later"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

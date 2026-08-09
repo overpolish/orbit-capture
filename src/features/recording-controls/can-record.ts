@@ -12,6 +12,15 @@ export type RecordingReadiness = {
 };
 
 /**
+ * Modes with a capture pipeline behind them, updated as each slice lands.
+ *
+ * Today: screen. Still to come: region, window, camera and audio. Offering a
+ * Record button that starts nothing would be worse than a disabled one, so the
+ * readiness check owns this list rather than the button.
+ */
+const implementedModes: RecordingMode[] = ["screen"];
+
+/**
  * A recording can only start when its mode has both an unlocked permission and
  * an actual source. Screen modes previously ignored both, so the Record button
  * could start a recording that had nothing to capture.
@@ -25,6 +34,8 @@ export const canStartRecording = ({
   isScreenLocked,
   mode,
 }: RecordingReadiness) => {
+  if (!implementedModes.includes(mode)) return false;
+
   switch (mode) {
     case "audio":
       return inputs.systemAudio || (inputs.microphone && !isMicrophoneLocked);

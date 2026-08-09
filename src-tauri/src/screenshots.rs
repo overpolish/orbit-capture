@@ -101,8 +101,9 @@ pub fn physical_capture_rect(
 }
 
 /// The naming macOS's own `screencapture` uses, which is the least surprising
-/// thing to find sitting on a Desktop.
-pub fn screenshot_file_stem(captured_at: NaiveDateTime) -> String {
+/// thing to find sitting on a Desktop. Recordings are named the same way, from
+/// the moment they started, so a session's files sit together in order.
+pub fn capture_file_stem(captured_at: NaiveDateTime) -> String {
   captured_at
     .format("Orbit Capture %Y-%m-%d at %H.%M.%S")
     .to_string()
@@ -331,11 +332,7 @@ pub async fn capture_still(
 
   // With the clipboard off, the export window takes over: the user names the
   // file and picks where it goes, so nothing is written here.
-  crate::exports::present_screenshot(
-    &app,
-    image,
-    screenshot_file_stem(Local::now().naive_local()),
-  )?;
+  crate::exports::present_screenshot(&app, image, capture_file_stem(Local::now().naive_local()))?;
 
   Ok(None)
 }
@@ -550,7 +547,7 @@ mod tests {
       .and_hms_opt(14, 32, 5)
       .unwrap();
     assert_eq!(
-      screenshot_file_stem(captured_at),
+      capture_file_stem(captured_at),
       "Orbit Capture 2026-08-08 at 14.32.05"
     );
   }
@@ -562,7 +559,7 @@ mod tests {
       .and_hms_opt(9, 5, 3)
       .unwrap();
     assert_eq!(
-      screenshot_file_stem(captured_at),
+      capture_file_stem(captured_at),
       "Orbit Capture 2026-01-02 at 09.05.03"
     );
   }

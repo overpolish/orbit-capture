@@ -42,13 +42,10 @@ impl WindowLabel {
   }
 }
 
-/// Windows that must never appear inside a capture. This list lives in Rust
-/// because it is the capture pipeline - not any one UI component - that owns
-/// it; keeping it in the frontend once let it disappear with the component.
-pub const CAPTURE_EXCLUDED_WINDOW_LABELS: &[&str] = &[
-  WindowLabel::RecordingDock.as_str(),
-  WindowLabel::RegionSelector.as_str(),
-];
+// This is where a list of capture-excluded window labels used to live. Capture
+// now excludes every window this process owns, matched on the owning process
+// rather than by name, so a window added later is excluded the day it is added
+// and there is no list left to forget to update. See `capture_kit::our_windows`.
 
 pub fn get_or_create<F>(
   app: &AppHandle,
@@ -1236,8 +1233,21 @@ pub fn set_region_selector_opacity(app: AppHandle, opacity: f64) -> tauri::Resul
   platform::set_opacity(&region, opacity)
 }
 
+/// Fades the recording controls, and is the only thing that decides they are
+/// on screen.
+///
+/// Fading them *in* is refused outside an idle app. The controls belong to the
+/// idle state; while a recording is starting or running they are deliberately
+/// gone. Several callers ask for opacity 1.0 without knowing that - hiding the
+/// region overlay does it as cleanup, and the overlay window does it whenever
+/// it stops editing - and `prepare_windows` itself hides the bar and then
+/// hides the region overlay, which used to put the bar straight back.
 #[tauri::command]
 pub fn set_recording_controls_opacity(app: AppHandle, opacity: f64) -> tauri::Result<()> {
+  if opacity > 0.0 && !crate::recording::is_idle(&app) {
+    return Ok(());
+  }
+
   RECORDING_CONTROLS_VISIBLE.store(opacity > 0.0, Ordering::Relaxed);
 
   if let Some(bar) = app.get_webview_window(WindowLabel::RecordingBar.as_str()) {
@@ -1305,6 +1315,10 @@ pub fn show_recording_ui(app: &AppHandle) -> tauri::Result<()> {
     .get_webview_window(WindowLabel::RecordingBar.as_str())
     .ok_or_else(|| tauri::Error::WindowNotFound)?;
   show(&bar, false)?;
+  // Asserted rather than assumed: the bar may have been faded out for region
+  // editing, and requests to fade it back in are refused while a recording is
+  // on. Coming back to idle is where that is put right.
+  platform::set_opacity(&bar, 1.0)?;
   platform::restore_recording_level(&bar)?;
 
   if SELECTOR_VISIBLE.load(Ordering::Relaxed) {

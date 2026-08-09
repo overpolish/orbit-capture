@@ -114,29 +114,6 @@ impl LevelAccumulator {
   }
 }
 
-fn microphone(device_id: Option<&str>) -> Result<(Device, StreamConfig, SampleFormat), String> {
-  let host = cpal::default_host();
-  let device = match device_id {
-    Some(device_id) => host
-      .input_devices()
-      .map_err(|error| error.to_string())?
-      .find(|device| {
-        device
-          .id()
-          .is_ok_and(|candidate| candidate.to_string() == device_id)
-      })
-      .ok_or_else(|| "The selected microphone is no longer available".to_owned())?,
-    None => host
-      .default_input_device()
-      .ok_or_else(|| "No default microphone is available".to_owned())?,
-  };
-  let config = device
-    .default_input_config()
-    .map_err(|error| error.to_string())?;
-  let sample_format = config.sample_format();
-  Ok((device, config.into(), sample_format))
-}
-
 fn system_audio() -> Result<(Device, StreamConfig, SampleFormat), String> {
   let device = cpal::default_host()
     .default_output_device()
@@ -218,7 +195,8 @@ pub async fn start_audio_preview(
 
   match kind {
     AudioPreviewKind::Microphone => {
-      let (device, config, sample_format) = microphone(device_id.as_deref())?;
+      let (device, config, sample_format) =
+        crate::recording_inputs::resolve_microphone(device_id.as_deref())?;
       let stream = build_stream(&device, &config, sample_format, channel)?;
       state
         .0

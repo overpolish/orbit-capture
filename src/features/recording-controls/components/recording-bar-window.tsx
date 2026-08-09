@@ -63,18 +63,36 @@ const synchronizeRecordingUi = async (
 const startRecordingOptions = (): StartRecordingOptions => {
   const { recordingMode, region, selectedMonitor, selectedWindow } =
     useRecordingSourceStore.getState();
-  const { inputs, selectedCamera, selectedMicrophone } =
-    useRecordingInputStore.getState();
+  const {
+    fps,
+    inputs,
+    selectedCamera,
+    selectedMicrophone,
+    selectedSystemAudio,
+  } = useRecordingInputStore.getState();
   const wantsCamera = inputs.camera || recordingMode === "camera";
+  const recordsAllSystemAudio = selectedSystemAudio.some(
+    (source) => source.kind === "all",
+  );
+  const selectedApplications = recordsAllSystemAudio
+    ? []
+    : selectedSystemAudio.filter((source) => source.kind === "application");
 
   return {
     cameraId: wantsCamera ? (selectedCamera?.id ?? null) : null,
+    fps,
     microphoneId: inputs.microphone ? (selectedMicrophone?.id ?? null) : null,
     mode: recordingMode,
     monitorId: selectedMonitor?.id ?? null,
     region: recordingMode === "region" ? region : null,
     showCursor: inputs.showCursor,
     systemAudio: inputs.systemAudio,
+    systemAudioApplicationIds: inputs.systemAudio
+      ? selectedApplications.map((source) => source.id)
+      : [],
+    systemAudioProcessIds: inputs.systemAudio
+      ? selectedApplications.flatMap((source) => source.processIds ?? [])
+      : [],
     windowId: selectedWindow?.id ?? null,
   };
 };
@@ -124,8 +142,14 @@ export function RecordingBarWindow() {
     setRecordingMode,
     setRegionEditing,
   } = useRecordingSourceStore((state) => state);
-  const { inputs, screenshotToClipboard, setInput, setScreenshotToClipboard } =
-    useRecordingInputStore((state) => state);
+  const {
+    fps,
+    inputs,
+    screenshotToClipboard,
+    setFps,
+    setInput,
+    setScreenshotToClipboard,
+  } = useRecordingInputStore((state) => state);
 
   useEffect(() => {
     setRegionEditing(false);
@@ -186,6 +210,7 @@ export function RecordingBarWindow() {
 
   return (
     <RecordingBar
+      fps={fps}
       hasSelectedMonitor={selectedMonitor !== null}
       hasSelectedWindow={selectedWindow !== null}
       initialMode={recordingMode}
@@ -201,6 +226,7 @@ export function RecordingBarWindow() {
       onCancel={() => {
         void hideRecordingUi();
       }}
+      onFpsChange={setFps}
       onInputChange={setInput}
       onInteract={() => {
         void collapseRecordingSourceSelector();

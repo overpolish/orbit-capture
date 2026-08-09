@@ -19,3 +19,10 @@ Create a production bundle with `pnpm tauri build`.
 - React 19
 - TypeScript
 - Vite 7
+
+## License
+
+Copyright (C) 2026 overpolish.
+
+Orbit Capture is free software licensed under the GNU General Public License,
+version 3 or any later version. See [LICENSE](LICENSE).

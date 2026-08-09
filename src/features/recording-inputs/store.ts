@@ -1,7 +1,13 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { InputDevice, RecordingInputs, SystemAudioSource } from "./types";
+import {
+  InputDevice,
+  RecordingFps,
+  RecordingInputs,
+  recordingFpsOptions,
+  SystemAudioSource,
+} from "./types";
 
 const STORE_NAME = "orbit-capture-recording-inputs";
 
@@ -17,6 +23,9 @@ export const DEFAULT_MICROPHONE: InputDevice = {
   label: "Default microphone",
 };
 
+/** Smooth by default; halving it is an explicit choice to make a smaller file. */
+export const DEFAULT_FPS: RecordingFps = 60;
+
 export const ALL_SYSTEM_AUDIO: SystemAudioSource = {
   id: "all",
   kind: "all",
@@ -25,12 +34,14 @@ export const ALL_SYSTEM_AUDIO: SystemAudioSource = {
 
 type RecordingInputStore = {
   cameraFlippedById: Record<string, boolean>;
+  fps: RecordingFps;
   inputs: RecordingInputs;
   screenshotToClipboard: boolean;
   selectedCamera: InputDevice | null;
   selectedMicrophone: InputDevice | null;
   selectedSystemAudio: SystemAudioSource[];
   setCameraFlipped: (cameraId: string, flipped: boolean) => void;
+  setFps: (fps: RecordingFps) => void;
   setInput: (input: keyof RecordingInputs, selected: boolean) => void;
   setScreenshotToClipboard: (toClipboard: boolean) => void;
   setSelectedCamera: (camera: InputDevice | null) => void;
@@ -42,6 +53,7 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
   persist(
     (set) => ({
       cameraFlippedById: {},
+      fps: DEFAULT_FPS,
       inputs: {
         camera: false,
         microphone: false,
@@ -59,6 +71,9 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
             [cameraId]: flipped,
           },
         }));
+      },
+      setFps: (fps) => {
+        set({ fps });
       },
       setInput: (input, selected) => {
         set((state) => ({
@@ -89,6 +104,9 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
             typeof persisted.cameraFlippedById === "object"
               ? persisted.cameraFlippedById
               : {},
+          fps: recordingFpsOptions.includes(persisted.fps as RecordingFps)
+            ? (persisted.fps as RecordingFps)
+            : DEFAULT_FPS,
           selectedSystemAudio: Array.isArray(persisted.selectedSystemAudio)
             ? persisted.selectedSystemAudio
             : [ALL_SYSTEM_AUDIO],

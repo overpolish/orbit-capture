@@ -1,3 +1,4 @@
+import { RecordingFps } from "../recording-inputs/types";
 import { RecordingMode, Region } from "../recording-sources/types";
 
 export const recordingStatuses = [
@@ -31,9 +32,12 @@ export const initialRecordingSnapshot: RecordingSnapshot = {
 };
 
 export type StartRecordingOptions = {
+  fps: RecordingFps;
   mode: RecordingMode;
   showCursor: boolean;
   systemAudio: boolean;
+  systemAudioApplicationIds: string[];
+  systemAudioProcessIds: number[];
   cameraId?: string | null;
   microphoneId?: string | null;
   monitorId?: number | null;

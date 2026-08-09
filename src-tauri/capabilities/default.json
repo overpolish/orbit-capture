@@ -14,8 +14,13 @@
   ],
   "permissions": [
     "core:default",
-    "core:window:allow-start-dragging",
+    "core:window:allow-current-monitor",
     "core:window:allow-hide",
+    "core:window:allow-outer-position",
+    "core:window:allow-outer-size",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-start-dragging",
     "core:window:deny-internal-toggle-maximize"
   ]
 }

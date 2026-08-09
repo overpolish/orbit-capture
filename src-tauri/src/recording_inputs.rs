@@ -1,4 +1,7 @@
-use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::{
+  traits::{DeviceTrait, HostTrait},
+  Device, SampleFormat, StreamConfig,
+};
 use nokhwa::{
   query,
   utils::{ApiBackend, CameraInfo},
@@ -41,6 +44,31 @@ fn enumerate_microphones() -> Result<Vec<InputDeviceDetails>, String> {
   result.sort_by_cached_key(|device| (!device.is_default, device.label.to_lowercase()));
   result.dedup_by(|left, right| left.id == right.id);
   Ok(result)
+}
+
+pub(crate) fn resolve_microphone(
+  device_id: Option<&str>,
+) -> Result<(Device, StreamConfig, SampleFormat), String> {
+  let host = cpal::default_host();
+  let device = match device_id {
+    Some(device_id) => host
+      .input_devices()
+      .map_err(|error| error.to_string())?
+      .find(|device| {
+        device
+          .id()
+          .is_ok_and(|candidate| candidate.to_string() == device_id)
+      })
+      .ok_or_else(|| "The selected microphone is no longer available".to_owned())?,
+    None => host
+      .default_input_device()
+      .ok_or_else(|| "No default microphone is available".to_owned())?,
+  };
+  let config = device
+    .default_input_config()
+    .map_err(|error| error.to_string())?;
+  let sample_format = config.sample_format();
+  Ok((device, config.into(), sample_format))
 }
 
 #[tauri::command]

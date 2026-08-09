@@ -1,50 +1,7 @@
+use cidre::{cv, sc};
+
+use crate::capture_kit::{display_scale, monitor_geometry, our_windows};
 use crate::screenshots::{physical_capture_rect, CapturedImage, ScreenshotTarget};
-use cidre::{cv, ns, sc};
-
-/// A monitor's scale and its size in physical pixels.
-///
-/// xcap reports macOS monitors in points, from `CGDisplayBounds`, whereas on
-/// Windows it reports device pixels. Multiplying here is what lets both
-/// platforms hand `physical_capture_rect` the same units.
-fn monitor_geometry(monitor_id: u32) -> Result<(f64, u32, u32), String> {
-  let monitor = xcap::Monitor::all()
-    .map_err(|error| error.to_string())?
-    .into_iter()
-    .find(|monitor| monitor.id().ok() == Some(monitor_id))
-    .ok_or_else(|| "The selected monitor is no longer available".to_owned())?;
-  let scale = f64::from(monitor.scale_factor().map_err(|error| error.to_string())?);
-  let width = f64::from(monitor.width().map_err(|error| error.to_string())?);
-  let height = f64::from(monitor.height().map_err(|error| error.to_string())?);
-
-  Ok((
-    scale,
-    (width * scale).round() as u32,
-    (height * scale).round() as u32,
-  ))
-}
-
-fn display_scale(display_id: u32) -> f64 {
-  monitor_geometry(display_id).map_or(1.0, |(scale, _, _)| scale)
-}
-
-/// Excludes every window this process owns rather than a list of labels.
-/// Matching on the owning process cannot drift: a window added later is
-/// excluded the day it is added, with nothing to remember to update.
-fn our_windows(content: &sc::ShareableContent) -> cidre::arc::R<ns::Array<sc::Window>> {
-  let our_pid = std::process::id();
-  let ours: Vec<_> = content
-    .windows()
-    .iter()
-    .filter(|window| {
-      window
-        .owning_app()
-        .is_some_and(|app| u32::try_from(app.process_id()).ok() == Some(our_pid))
-    })
-    .map(|window| window.retained())
-    .collect();
-
-  ns::Array::from_slice_retained(&ours)
-}
 
 async fn capture_filtered(
   filter: &sc::ContentFilter,

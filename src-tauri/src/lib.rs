@@ -1,5 +1,7 @@
 mod audio_preview;
 mod camera_preview;
+#[cfg(target_os = "macos")]
+mod capture_kit;
 mod exports;
 mod permissions;
 mod recording;
@@ -42,9 +44,13 @@ pub fn run() {
       camera_preview::stop_camera_preview,
       exports::browse_export_directory,
       exports::cancel_export,
+      exports::cancel_export_job,
       exports::copy_export_to_clipboard,
+      exports::estimate_recording_export,
       exports::get_export_preview,
       exports::get_export_snapshot,
+      exports::get_recording_preview,
+      exports::get_recording_preview_mix,
       exports::save_export,
       exports::set_export_directory,
       permissions::open_permission_settings,

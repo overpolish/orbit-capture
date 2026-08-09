@@ -1,12 +1,12 @@
 #![allow(clippy::useless_transmute)]
 
-use std::collections::HashSet;
-
 use cidre::{
-  arc, cm, define_obj_type, dispatch, ns, objc, sc,
+  arc, cm, define_obj_type, dispatch, objc, sc,
   sc::stream::{Output, OutputImpl},
 };
 use tauri::ipc::Channel;
+
+use crate::capture_kit::application_audio_filter;
 
 use super::{AudioPreviewEvent, LevelAccumulator};
 
@@ -87,7 +87,6 @@ pub async fn start_filtered_audio_preview(
   application_ids: Vec<String>,
   channel: Channel<AudioPreviewEvent>,
 ) -> Result<FilteredAudioPreview, String> {
-  let selected = application_ids.into_iter().collect::<HashSet<_>>();
   let content = sc::ShareableContent::current()
     .await
     .map_err(|error| error.to_string())?;
@@ -95,23 +94,7 @@ pub async fn start_filtered_audio_preview(
   let display = displays
     .first()
     .ok_or_else(|| "No display is available for application audio capture".to_owned())?;
-  let applications = content
-    .apps()
-    .iter()
-    .filter(|application| selected.contains(&application.bundle_id().to_string()))
-    .map(|application| application.retained())
-    .collect::<Vec<_>>();
-  if applications.is_empty() {
-    return Err("None of the selected applications are currently available".into());
-  }
-
-  let applications = ns::Array::from_slice_retained(&applications);
-  let excluded_windows = ns::Array::new();
-  let filter = sc::ContentFilter::with_display_including_apps_excepting_windows(
-    display,
-    &applications,
-    &excluded_windows,
-  );
+  let filter = application_audio_filter(&content, display, &application_ids)?;
   let mut configuration = sc::StreamCfg::new();
   configuration.set_captures_audio(true);
   configuration.set_excludes_current_process_audio(true);

@@ -106,3 +106,8 @@ export const AudioOnlyWithSystemAudio: Story = {
 export const Starting: Story = {
   args: { status: "starting" },
 };
+
+/** Half the frames, half the file. */
+export const HalfFrameRate: Story = {
+  args: { initialFps: 30 },
+};
