@@ -15,10 +15,14 @@ import { CircularProgressBar } from "../../../components/base/circular-progress-
 import { Overlay } from "../../../components/base/overlay/overlay";
 import { describeMedia, logPreview } from "../diagnostics";
 
-/** Zoom is relative to fit, so 1 is "the whole capture on screen". */
-const FIT = 1;
-/** Small captures can still be magnified even when that passes native pixels. */
-const MIN_MAX_ZOOM = 4;
+import {
+  clamp,
+  containTransform,
+  FIT,
+  maximumZoom,
+  PreviewGeometry,
+  PreviewTransform,
+} from "./preview-transform";
 /** Pinch deltas are small and arrive continuously, so the rate stays gentle. */
 const PINCH_ZOOM_RATE = 0.01;
 /**
@@ -48,15 +52,6 @@ const isMac = navigator.userAgent.includes("Mac");
 export type FrozenFrame = {
   capture: () => void;
   clear: () => void;
-};
-
-type Transform = { x: number; y: number; zoom: number };
-type Geometry = {
-  boxHeight: number;
-  boxWidth: number;
-  fitScale: number;
-  naturalHeight: number;
-  naturalWidth: number;
 };
 
 type PreviewViewportProps = {
@@ -101,9 +96,6 @@ type MediaPreviewViewportProps = {
   videoRef?: RefObject<HTMLVideoElement | null>;
 };
 
-const clamp = (value: number, min: number, max: number) =>
-  Math.min(Math.max(value, min), max);
-
 function MediaPreviewViewport({
   alt,
   artifactId,
@@ -127,16 +119,19 @@ function MediaPreviewViewport({
   // The live transform lives in a ref and is written straight to the element:
   // routing every wheel event through React state made each one compute from a
   // stale value, which is what made the gesture judder.
-  const transformRef = useRef<Transform>({ x: 0, y: 0, zoom: FIT });
+  const transformRef = useRef<PreviewTransform>({ x: 0, y: 0, zoom: FIT });
   const frameRef = useRef<number | undefined>(undefined);
-  const geometryRef = useRef<Geometry>({
+  const geometryRef = useRef<PreviewGeometry>({
     boxHeight: 0,
     boxWidth: 0,
     fitScale: 1,
     naturalHeight,
     naturalWidth,
   });
-  const panRef = useRef<{ pointer: Transform; start: Transform } | null>(null);
+  const panRef = useRef<{
+    pointer: PreviewTransform;
+    start: PreviewTransform;
+  } | null>(null);
   /** The last fit that was worth reporting, so identical ones stay quiet. */
   const fitSignatureRef = useRef("");
   const requestedFullRef = useRef(false);
@@ -312,25 +307,6 @@ function MediaPreviewViewport({
     });
   };
 
-  /** Zooming all the way in lands on the capture's own pixels, exactly 1:1. */
-  const maxZoom = () =>
-    Math.max(MIN_MAX_ZOOM, 1 / (geometryRef.current.fitScale || 1));
-
-  /** Keeps the image inside its own box at whatever zoom it is now. */
-  const contained = (next: Transform): Transform => {
-    const { boxHeight, boxWidth, fitScale, naturalHeight, naturalWidth } =
-      geometryRef.current;
-    const scale = fitScale * next.zoom;
-    const slackX = Math.max(0, (naturalWidth * scale - boxWidth) / 2);
-    const slackY = Math.max(0, (naturalHeight * scale - boxHeight) / 2);
-
-    return {
-      x: clamp(next.x, -slackX, slackX),
-      y: clamp(next.y, -slackY, slackY),
-      zoom: next.zoom,
-    };
-  };
-
   const clearTransition = () => {
     if (mediaRef.current) mediaRef.current.style.transition = "";
   };
@@ -429,7 +405,7 @@ function MediaPreviewViewport({
         const next = clamp(
           current.zoom * Math.exp(-event.deltaY * rate),
           FIT,
-          maxZoom(),
+          maximumZoom(geometryRef.current),
         );
         if (next === current.zoom) return;
 
@@ -442,19 +418,25 @@ function MediaPreviewViewport({
         const pointerX = event.clientX - (bounds.left + bounds.width / 2);
         const pointerY = event.clientY - (bounds.top + bounds.height / 2);
         const ratio = next / current.zoom;
-        transformRef.current = contained({
-          x: pointerX - (pointerX - current.x) * ratio,
-          y: pointerY - (pointerY - current.y) * ratio,
-          zoom: next,
-        });
+        transformRef.current = containTransform(
+          {
+            x: pointerX - (pointerX - current.x) * ratio,
+            y: pointerY - (pointerY - current.y) * ratio,
+            zoom: next,
+          },
+          geometryRef.current,
+        );
       } else {
         // Nothing to pan while the whole capture is already on screen.
         if (current.zoom <= FIT) return;
-        transformRef.current = contained({
-          x: current.x - event.deltaX,
-          y: current.y - event.deltaY,
-          zoom: current.zoom,
-        });
+        transformRef.current = containTransform(
+          {
+            x: current.x - event.deltaX,
+            y: current.y - event.deltaY,
+            zoom: current.zoom,
+          },
+          geometryRef.current,
+        );
       }
 
       schedule();
@@ -491,11 +473,14 @@ function MediaPreviewViewport({
       onPointerMove={(event) => {
         const pan = panRef.current;
         if (!pan) return;
-        transformRef.current = contained({
-          x: pan.start.x + (event.clientX - pan.pointer.x),
-          y: pan.start.y + (event.clientY - pan.pointer.y),
-          zoom: pan.start.zoom,
-        });
+        transformRef.current = containTransform(
+          {
+            x: pan.start.x + (event.clientX - pan.pointer.x),
+            y: pan.start.y + (event.clientY - pan.pointer.y),
+            zoom: pan.start.zoom,
+          },
+          geometryRef.current,
+        );
         schedule();
       }}
       onPointerUp={(event) => {

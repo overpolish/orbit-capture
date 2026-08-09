@@ -1,17 +1,9 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { Check, Mic, Pause, Play, Volume2 } from "lucide-react";
-import {
-  PointerEvent as ReactPointerEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Pause, Play } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Button } from "../../../components/base/button/button";
 import { ToggleButton } from "../../../components/base/button/toggle-button";
 import { CircularProgressBar } from "../../../components/base/circular-progress-bar/circular-progress-bar";
 import { describeMedia, logPreview } from "../diagnostics";
@@ -23,6 +15,22 @@ import {
   PreviewViewport,
   VideoPreviewViewport,
 } from "./preview-viewport";
+import { ScrubAudioTracks } from "./scrub-audio-tracks";
+import {
+  countFrameHolds,
+  END_TOLERANCE_SECONDS,
+  FIRST_PLAY_MIN_HOLD_MS,
+  HAVE_FUTURE_DATA,
+  HOLDS_FRAME,
+  HOLD_TIMEOUT_MS,
+  HoldReason,
+  MIN_HOLD_MS,
+  PREROLL_SECONDS,
+  SHOWS_LOADER,
+  SWAP_TIMEOUT_MS,
+} from "./scrub-hold";
+import { clamp, createPlayhead } from "./scrub-playhead";
+import { ElapsedTime, Timeline } from "./scrub-timeline";
 
 export type RecordingMetadata = {
   durationMs: number;
@@ -51,324 +59,6 @@ type ScrubPreviewProps = {
 };
 
 const EMPTY_AUDIO_TRACKS: PreparedAudioTrack[] = [];
-
-/** Close enough to the end that pressing play means "again from the top". */
-const END_TOLERANCE_SECONDS = 0.02;
-/**
- * `HTMLMediaElement.HAVE_FUTURE_DATA`: there is enough decoded to keep going
- * from where the element is now. Below it the element is not moving, whatever
- * it was last asked to do.
- */
-const HAVE_FUTURE_DATA = 3;
-/**
- * How long the picture is held after a press so that sound and picture start
- * together.
- *
- * A media element's audio renderer starts from cold on every transition out of
- * pause. Measured in a WKWebView against a preview mix: `play()` has the
- * picture moving within ~50ms, but the first sample reaches the output only
- * 290-370ms later, and WebKit then pulls the picture back to the audio clock -
- * which is the moment of frozen video and stuck scrubber a person sees a beat
- * after pressing play.
- *
- * Warming the renderer up in advance is not possible. Measured, all of it: the
- * warmth is gone within 250ms of a pause, so warming on a scrub does nothing;
- * a muted play does not produce it; `playbackRate` below 1 suppresses the audio
- * entirely and starts the wait again on release; pinning `currentTime` each
- * frame stops the renderer ever starting; and a second element already playing
- * does not warm this one. So the picture waits instead of the sound rushing to
- * catch up.
- *
- * The wait is spent playing, silently, from a little *before* the position that
- * was pressed, so that the moment the picture is revealed is the moment it
- * arrives at that position. Correcting afterwards with a seek was tried and
- * cannot work: any seek during playback restarts the renderer, which is the
- * silence this exists to remove - a 0.05s nudge cost 300ms of sound, a 0.26s
- * one cost 470ms.
- */
-const PREROLL_SECONDS = 0.28;
-/**
- * How long a start is held at the very least.
- *
- * The pre-roll is what normally decides the reveal - the position reaching the
- * press is the last condition to come true - so this only matters for a press
- * close enough to the beginning that there is no room to roll from. Measured:
- * with a full pre-roll the reveal lands at 481-533ms and the renderer has been
- * running for a while by then.
- */
-const MIN_HOLD_MS = 480;
-/** The first start of a newly loaded file is slower: measured 480-500ms cold. */
-const FIRST_PLAY_MIN_HOLD_MS = 700;
-/** However confused the element gets, nothing stays hidden longer than this. */
-const HOLD_TIMEOUT_MS = 2000;
-/** And nothing waits longer than this for a replacement file to show a frame. */
-const SWAP_TIMEOUT_MS = 4000;
-
-const clamp = (value: number, min: number, max: number) =>
-  Math.min(Math.max(value, min), max);
-
-/**
- * Why the preview is being held, if it is.
- *
- * There is one set of these and everything the user sees is a projection of
- * it. It was three independent booleans first - one per reason, each owned by
- * whichever piece of code happened to know about it - and a single toggle then
- * showed and hid the loader three or four times, because nothing made the
- * three agree about when the operation started and when it ended. A refcounted
- * set has exactly one moment where it stops being empty and one where it
- * becomes empty again, and those are the only two transitions the eye sees.
- */
-type HoldReason =
-  /** A new mix is being built for tracks the user just changed. */
-  | "remix"
-  /** The element is being pointed at a different file. */
-  | "swap"
-  /** A press is waiting for the audio renderer to come up. */
-  | "start";
-
-/**
- * Whether the reason needs the picture on screen kept still.
- *
- * A remix does not: FFmpeg is writing a new file somewhere else entirely and
- * whatever is playing now keeps playing. A swap and a start both do - the
- * element is either reloading or running out of sight.
- */
-const HOLDS_FRAME: Record<HoldReason, boolean> = {
-  remix: false,
-  start: true,
-  swap: true,
-};
-
-/**
- * Whether the reason is worth saying out loud.
- *
- * A start is not: the frame is held for well under a second and the held frame
- * is its own affordance - a spinner thrown over the picture for that long
- * reads as a fault rather than as a press being answered. A remix and a swap
- * are, because between them they can take as long as FFmpeg does.
- */
-const SHOWS_LOADER: Record<HoldReason, boolean> = {
-  remix: true,
-  start: false,
-  swap: true,
-};
-
-/** How many of the current reasons want the picture kept still. */
-const countFrameHolds = (reasons: ReadonlySet<HoldReason>) => {
-  let count = 0;
-  for (const reason of reasons) if (HOLDS_FRAME[reason]) count += 1;
-  return count;
-};
-
-type PlayheadListener = (seconds: number, ratio: number) => void;
-type Playhead = ReturnType<typeof createPlayhead>;
-
-/**
- * The playing position, deliberately kept out of React.
- *
- * Playback moves the position sixty times a second. Held in state, every one
- * of those became a render of this whole subtree - including the viewport,
- * which re-measures and re-applies its fit on every render - so the cost of
- * drawing a moving line was paid across components that had nothing to do
- * with it. Subscribers here write the new position straight to their own
- * element, the same way the viewport already drives its zoom.
- */
-const createPlayhead = () => {
-  const listeners = new Set<PlayheadListener>();
-  let last = { ratio: 0, seconds: 0 };
-
-  return {
-    publish: (seconds: number, ratio: number) => {
-      last = { ratio, seconds };
-      for (const listener of listeners) listener(seconds, ratio);
-    },
-    subscribe: (listener: PlayheadListener) => {
-      listeners.add(listener);
-      // So a subscriber that mounts mid-playback is not left at zero.
-      listener(last.seconds, last.ratio);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-  };
-};
-
-const waveformPath = (points: number[]) => {
-  if (points.length === 0) return "";
-  const center = 20;
-  const scale = 17;
-  return points
-    .map((peak, index) => {
-      const x = (index / Math.max(1, points.length - 1)) * 1000;
-      const height = Math.max(0.75, peak * scale);
-      return `M${x.toFixed(2)} ${(center - height).toFixed(2)}V${(center + height).toFixed(2)}`;
-    })
-    .join(" ");
-};
-
-function Waveform({
-  enabled,
-  onSeek,
-  playhead,
-  track,
-}: {
-  enabled: boolean;
-  onSeek: (ratio: number) => void;
-  playhead: Playhead;
-  track: PreparedAudioTrack;
-}) {
-  const path = useMemo(() => waveformPath(track.waveform), [track.waveform]);
-  const lineRef = useRef<HTMLDivElement>(null);
-
-  useEffect(
-    () =>
-      playhead.subscribe((_seconds, ratio) => {
-        if (lineRef.current)
-          lineRef.current.style.left = `${(ratio * 100).toString()}%`;
-      }),
-    [playhead],
-  );
-
-  const seek = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    onSeek(clamp((event.clientX - bounds.left) / bounds.width, 0, 1));
-  };
-
-  return (
-    <div
-      className="relative h-6 min-w-0 grow cursor-ew-resize overflow-hidden rounded bg-muted/8"
-      onPointerDown={(event) => {
-        event.currentTarget.setPointerCapture(event.pointerId);
-        seek(event);
-      }}
-      onPointerMove={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) seek(event);
-      }}
-      onPointerUp={(event) => {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }}
-    >
-      <svg
-        aria-hidden="true"
-        className={enabled ? "size-full text-info" : "size-full text-muted/35"}
-        preserveAspectRatio="none"
-        viewBox="0 0 1000 40"
-      >
-        <path
-          className="stroke-current"
-          d={path}
-          fill="none"
-          strokeWidth="2"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
-      <div
-        className="pointer-events-none absolute inset-y-0 w-px bg-content-fg/80"
-        ref={lineRef}
-        style={{ left: "0%" }}
-      />
-    </div>
-  );
-}
-
-function Timeline({
-  onSeek,
-  playhead,
-}: {
-  onSeek: (ratio: number) => void;
-  playhead: Playhead;
-}) {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const fillRef = useRef<HTMLDivElement>(null);
-  const knobRef = useRef<HTMLDivElement>(null);
-  const ratioRef = useRef(0);
-
-  useEffect(
-    () =>
-      playhead.subscribe((_seconds, ratio) => {
-        ratioRef.current = ratio;
-        const percent = `${(ratio * 100).toString()}%`;
-        if (fillRef.current) fillRef.current.style.width = percent;
-        if (knobRef.current) knobRef.current.style.left = percent;
-        // Assistive technology needs the position too, and this element is
-        // never re-rendered, so React will not overwrite the attribute.
-        rootRef.current?.setAttribute(
-          "aria-valuenow",
-          Math.round(ratio * 100).toString(),
-        );
-      }),
-    [playhead],
-  );
-
-  const seek = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    onSeek(clamp((event.clientX - bounds.left) / bounds.width, 0, 1));
-  };
-
-  return (
-    <div
-      aria-label="Recording position"
-      aria-valuemax={100}
-      aria-valuemin={0}
-      aria-valuenow={0}
-      className="relative h-6 min-w-0 grow cursor-ew-resize touch-none"
-      onKeyDown={(event) => {
-        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-        event.preventDefault();
-        onSeek(
-          clamp(
-            ratioRef.current + (event.key === "ArrowRight" ? 0.01 : -0.01),
-            0,
-            1,
-          ),
-        );
-      }}
-      onPointerDown={(event) => {
-        event.currentTarget.setPointerCapture(event.pointerId);
-        seek(event);
-      }}
-      onPointerMove={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) seek(event);
-      }}
-      onPointerUp={(event) => {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }}
-      ref={rootRef}
-      role="slider"
-      tabIndex={0}
-    >
-      <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-muted/15">
-        <div
-          className="h-full rounded-full bg-info"
-          ref={fillRef}
-          style={{ width: "0%" }}
-        />
-      </div>
-      <div
-        className="pointer-events-none absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-content bg-info shadow-sm"
-        ref={knobRef}
-        style={{ left: "0%" }}
-      />
-    </div>
-  );
-}
-
-/** The elapsed half of the time readout, written straight to the text node. */
-function ElapsedTime({ playhead }: { playhead: Playhead }) {
-  const ref = useRef<HTMLSpanElement>(null);
-
-  useEffect(
-    () =>
-      playhead.subscribe((seconds) => {
-        const text = formatDuration(seconds * 1000);
-        if (ref.current && ref.current.textContent !== text)
-          ref.current.textContent = text;
-      }),
-    [playhead],
-  );
-
-  return <span ref={ref}>{formatDuration(0)}</span>;
-}
 
 /**
  * Playback-only verification for a finished recording.
@@ -987,51 +677,15 @@ export function ScrubPreview({
       ) : null}
 
       {hasTracks ? (
-        <div className="flex flex-col gap-2">
-          {audioTracks.map((track) => {
-            const enabled = enabledTracks.has(track.streamIndex);
-            return (
-              <div className="flex items-center gap-2" key={track.streamIndex}>
-                <Button
-                  aria-label={`${enabled ? "Exclude" : "Include"} ${track.label}`}
-                  className="group w-36 justify-start"
-                  onPress={() => {
-                    setEnabledTracks((current) => {
-                      const next = new Set(current);
-                      if (next.has(track.streamIndex))
-                        next.delete(track.streamIndex);
-                      else next.add(track.streamIndex);
-                      return next;
-                    });
-                  }}
-                  showFocus={false}
-                  size="sm"
-                  variant={enabled ? "soft" : "ghost"}
-                >
-                  {track.kind === "microphone" ? (
-                    <Mic size={15} />
-                  ) : (
-                    <Volume2 size={15} />
-                  )}
-                  <span className="min-w-0 grow truncate text-left">
-                    {track.label}
-                  </span>
-                  {enabled ? (
-                    <Check className="text-success" size={14} />
-                  ) : null}
-                </Button>
-                <Waveform
-                  enabled={enabled}
-                  onSeek={(ratio) => {
-                    seek(ratio * totalSeconds);
-                  }}
-                  playhead={playhead}
-                  track={track}
-                />
-              </div>
-            );
-          })}
-        </div>
+        <ScrubAudioTracks
+          audioTracks={audioTracks}
+          enabledTracks={enabledTracks}
+          onEnabledTracksChange={setEnabledTracks}
+          onSeek={(ratio) => {
+            seek(ratio * totalSeconds);
+          }}
+          playhead={playhead}
+        />
       ) : null}
     </div>
   );

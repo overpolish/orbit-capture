@@ -7,8 +7,9 @@
   "type": "module",
   "scripts": {
     "build": "tsc && vite build",
+    "architecture:check": "node scripts/check-source-size.mjs",
     "build-storybook": "storybook build",
-    "check": "pnpm license:check && pnpm format:check && pnpm build && pnpm build-storybook && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings && cargo build --manifest-path src-tauri/Cargo.toml",
+    "check": "pnpm license:check && pnpm architecture:check && pnpm format:check && pnpm build && pnpm build-storybook && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings && cargo build --manifest-path src-tauri/Cargo.toml",
     "dev": "vite",
     "format": "prettier --write . && eslint . --fix && cargo fmt --manifest-path src-tauri/Cargo.toml --all",
     "format:check": "prettier --check . && eslint . && cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",

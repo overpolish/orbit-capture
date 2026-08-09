@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import {
-  AppWindowMac,
-  AudioLines,
   Camera,
   CameraOff,
   Check,
@@ -15,20 +13,16 @@ import {
   Lock,
   Mic,
   MicOff,
-  Monitor,
   MousePointer2,
   MousePointer2Off,
   Sparkle,
-  SquareDashed,
   Volume2,
   VolumeOff,
 } from "lucide-react";
-import { ReactNode, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "../../../components/base/button/button";
-import { ToggleButton } from "../../../components/base/button/toggle-button";
 import { Overlay } from "../../../components/base/overlay/overlay";
-import { RadioGroup } from "../../../components/base/radio-group/radio-group";
 import { Separator } from "../../../components/base/separator/separator";
 import { Sparkles } from "../../../components/base/sparkles/sparkles";
 import { cn } from "../../../lib/styling";
@@ -37,7 +31,8 @@ import { RecordingMode } from "../../recording-sources/types";
 import { canStartRecording } from "../can-record";
 import { RecordingStatus, ScreenshotState } from "../types";
 
-import { IconRadio } from "./icon-radio";
+import { RecordingBarInputToggle as InputToggle } from "./recording-bar-input-toggle";
+import { RecordingModePicker } from "./recording-mode-picker";
 
 type RecordingBarProps = {
   fps?: RecordingFps;
@@ -75,54 +70,6 @@ const defaultInputs: RecordingInputs = {
   showCursor: true,
   systemAudio: false,
 };
-
-type InputToggleProps = {
-  isSelected: boolean;
-  label: string;
-  off: ReactNode;
-  on: ReactNode;
-  onChange: (isSelected: boolean) => void;
-  isDisabled?: boolean;
-  isLocked?: boolean;
-  onLockedPress?: () => void;
-};
-
-function InputToggle({
-  isDisabled,
-  isLocked,
-  isSelected,
-  label,
-  off,
-  on,
-  onChange,
-  onLockedPress,
-}: InputToggleProps) {
-  return (
-    <div className="relative flex justify-center">
-      {isLocked && !isDisabled ? (
-        <Lock className="absolute -top-3 text-muted" size={12} />
-      ) : null}
-      <ToggleButton
-        aria-label={label}
-        className="data-[disabled]:opacity-35"
-        isDisabled={isDisabled}
-        isSelected={isSelected}
-        off={off}
-        onChange={(selected) => {
-          if (isLocked) {
-            onLockedPress?.();
-          } else {
-            onChange(selected);
-          }
-        }}
-        size="sm"
-        variant="ghost"
-      >
-        {on}
-      </ToggleButton>
-    </div>
-  );
-}
 
 export function RecordingBar({
   fps: controlledFps,
@@ -227,51 +174,16 @@ export function RecordingBar({
 
       <Separator className="h-[60px]" orientation="vertical" spacing="sm" />
 
-      <RadioGroup
-        aria-label="Recording type"
-        className="min-w-0 grow pr-2"
+      <RecordingModePicker
         isDisabled={isRecordingActive}
-        onChange={(value) => {
-          const nextMode = value as RecordingMode;
+        mode={mode}
+        onChange={(nextMode) => {
           if (controlledMode === undefined) {
             setUncontrolledMode(nextMode);
           }
           onModeChange?.(nextMode);
         }}
-        orientation="horizontal"
-        value={mode}
-      >
-        <IconRadio
-          aria-label="Screen"
-          icon={<Monitor size={30} />}
-          subtext="Screen"
-          value="screen"
-        />
-        <IconRadio
-          aria-label="Region"
-          icon={<SquareDashed size={30} />}
-          subtext="Region"
-          value="region"
-        />
-        <IconRadio
-          aria-label="Window"
-          icon={<AppWindowMac size={30} />}
-          subtext="Window"
-          value="window"
-        />
-        <IconRadio
-          aria-label="Camera only"
-          icon={<Camera size={30} />}
-          subtext="Camera"
-          value="camera"
-        />
-        <IconRadio
-          aria-label="Audio only"
-          icon={<AudioLines size={30} />}
-          subtext="Audio"
-          value="audio"
-        />
-      </RadioGroup>
+      />
 
       <Separator className="h-[60px]" orientation="vertical" spacing="sm" />
 

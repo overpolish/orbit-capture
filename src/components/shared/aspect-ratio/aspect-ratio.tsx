@@ -14,47 +14,13 @@ import { ToggleButton } from "../../base/button/toggle-button";
 import { NumberField } from "../../base/input-fields/number-field";
 import { CheckOnClickButton } from "../check-on-click-button/check-on-click-button";
 
-/** Simplified whole-number aspect ratio units for width and height. */
-type AspectRatioParts = { ratioHeight: number; ratioWidth: number };
-
-/**
- * Returns the greatest common divisor for two numbers.
- */
-const greatestCommonDivisor = (a: number, b: number): number => {
-  a = Math.abs(a);
-  b = Math.abs(b);
-  while (b) {
-    const temp = b;
-    b = a % b;
-    a = temp;
-  }
-  return a || 1;
-};
-
-/**
- * Reduces a width/height pair to the simplest whole-number ratio.
- * Example: 1920x1080 -> { ratioWidth: 16, ratioHeight: 9 }
- */
-const reduceToRatio = (width: number, height: number): AspectRatioParts => {
-  const divisor = greatestCommonDivisor(width, height);
-  return {
-    ratioHeight: Math.round(height / divisor),
-    ratioWidth: Math.round(width / divisor),
-  };
-};
-
-/**
- * Parses a preset id like "16:9" into an AspectRatioParts object.
- */
-const parseRatioFromId = (id: string | null): AspectRatioParts | undefined => {
-  if (!id) return undefined;
-  const [a, b] = id.split(":").map((n) => Number.parseInt(n, 10));
-  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) {
-    return undefined;
-  }
-
-  return { ratioHeight: b, ratioWidth: a };
-};
+import {
+  AspectRatioParts,
+  closestDimensionsAtRatio,
+  dimensionsAtRatio,
+  parseRatioFromId,
+  reduceToRatio,
+} from "./aspect-ratio-math";
 
 const DEBOUNCE_MS = 80; // Gives time for state updates to propagate before calculating adjustments
 
@@ -200,11 +166,11 @@ export const AspectRatio = ({
       return;
     }
 
-    const divisor = editingDimension === "width" ? ratioWidth : ratioHeight;
-    const multiplier = Math.max(1, Math.round(value / divisor));
-
-    const newWidth = multiplier * ratioWidth;
-    const newHeight = multiplier * ratioHeight;
+    const { height: newHeight, width: newWidth } = dimensionsAtRatio(
+      value,
+      editingDimension,
+      ratio,
+    );
 
     setWidthValue(newWidth);
     setHeightValue(newHeight);
@@ -238,26 +204,9 @@ export const AspectRatio = ({
   };
 
   const applyPresetRatio = (ratio: AspectRatioParts) => {
-    const { ratioHeight, ratioWidth } = ratio;
-
-    const widthMultiplier = Math.max(1, Math.round(widthValue / ratioWidth));
-    const w1 = widthMultiplier * ratioWidth;
-    const h1 = widthMultiplier * ratioHeight;
-
-    const heightMultiplier = Math.max(1, Math.round(heightValue / ratioHeight));
-    const w2 = heightMultiplier * ratioWidth;
-    const h2 = heightMultiplier * ratioHeight;
-
-    const delta1 = Math.abs(w1 - widthValue) + Math.abs(h1 - heightValue);
-    const delta2 = Math.abs(w2 - widthValue) + Math.abs(h2 - heightValue);
-
-    if (delta1 <= delta2) {
-      setWidthValue(w1);
-      setHeightValue(h1);
-    } else {
-      setWidthValue(w2);
-      setHeightValue(h2);
-    }
+    const dimensions = closestDimensionsAtRatio(widthValue, heightValue, ratio);
+    setWidthValue(dimensions.width);
+    setHeightValue(dimensions.height);
   };
 
   const onChangeWidth = (value: number) => {

@@ -3,12 +3,6 @@
 
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import {
-  currentMonitor,
-  getCurrentWindow,
-  LogicalSize,
-  PhysicalPosition,
-} from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -17,7 +11,6 @@ import {
   cancelExportJob,
   copyExportToClipboard,
   estimateRecordingExport,
-  getExportPreview,
   getRecordingPreview,
   getRecordingPreviewMix,
   saveExport,
@@ -28,13 +21,9 @@ import { logPreview } from "./diagnostics";
 import { sourceScalePercent } from "./resolution";
 import { selectArtifact, selectDirectory, useExportStore } from "./store";
 import { RecordingPreview } from "./types";
+import { useExportPreviewImage } from "./use-export-preview-image";
+import { useExportWindowSize } from "./use-export-window-size";
 
-/** Matches the width the window is built with. */
-const WINDOW_WIDTH = 560;
-/** The root's `p-6` above and below the measured content. */
-const WINDOW_PADDING = 48;
-/** Keeps the border and shadow clear of the usable screen edges. */
-const WINDOW_MARGIN = 24;
 /**
  * How long a toggle is left alone before its mix is built.
  *
@@ -63,8 +52,6 @@ export function ExportWindow() {
   const [collapseAudio, setCollapseAudio] = useState(false);
   const [compression, setCompression] = useState(DEFAULT_COMPRESSION);
   const [resolutionScalePercent, setResolutionScalePercent] = useState(100);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [fullPreviewUrl, setFullPreviewUrl] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isCancelingSave, setIsCancelingSave] = useState(false);
   const [saveProgress, setSaveProgress] = useState<number | null>(null);
@@ -132,6 +119,8 @@ export function ExportWindow() {
   // refetches - including the full-resolution copy, whose cached URL belongs to
   // the previous capture's pixels.
   const artifactId = artifact?.id;
+  const { loadFullPreview, previewUrl } = useExportPreviewImage(artifactId);
+  const onContentHeightChange = useExportWindowSize();
   const canCompress = artifact?.kind === "recording" && artifact.canCompress;
   const originalResolutionScale =
     artifact?.kind === "recording" ? sourceScalePercent(artifact) : 100;
@@ -410,88 +399,6 @@ export function ExportWindow() {
     setError(null);
   }, [suggestedFileStem]);
 
-  useEffect(() => {
-    if (artifactId === undefined) return;
-
-    let url: string | undefined;
-    let disposed = false;
-
-    void getExportPreview()
-      .then((bytes) => {
-        if (disposed) return;
-        url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
-        setPreviewUrl(url);
-      })
-      .catch((cause: unknown) => {
-        console.error("Could not load the export preview", cause);
-      });
-
-    return () => {
-      disposed = true;
-      if (url) URL.revokeObjectURL(url);
-      setPreviewUrl(null);
-      setFullPreviewUrl(null);
-    };
-  }, [artifactId]);
-
-  // The full capture is only worth fetching once someone zooms past fit.
-  useEffect(() => {
-    if (!fullPreviewUrl) return;
-
-    return () => {
-      URL.revokeObjectURL(fullPreviewUrl);
-    };
-  }, [fullPreviewUrl]);
-
-  // The window is sized to whatever the content actually measures, so the
-  // spacing between sections stays even instead of one gap absorbing the slack
-  // of a hand-picked window height.
-  const onContentHeightChange = useCallback((height: number) => {
-    if (!isTauri()) return;
-
-    const desiredHeight = Math.ceil(height) + WINDOW_PADDING;
-    const target = getCurrentWindow();
-
-    void (async () => {
-      // Sizing does not depend on the monitor lookup succeeding. It is only
-      // needed to clamp a very tall recording panel onto a short display and
-      // to nudge the window back into view afterwards; if it fails, the window
-      // must still be the height of its content.
-      let monitor = null;
-      try {
-        monitor = await currentMonitor();
-      } catch (cause) {
-        console.error("Could not read the current monitor", cause);
-      }
-
-      const availableHeight = monitor
-        ? monitor.workArea.size.toLogical(monitor.scaleFactor).height -
-          WINDOW_MARGIN * 2
-        : desiredHeight;
-      await target.setSize(
-        new LogicalSize(WINDOW_WIDTH, Math.min(desiredHeight, availableHeight)),
-      );
-
-      if (!monitor) return;
-
-      const position = await target.outerPosition();
-      const size = await target.outerSize();
-      const margin = Math.round(WINDOW_MARGIN * monitor.scaleFactor);
-      const minimumY = monitor.workArea.position.y + margin;
-      const maximumY = Math.max(
-        minimumY,
-        monitor.workArea.position.y +
-          monitor.workArea.size.height -
-          margin -
-          size.height,
-      );
-      const y = Math.min(Math.max(position.y, minimumY), maximumY);
-      if (y !== position.y) {
-        await target.setPosition(new PhysicalPosition(position.x, y));
-      }
-    })();
-  }, []);
-
   // A recording that needs a mix has nothing playable until one exists, so the
   // window says it is still preparing rather than showing a play button that
   // would produce a picture and no sound.
@@ -579,19 +486,7 @@ export function ExportWindow() {
         setFileStem(value);
         setError(null);
       }}
-      onNeedFullResolution={() => {
-        if (fullPreviewUrl) return;
-
-        getExportPreview(true)
-          .then((bytes) => {
-            setFullPreviewUrl(
-              URL.createObjectURL(new Blob([bytes], { type: "image/png" })),
-            );
-          })
-          .catch((cause: unknown) => {
-            console.error("Could not load the full-resolution preview", cause);
-          });
-      }}
+      onNeedFullResolution={loadFullPreview}
       onResolutionScaleChange={(scale) => {
         setResolutionScalePercent(scale);
         if (scale < originalResolutionScale && compression === 0) {
@@ -635,7 +530,7 @@ export function ExportWindow() {
           })
           .catch(report("save"));
       }}
-      previewUrl={fullPreviewUrl ?? previewUrl}
+      previewUrl={previewUrl}
       recordingMixUrl={mixUrl}
       recordingPreviewError={recordingPreviewError}
       recordingPreviewTracks={recordingPreviewTracks}
