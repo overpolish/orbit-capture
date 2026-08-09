@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { SeparatorProps as AriaSeparatorProps, useSeparator } from "react-aria";
 import { VariantProps } from "tailwind-variants";
 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /** `1:04:07`, or `4:07` for anything under an hour. */
 export const formatDuration = (durationMs: number) => {
   const total = Math.max(0, Math.round(durationMs / 1000));

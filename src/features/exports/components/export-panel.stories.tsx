@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { type Meta, type StoryObj } from "@storybook/react-vite";
 
 import { ExportArtifact } from "../types";

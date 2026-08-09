@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { Channel } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 

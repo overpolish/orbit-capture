@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useRef } from "react";
 import { AriaOverlayProps, useOverlay } from "react-aria";
 import { VariantProps } from "tailwind-variants";

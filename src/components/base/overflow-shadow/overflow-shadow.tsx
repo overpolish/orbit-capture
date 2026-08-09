@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 import { useRef } from "react";
 import { VariantProps } from "tailwind-variants";

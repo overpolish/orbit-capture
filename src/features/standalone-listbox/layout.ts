@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 export const standaloneListboxMaxHeight = 150;
 export const emptyStandaloneListboxHeight = 64;
 

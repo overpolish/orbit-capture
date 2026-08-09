@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Audio prepared only for the export window.
 //!
 //! The recording remains the source of truth. FFmpeg decodes a low-rate mono

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { invoke } from "@tauri-apps/api/core";
 
 import { RecordingSnapshot, StartRecordingOptions } from "./types";

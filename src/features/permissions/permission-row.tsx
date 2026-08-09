@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { Check, Sparkle } from "lucide-react";
 import { ComponentProps, ReactNode } from "react";
 import { TooltipTrigger } from "react-aria-components";

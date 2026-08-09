@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { clsx, ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 

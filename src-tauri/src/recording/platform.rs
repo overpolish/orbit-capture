@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #![allow(clippy::useless_transmute)]
 
 //! Screen recording on macOS: ScreenCaptureKit into AVAssetWriter, H.264, no

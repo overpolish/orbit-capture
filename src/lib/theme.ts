@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 
 const applySystemTheme = ({ matches }: Pick<MediaQueryList, "matches">) => {

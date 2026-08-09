@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { motion, useMotionValue, Variants } from "motion/react";
 import { useState } from "react";
 import {

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { ExportSync } from "./features/exports/export-sync";
 import { ExportWindow } from "./features/exports/export-window";
 import { PermissionSync } from "./features/permissions/permission-sync";

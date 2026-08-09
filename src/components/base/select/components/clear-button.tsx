@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { X } from "lucide-react";
 import { motion, MotionProps } from "motion/react";
 import { use } from "react";

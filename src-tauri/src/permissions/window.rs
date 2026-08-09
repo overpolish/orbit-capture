@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use tauri::utils::config::WindowEffectsConfig;
 use tauri::window::{Effect, EffectState};
 use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder};

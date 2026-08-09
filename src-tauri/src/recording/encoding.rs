@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The parts of the capture pipeline that are arithmetic rather than platform.
 //!
 //! Everything here is pure so the timing rules - which are what a recording

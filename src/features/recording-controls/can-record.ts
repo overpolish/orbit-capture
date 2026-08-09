@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { RecordingInputs } from "../recording-inputs/types";
 import { RecordingMode } from "../recording-sources/types";
 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! CPAL microphone capture, kept independent from the container writer.
 //!
 //! The real-time callback only timestamps and copies one bounded device buffer.

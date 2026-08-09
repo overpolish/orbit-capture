@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use crate::screenshots::{physical_capture_rect, CapturedImage, ScreenshotTarget};
 
 fn monitor(monitor_id: u32) -> Result<xcap::Monitor, String> {

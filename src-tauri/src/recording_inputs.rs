@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use cpal::{
   traits::{DeviceTrait, HostTrait},
   Device, SampleFormat, StreamConfig,

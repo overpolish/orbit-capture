@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Which recorded audio tracks a derived file carries, and how they are laid
 //! out in it.
 //!

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use cidre::{cv, sc};
 
 use crate::capture_kit::{display_scale, monitor_geometry, our_windows};

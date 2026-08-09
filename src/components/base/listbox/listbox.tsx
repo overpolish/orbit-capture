@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 overpolish
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { SearchSlash } from "lucide-react";
 import { Ref } from "react";
 import {
