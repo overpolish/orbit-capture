@@ -9,6 +9,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use chrono::NaiveDateTime;
+use serde::Serialize;
 
 /// Told once, from the writer thread, when a recording stops being able to
 /// accept frames. The user sees one message however many frames follow.
@@ -27,10 +28,18 @@ pub struct FinalizeInfo {
   /// A still from the last frame, if one could be drawn. A recording recovered
   /// from a previous run has none, because its frames are long gone.
   pub poster: Option<Vec<u8>>,
+  pub primary_kind: PrimaryRecordingKind,
   /// The captured pixels per logical display point. Export uses this to offer
   /// meaningful 1x/1.5x output rather than arbitrary percentages.
   pub source_scale_factor: f32,
   pub width: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PrimaryRecordingKind {
+  Screen,
+  Camera,
 }
 
 pub struct CameraFinalizeInfo {

@@ -7,6 +7,7 @@ use super::*;
 /// The ScreenCaptureKit objects a running session keeps alive.
 pub(super) struct StreamObjects {
   pub(super) _output: Option<arc::R<ScreenOutput>>,
+  pub(super) process_audio: Option<ProcessAudioTap>,
   pub(super) queue: arc::R<dispatch::Queue>,
   pub(super) streams: Vec<arc::R<sc::Stream>>,
 }
@@ -78,6 +79,7 @@ impl CaptureSession {
 
   pub fn stop_at(mut self, at: Instant) -> Result<FinalizeInfo, String> {
     self.microphone.take();
+    self.objects.process_audio.take();
     if let Some(camera) = self.primary_camera.take() {
       camera.stop();
     }

@@ -14,6 +14,7 @@ pub(crate) mod recording_preview_player;
 mod recovery;
 pub(crate) mod save;
 mod track_selection;
+mod validation;
 
 pub use artifact::{discard, present_recording, present_screenshot};
 use artifact::{emit_snapshot, full_preview_png, snapshot, take_artifact};
@@ -25,9 +26,8 @@ use preferences::{load_screenshot_radius, remember_screenshot_radius};
 pub use recovery::initialize;
 #[cfg(test)]
 use recovery::orphan_plan;
-use save::{
-  delivered_extension, scale_percent, validate_camera_resolution_scale, validate_resolution_scale,
-};
+use save::{delivered_extension, scale_percent};
+use validation::{validate_camera_resolution_scale, validate_primary_resolution_scale};
 mod window;
 
 use std::collections::HashMap;
@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{image::Image, ipc::Response, AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-use crate::recording::FinalizeInfo;
+use crate::recording::{FinalizeInfo, PrimaryRecordingKind};
 use crate::screenshots::{
   encode_png, rounded_corners, screenshot_directory, unique_path, CapturedImage,
 };
@@ -96,6 +96,7 @@ pub enum ExportArtifact {
     /// The working file. Saving moves it or derives the requested compressed
     /// copy; discarding deletes it.
     path: PathBuf,
+    primary_kind: PrimaryRecordingKind,
     source_scale_percent: u16,
     suggested_file_stem: String,
     width: u32,
@@ -133,6 +134,7 @@ pub enum ExportArtifactSnapshot {
     /// Scoped to the recordings directory in `tauri.conf.json`, which is the
     /// only place this path can ever point.
     path: PathBuf,
+    primary_kind: PrimaryRecordingKind,
     source_scale_percent: u16,
   },
 }

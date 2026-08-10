@@ -29,6 +29,7 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
         height,
         id,
         path,
+        primary_kind,
         source_scale_percent,
         suggested_file_stem,
         width,
@@ -48,6 +49,7 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
             .and_then(|camera| std::fs::metadata(&camera.path).ok())
             .map_or(0, |metadata| metadata.len()),
         path: path.clone(),
+        primary_kind: *primary_kind,
         source_scale_percent: *source_scale_percent,
       },
     });
@@ -231,6 +233,7 @@ pub fn present_recording(
     height,
     path,
     poster,
+    primary_kind,
     source_scale_factor,
     width,
   } = info;
@@ -255,6 +258,7 @@ pub fn present_recording(
       duration_ms,
       height,
       path,
+      primary_kind,
       source_scale_percent: scale_percent(source_scale_factor),
       suggested_file_stem,
       width,

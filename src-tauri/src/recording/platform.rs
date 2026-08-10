@@ -28,6 +28,7 @@
 mod camera;
 mod media;
 mod output;
+mod process_audio_tap;
 mod session;
 mod startup;
 mod writer;
@@ -41,7 +42,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use cidre::{
-  arc, cg, cm, cv, define_obj_type, dispatch, objc, sc,
+  arc, cat, cf, cg, cm, core_audio, cv, define_obj_type, dispatch, ns, objc, os, sc,
   sc::stream::{Output, OutputImpl},
 };
 use cpal::Stream;
@@ -56,7 +57,9 @@ use super::{CameraCaptureMode, CaptureStartupConfig, PrimaryCaptureSource};
 #[cfg(test)]
 use media::microphone_buffer_from_origin;
 use media::{even, frame_status, time_to_ns, VideoEncoder};
+use output::SystemAudioSample;
 use output::{AudioSample, CaptureStats, Command, Frame, ScreenOutput, ScreenOutputInner};
+use process_audio_tap::ProcessAudioTap;
 pub use session::CaptureSession;
 use session::StreamObjects;
 use writer::{Container, Writer, WriterConfig};

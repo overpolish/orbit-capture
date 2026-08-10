@@ -3,6 +3,8 @@
 
 import { ExportArtifact } from "./types";
 
+export const cameraResolutionScales = [100, 75, 50];
+
 export const sourceScalePercent = (
   artifact: Extract<ExportArtifact, { kind: "recording" }>,
 ) => Math.min(400, Math.max(100, artifact.sourceScalePercent));
@@ -10,14 +12,13 @@ export const sourceScalePercent = (
 export const resolutionScales = (
   artifact: Extract<ExportArtifact, { kind: "recording" }>,
 ) => {
+  if (artifact.primaryKind === "camera") return cameraResolutionScales;
   const source = sourceScalePercent(artifact);
   return [source, 200, 150, 100].filter(
     (scale, index, choices) =>
       scale <= source && choices.indexOf(scale) === index,
   );
 };
-
-export const cameraResolutionScales = [100, 75, 50];
 
 export const scaledVideoDimensions = ({
   height,

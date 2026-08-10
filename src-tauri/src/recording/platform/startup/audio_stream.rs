@@ -5,6 +5,7 @@ use super::super::*;
 use super::{screen_stream, video_source::PrimaryVideo};
 use crate::recording::SystemAudioSelection;
 
+#[derive(Default)]
 pub(super) struct SystemAudioStreams {
   pub all: Option<arc::R<sc::Stream>>,
   pub selected: Option<arc::R<sc::Stream>>,

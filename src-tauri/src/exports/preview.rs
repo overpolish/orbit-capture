@@ -86,7 +86,16 @@ pub async fn estimate_recording_export(
 
   tauri::async_runtime::spawn_blocking(move || {
     let state = app.state::<ExportState>();
-    let (path, tracks, duration_ms, original_size, camera, has_video, source_scale_percent) = {
+    let (
+      path,
+      tracks,
+      duration_ms,
+      original_size,
+      camera,
+      has_video,
+      primary_kind,
+      source_scale_percent,
+    ) = {
       let artifact = state
         .artifact
         .lock()
@@ -98,6 +107,7 @@ pub async fn estimate_recording_export(
         height,
         id,
         path,
+        primary_kind,
         source_scale_percent,
         width,
         ..
@@ -115,13 +125,18 @@ pub async fn estimate_recording_export(
         std::fs::metadata(path).map_or(0, |metadata| metadata.len()),
         camera.clone(),
         *width > 0 && *height > 0,
+        *primary_kind,
         *source_scale_percent,
       )
     };
     if bake_camera && camera.is_none() {
       return Err("There is no camera recording to bake in".to_owned());
     }
-    validate_resolution_scale(resolution_scale_percent, source_scale_percent)?;
+    validate_primary_resolution_scale(
+      resolution_scale_percent,
+      source_scale_percent,
+      primary_kind,
+    )?;
     validate_camera_resolution_scale(camera_resolution_scale_percent)?;
 
     let selection = track_selection::TrackSelection::new(&tracks, &enabled_stream_indices);

@@ -115,22 +115,6 @@ pub(super) fn scale_percent(scale_factor: f32) -> u16 {
   (scale_factor.max(1.0) * 100.0).round().clamp(100.0, 400.0) as u16
 }
 
-pub(super) fn validate_resolution_scale(selected: u16, source: u16) -> Result<(), String> {
-  if selected < 100 || selected > source {
-    return Err("The selected output resolution is not available for this recording".to_owned());
-  }
-
-  Ok(())
-}
-
-pub(super) fn validate_camera_resolution_scale(selected: u16) -> Result<(), String> {
-  if ![50, 75, 100].contains(&selected) {
-    return Err("The selected camera resolution is not available".to_owned());
-  }
-
-  Ok(())
-}
-
 #[tauri::command]
 pub async fn save_export(
   app: AppHandle,
@@ -208,11 +192,16 @@ pub async fn save_export(
           height,
           id,
           path: working,
+          primary_kind,
           source_scale_percent,
           width,
           ..
         } => {
-          validate_resolution_scale(resolution_scale_percent, *source_scale_percent)?;
+          validate_primary_resolution_scale(
+            resolution_scale_percent,
+            *source_scale_percent,
+            *primary_kind,
+          )?;
           validate_camera_resolution_scale(camera_resolution_scale_percent)?;
           validate_camera_overlay(camera_overlay)?;
           let selection =

@@ -202,7 +202,6 @@ pub(super) fn begin_capture(
     system_audio: SystemAudioSelection {
       application_ids: options.system_audio_application_ids.clone(),
       enabled: options.system_audio,
-      #[cfg(target_os = "windows")]
       process_ids: options.system_audio_process_ids.clone(),
     },
   })

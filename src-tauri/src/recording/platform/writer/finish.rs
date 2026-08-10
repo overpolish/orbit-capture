@@ -4,6 +4,7 @@
 use cidre::cv;
 
 use super::*;
+use crate::recording::PrimaryRecordingKind;
 
 impl Writer {
   /// Appends the closing frame, giving a busy encoder a moment to catch up.
@@ -123,6 +124,10 @@ impl Writer {
       height: self.height,
       path: self.path.clone(),
       poster: tail.as_mut().and_then(poster_png),
+      primary_kind: match self.source {
+        VideoSource::Camera => PrimaryRecordingKind::Camera,
+        VideoSource::Screen => PrimaryRecordingKind::Screen,
+      },
       // The recording state owns source geometry and fills this before the
       // artifact is presented. The writer itself only deals in pixels.
       source_scale_factor: 1.0,

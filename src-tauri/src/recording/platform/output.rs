@@ -30,10 +30,15 @@ pub(super) struct AudioSample {
   pub(super) wall: Instant,
 }
 
+pub(super) enum SystemAudioSample {
+  Pcm(MicrophoneBuffer),
+  ScreenCaptureKit(AudioSample),
+}
+
 /// Everything the writer thread reacts to, in the order it happened.
 pub(super) enum Command {
   Frame(Frame),
-  SystemAudio(AudioSample),
+  SystemAudio(SystemAudioSample),
   Microphone(MicrophoneBuffer),
   MicrophoneFailed(String),
   Pause {
@@ -116,7 +121,13 @@ impl ScreenOutputInner {
       source_ns,
       wall: Instant::now(),
     };
-    if let Err(TrySendError::Full(_)) = self.commands.try_send(Command::SystemAudio(audio)) {
+    if let Err(TrySendError::Full(_)) =
+      self
+        .commands
+        .try_send(Command::SystemAudio(SystemAudioSample::ScreenCaptureKit(
+          audio,
+        )))
+    {
       self.stats.audio_dropped.fetch_add(1, Ordering::Relaxed);
     }
   }

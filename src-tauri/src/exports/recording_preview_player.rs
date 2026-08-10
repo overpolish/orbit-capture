@@ -26,6 +26,7 @@ use self::layout::{preview_layout, RecordingPreviewLayout, PREVIEW_HEIGHT};
 use self::still_macos::NativeStillDecoder;
 use self::worker::{PlaybackMode, PreviewPlayerWorker};
 use super::{ExportArtifact, ExportState, RecordingAudioTrack};
+use crate::recording::PrimaryRecordingKind;
 pub use commands::stop_all;
 
 #[derive(Clone)]
@@ -164,6 +165,7 @@ fn sources(app: &AppHandle, artifact_id: u64) -> Result<PlayerSources, String> {
     height,
     id,
     path,
+    primary_kind,
     width,
     ..
   }) = artifact.as_ref()
@@ -174,13 +176,17 @@ fn sources(app: &AppHandle, artifact_id: u64) -> Result<PlayerSources, String> {
     return Err("That recording is no longer waiting to be exported".to_owned());
   }
   let camera_size = camera.as_ref().map(|value| (value.width, value.height));
+  let primary_pane = match primary_kind {
+    PrimaryRecordingKind::Screen => Some((*width, *height, layout::PreviewPaneKind::Screen)),
+    PrimaryRecordingKind::Camera => Some((*width, *height, layout::PreviewPaneKind::Camera)),
+  };
   Ok(PlayerSources {
     audio_tracks: audio_tracks.clone(),
     camera_duration_ms: camera.as_ref().map(|value| value.duration_ms),
     camera_path: camera.as_ref().map(|value| value.path.clone()),
     duration_ms: *duration_ms,
-    layout: preview_layout((*width, *height), camera_size, *height),
-    playback_layout: preview_layout((*width, *height), camera_size, PREVIEW_HEIGHT),
+    layout: preview_layout(primary_pane, camera_size, *height),
+    playback_layout: preview_layout(primary_pane, camera_size, PREVIEW_HEIGHT),
     screen_path: path.clone(),
   })
 }
@@ -192,7 +198,11 @@ mod tests {
 
   #[test]
   fn lays_out_a_screen_as_one_native_preview_pane() {
-    let layout = preview_layout((3_600, 2_338), None, PREVIEW_HEIGHT);
+    let layout = preview_layout(
+      Some((3_600, 2_338, PreviewPaneKind::Screen)),
+      None,
+      PREVIEW_HEIGHT,
+    );
 
     assert_eq!(layout.panes.len(), 1);
     assert!(matches!(layout.panes[0].kind, PreviewPaneKind::Screen));
@@ -202,7 +212,11 @@ mod tests {
 
   #[test]
   fn keeps_screen_and_portrait_camera_as_separate_panes() {
-    let layout = preview_layout((3_600, 2_338), Some((1_080, 1_920)), PREVIEW_HEIGHT);
+    let layout = preview_layout(
+      Some((3_600, 2_338, PreviewPaneKind::Screen)),
+      Some((1_080, 1_920)),
+      PREVIEW_HEIGHT,
+    );
 
     assert_eq!(layout.panes.len(), 2);
     assert!(matches!(layout.panes[0].kind, PreviewPaneKind::Screen));
@@ -210,5 +224,17 @@ mod tests {
     assert_eq!(layout.panes[1].x, layout.panes[0].width);
     assert_eq!(layout.width, layout.panes[0].width + layout.panes[1].width);
     assert!(layout.panes[1].width < layout.panes[0].width);
+  }
+
+  #[test]
+  fn lays_out_a_primary_camera_as_a_camera_pane() {
+    let layout = preview_layout(
+      Some((1_920, 1_080, PreviewPaneKind::Camera)),
+      None,
+      PREVIEW_HEIGHT,
+    );
+
+    assert_eq!(layout.panes.len(), 1);
+    assert!(matches!(layout.panes[0].kind, PreviewPaneKind::Camera));
   }
 }

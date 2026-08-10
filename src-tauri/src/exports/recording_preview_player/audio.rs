@@ -204,6 +204,8 @@ fn args(sources: &PlayerSources, start_ms: u64, config: &StreamConfig) -> Vec<St
     "-i".to_owned(),
     sources.screen_path.to_string_lossy().into_owned(),
   ];
+  let remaining_ms = sources.duration_ms.saturating_sub(start_ms).max(1);
+  let remaining = format!("{}.{:03}", remaining_ms / 1_000, remaining_ms % 1_000);
   if stream_indices.len() == 1 {
     args.extend(["-map".to_owned(), format!("0:a:{}", stream_indices[0])]);
   } else {
@@ -211,8 +213,8 @@ fn args(sources: &PlayerSources, start_ms: u64, config: &StreamConfig) -> Vec<St
     let mut inputs = String::new();
     for (position, stream_index) in stream_indices.iter().enumerate() {
       filter.push_str(&format!(
-        "[0:a:{stream_index}]aresample={},aformat=sample_fmts=flt:channel_layouts=mono[track{position}];",
-        config.sample_rate
+        "[0:a:{stream_index}]aresample={},aformat=sample_fmts=flt:channel_layouts=mono,apad=whole_dur={remaining}[track{position}];",
+        config.sample_rate,
       ));
       inputs.push_str(&format!("[track{position}]"));
     }
@@ -233,6 +235,8 @@ fn args(sources: &PlayerSources, start_ms: u64, config: &StreamConfig) -> Vec<St
     stream_indices.len().to_string(),
     "-ar".to_owned(),
     config.sample_rate.to_string(),
+    "-t".to_owned(),
+    remaining,
     "-f".to_owned(),
     "f32le".to_owned(),
     "pipe:1".to_owned(),
@@ -329,11 +333,16 @@ pub(super) fn spawn(
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::exports::recording_preview_player::layout::PreviewPaneKind;
   use crate::exports::{AudioTrackKind, RecordingAudioTrack};
 
   #[test]
   fn decodes_tracks_into_independent_pcm_channels() {
-    let layout = super::super::preview_layout((1_920, 1_080), None, super::super::PREVIEW_HEIGHT);
+    let layout = super::super::preview_layout(
+      Some((1_920, 1_080, PreviewPaneKind::Screen)),
+      None,
+      super::super::PREVIEW_HEIGHT,
+    );
     let sources = PlayerSources {
       audio_tracks: vec![
         RecordingAudioTrack {
@@ -363,6 +372,7 @@ mod tests {
 
     assert!(rendered.contains("[0:a:0]aresample=48000"));
     assert!(rendered.contains("[0:a:1]aresample=48000"));
+    assert!(rendered.contains("apad=whole_dur=0.750"));
     assert!(rendered.contains("amerge=inputs=2[tracks]"));
     assert!(rendered.contains("-ac 2"));
   }

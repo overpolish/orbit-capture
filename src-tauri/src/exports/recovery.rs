@@ -165,6 +165,7 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
       height: 0,
       path,
       poster: None,
+      primary_kind: crate::recording::PrimaryRecordingKind::Screen,
       source_scale_factor: 1.0,
       width: 0,
     },

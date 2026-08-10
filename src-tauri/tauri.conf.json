@@ -148,7 +148,7 @@
   "bundle": {
     "active": true,
     "macOS": {
-      "minimumSystemVersion": "14.0"
+      "minimumSystemVersion": "14.2"
     },
     "targets": "all",
     "icon": [

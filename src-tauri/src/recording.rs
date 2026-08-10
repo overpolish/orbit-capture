@@ -22,7 +22,7 @@ use platform as capture;
 #[cfg(not(target_os = "macos"))]
 use platform_unsupported as capture;
 
-pub use encoding::{CameraFinalizeInfo, FinalizeInfo};
+pub use encoding::{CameraFinalizeInfo, FinalizeInfo, PrimaryRecordingKind};
 pub use session::recordings_directory;
 pub use state::{is_idle, snapshot, RecordingState};
 pub use types::{

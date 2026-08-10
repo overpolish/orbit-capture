@@ -11,21 +11,89 @@ impl Writer {
     }
   }
 
-  pub(super) fn append_system_audio_from_origin(&mut self, sample: AudioSample) {
-    let Some(origin_source_ns) = self.origin_source_ns else {
+  /// AVAssetWriter omits an audio input that never receives a sample. Core
+  /// Audio process taps are intentionally quiet until a tapped process makes
+  /// sound, so a silent recording would otherwise shift every later audio
+  /// stream index and leave export metadata pointing at tracks that do not
+  /// exist. One AAC packet at time zero materializes the selected track; real
+  /// audio retains its honest wall-clock start when it arrives.
+  pub(super) fn ensure_system_audio_track(&mut self) {
+    if self.system_audio_input.is_none() || self.last_system_audio_pts_ns.is_some() {
+      return;
+    }
+    let Some(description) = self.system_audio_format_description.as_ref() else {
       return;
     };
-    if let Some(sample) = audio_sample_from_origin(sample, origin_source_ns) {
-      self.append_mapped_system_audio(&sample);
+    let format = MicrophoneFormat {
+      channels: SYSTEM_AUDIO_CHANNELS as u16,
+      sample_rate: SYSTEM_AUDIO_SAMPLE_RATE as u32,
+    };
+    let silent = MicrophoneBuffer {
+      captured_at: self.origin_wall.unwrap_or(self.base),
+      samples: vec![0.0; 1_024 * usize::from(format.channels)],
+    };
+    let sample = match microphone_sample_buffer(&silent, format, description, 0) {
+      Ok(sample) => sample,
+      Err(error) => {
+        self.stats.audio_rejected.fetch_add(1, Ordering::Relaxed);
+        self.refused(error);
+        return;
+      }
+    };
+    self.append_system_audio_buffer(&sample, 0);
+  }
+
+  pub(super) fn append_system_audio_from_origin(&mut self, sample: SystemAudioSample) {
+    match sample {
+      SystemAudioSample::Pcm(buffer) => self.append_system_audio_pcm_from_origin(buffer),
+      SystemAudioSample::ScreenCaptureKit(sample) => {
+        let Some(origin_source_ns) = self.origin_source_ns else {
+          return;
+        };
+        if let Some(sample) = audio_sample_from_origin(sample, origin_source_ns) {
+          self.append_mapped_system_audio(&sample);
+        }
+      }
     }
+  }
+
+  fn append_system_audio_pcm_from_origin(&mut self, buffer: MicrophoneBuffer) {
+    let (Some(origin), Some(description)) = (
+      self.origin_wall,
+      self.system_audio_format_description.as_ref(),
+    ) else {
+      return;
+    };
+    let format = MicrophoneFormat {
+      channels: SYSTEM_AUDIO_CHANNELS as u16,
+      sample_rate: SYSTEM_AUDIO_SAMPLE_RATE as u32,
+    };
+    let Some(buffer) = microphone_buffer_from_origin(buffer, origin, format) else {
+      return;
+    };
+    let mut pts = self
+      .timeline
+      .wall_pts_ns(self.elapsed_ns(buffer.captured_at));
+    if let Some(end) = self.system_audio_end_ns {
+      pts = pts.max(end);
+    }
+    let sample = match microphone_sample_buffer(&buffer, format, description, pts) {
+      Ok(sample) => sample,
+      Err(error) => {
+        self.stats.audio_rejected.fetch_add(1, Ordering::Relaxed);
+        self.refused(error);
+        return;
+      }
+    };
+    self.append_system_audio_buffer(&sample, pts);
   }
 
   pub(super) fn append_mapped_system_audio(&mut self, sample: &AudioSample) {
     let mut pts = self
       .timeline
       .media_pts_ns(sample.source_ns, self.elapsed_ns(sample.wall));
-    if let Some(last) = self.last_system_audio_pts_ns {
-      pts = pts.max(last.saturating_add(1));
+    if let Some(end) = self.system_audio_end_ns {
+      pts = pts.max(end);
     }
     self.append_system_audio(sample, pts);
   }
@@ -136,12 +204,16 @@ impl Writer {
         return;
       }
     };
-    let duration_ns = time_to_ns(sample.buf.duration()).unwrap_or_default();
+    self.append_system_audio_buffer(&retimed, pts_ns);
+  }
+
+  fn append_system_audio_buffer(&mut self, sample: &cm::SampleBuf, pts_ns: i64) {
+    let duration_ns = time_to_ns(sample.duration()).unwrap_or_default();
     let result = self
       .system_audio_input
       .as_mut()
       .expect("checked above")
-      .append_sample_buf(&retimed);
+      .append_sample_buf(sample);
     match result {
       Ok(true) => {
         self.last_system_audio_pts_ns = Some(pts_ns);

@@ -67,7 +67,6 @@ pub struct StartRecordingOptions {
   pub system_audio: bool,
   #[serde(default)]
   pub system_audio_application_ids: Vec<String>,
-  #[cfg(target_os = "windows")]
   #[serde(default)]
   pub system_audio_process_ids: Vec<u32>,
   #[serde(default)]
@@ -132,13 +131,12 @@ pub(crate) struct CaptureStartupConfig {
 }
 
 /// A source snapshot taken when Record is pressed. Bundle identifiers resolve
-/// ScreenCaptureKit applications on macOS; process identifiers are retained
-/// alongside them for the eventual WASAPI implementation on Windows.
+/// ScreenCaptureKit applications identify pixel-capture filters. Process IDs
+/// feed Core Audio process taps on macOS and WASAPI loopback on Windows.
 #[derive(Clone, Debug, Default)]
 pub struct SystemAudioSelection {
   pub application_ids: Vec<String>,
   pub enabled: bool,
-  #[cfg(target_os = "windows")]
   pub process_ids: Vec<u32>,
 }
 

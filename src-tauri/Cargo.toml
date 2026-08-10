@@ -60,7 +60,7 @@ nokhwa = { version = "0.10.11", default-features = false, features = ["decoding"
 tauri-plugin-macos-permissions = "2.3.0"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
 tokio = { version = "1", features = ["macros", "rt", "time"] }
-cidre = { version = "0.19.0", default-features = false, features = ["async", "ax", "cg", "iio", "macos_14_0", "ns", "sc", "vt"] }
+cidre = { version = "0.19.0", default-features = false, features = ["async", "ax", "cg", "core_audio", "iio", "macos_14_2", "ns", "sc", "vt"] }
 objc2 = "0.6.4"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"

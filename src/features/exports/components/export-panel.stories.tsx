@@ -34,6 +34,7 @@ const recording: Extract<ExportArtifact, { kind: "recording" }> = {
   // The working file is a QuickTime movie; `extension` is what saving it
   // delivers, which is not the same thing.
   path: "/tmp/Recordings/recording-20260808-143205.000.mov",
+  primaryKind: "screen",
   sourceScalePercent: 200,
   suggestedFileStem: "Orbit Capture 2026-08-08 at 14.32.05",
   width: 3840,
@@ -70,6 +71,22 @@ const cameraPreviewLayout = {
     },
   ],
   width: 2560,
+};
+
+const cameraOnlyPreviewLayout = {
+  height: 720,
+  panes: [
+    {
+      height: 720,
+      kind: "camera" as const,
+      sourceHeight: 1080,
+      sourceWidth: 1920,
+      width: 1280,
+      x: 0,
+      y: 0,
+    },
+  ],
+  width: 1280,
 };
 
 const meta = {
@@ -172,6 +189,22 @@ export const RecordingWithCollapsedAudio: Story = {
   args: {
     ...Recording.args,
     collapseAudio: true,
+  },
+};
+
+/** Camera-only capture is the primary movie, not a screen sidecar to bake. */
+export const CameraRecording: Story = {
+  args: {
+    ...Recording.args,
+    artifact: {
+      ...recording,
+      height: 1080,
+      primaryKind: "camera",
+      sourceScalePercent: 100,
+      width: 1920,
+    },
+    recordingPreviewLayout: cameraOnlyPreviewLayout,
+    resolutionScalePercent: 75,
   },
 };
 

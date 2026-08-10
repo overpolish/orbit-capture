@@ -27,9 +27,10 @@ use super::{
     microphone_buffer_from_origin, microphone_format_description, microphone_sample_buffer, nanos,
     system_audio_settings, time_to_ns, video_settings, VideoEncoder,
   },
-  AudioSample, CaptureStats, Command, Frame, CAMERA_ENCODER_POLL, CAMERA_ENCODER_WAIT,
-  MICROPHONE_PREROLL_LIMIT, NANOS_PER_MS, POSTER_MAX_EDGE, REJECTION_STREAK_LIMIT,
-  SYSTEM_AUDIO_PREROLL_LIMIT, TAIL_APPEND_ATTEMPTS, TAIL_APPEND_WAIT,
+  AudioSample, CaptureStats, Command, Frame, SystemAudioSample, CAMERA_ENCODER_POLL,
+  CAMERA_ENCODER_WAIT, MICROPHONE_PREROLL_LIMIT, NANOS_PER_MS, POSTER_MAX_EDGE,
+  REJECTION_STREAK_LIMIT, SYSTEM_AUDIO_CHANNELS, SYSTEM_AUDIO_PREROLL_LIMIT,
+  SYSTEM_AUDIO_SAMPLE_RATE, TAIL_APPEND_ATTEMPTS, TAIL_APPEND_WAIT,
 };
 pub(super) use container::Container;
 use finish::writer_error;
@@ -46,6 +47,7 @@ pub(super) struct Writer {
   pub(super) height: u32,
   input: arc::R<av::AssetWriterInput>,
   system_audio_input: Option<arc::R<av::AssetWriterInput>>,
+  system_audio_format_description: Option<arc::R<cm::AudioFormatDesc>>,
   last_system_audio_pts_ns: Option<i64>,
   microphone_input: Option<arc::R<av::AssetWriterInput>>,
   pub(super) microphone_format: Option<MicrophoneFormat>,
@@ -65,7 +67,7 @@ pub(super) struct Writer {
   pub(super) on_failure: FailureReport,
   pub(super) path: PathBuf,
   pending_microphone: VecDeque<MicrophoneBuffer>,
-  pending_system_audio: VecDeque<AudioSample>,
+  pending_system_audio: VecDeque<SystemAudioSample>,
   primary_video: bool,
   rejection_streak: u64,
   source: VideoSource,
@@ -151,7 +153,7 @@ impl Writer {
       .add_input(&input)
       .map_err(|error| error.to_string())?;
 
-    let system_audio_input = if system_audio {
+    let (system_audio_input, system_audio_format_description) = if system_audio {
       let settings = system_audio_settings();
       let mut audio_input = av::AssetWriterInput::with_media_type_and_output_settings(
         av::MediaType::audio(),
@@ -162,9 +164,15 @@ impl Writer {
       writer
         .add_input(&audio_input)
         .map_err(|error| error.to_string())?;
-      Some(audio_input)
+      (
+        Some(audio_input),
+        Some(microphone_format_description(MicrophoneFormat {
+          channels: SYSTEM_AUDIO_CHANNELS as u16,
+          sample_rate: SYSTEM_AUDIO_SAMPLE_RATE as u32,
+        })?),
+      )
     } else {
-      None
+      (None, None)
     };
 
     let (microphone_input, microphone_format_description) = if let Some(format) = microphone_format
@@ -217,6 +225,7 @@ impl Writer {
       source,
       stats,
       system_audio_end_ns: None,
+      system_audio_format_description,
       system_audio_input,
       tail: None,
       timeline: Timeline::default(),
@@ -296,6 +305,7 @@ impl Writer {
 
           if is_first_frame {
             self.flush_system_audio_preroll();
+            self.ensure_system_audio_track();
             self.flush_microphone_preroll();
           }
 

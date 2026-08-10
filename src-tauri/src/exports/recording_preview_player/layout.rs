@@ -41,19 +41,20 @@ fn scaled_width(width: u32, height: u32, target_height: u32) -> u32 {
 }
 
 pub(super) fn preview_layout(
-  screen: (u32, u32),
+  primary: Option<(u32, u32, PreviewPaneKind)>,
   camera: Option<(u32, u32)>,
   height: u32,
 ) -> RecordingPreviewLayout {
-  let mut panes = Vec::with_capacity(usize::from(camera.is_some()) + 1);
-  let screen_width = scaled_width(screen.0, screen.1, height);
-  if screen_width > 0 {
+  let mut panes =
+    Vec::with_capacity(usize::from(primary.is_some()) + usize::from(camera.is_some()));
+  let primary_width = primary.map_or(0, |primary| scaled_width(primary.0, primary.1, height));
+  if let Some((source_width, source_height, kind)) = primary.filter(|_| primary_width > 0) {
     panes.push(PreviewPane {
       height,
-      kind: PreviewPaneKind::Screen,
-      source_height: screen.1,
-      source_width: screen.0,
-      width: screen_width,
+      kind,
+      source_height,
+      source_width,
+      width: primary_width,
       x: 0,
       y: 0,
     });
@@ -66,7 +67,7 @@ pub(super) fn preview_layout(
       source_height: camera.1,
       source_width: camera.0,
       width,
-      x: screen_width,
+      x: primary_width,
       y: 0,
     });
   }

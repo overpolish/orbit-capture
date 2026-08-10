@@ -8,5 +8,7 @@
   <string>Orbit Capture uses your camera when you include it in a recording.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Orbit Capture uses your microphone when you record audio.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Orbit Capture records system and app audio when you include it in a recording.</string>
 </dict>
 </plist>

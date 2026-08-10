@@ -26,13 +26,14 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
     system_audio,
   } = config;
   let camera_primary = matches!(primary, PrimaryCaptureSource::Camera);
+  let uses_process_audio = camera_primary && system_audio.enabled;
   let camera_flipped = camera.as_ref().is_some_and(|camera| camera.flipped);
   let camera_spec = camera.map(CameraSpec::resolve).transpose()?;
   if camera_primary && camera_spec.is_none() {
     return Err("No camera is selected to record".to_owned());
   }
 
-  let needs_content = !camera_primary || system_audio.enabled;
+  let needs_content = !camera_primary;
   let content = if needs_content {
     Some(
       sc::ShareableContent::current()
@@ -131,13 +132,29 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
     all: all_audio_stream,
     selected: selected_audio_stream,
     video_captures_all: video_captures_all_audio,
-  } = audio_stream::create(
-    &system_audio,
-    content.as_deref(),
-    output.as_ref(),
-    &queue,
-    primary_video.as_ref(),
-  )?;
+  } = if uses_process_audio {
+    SystemAudioStreams::default()
+  } else {
+    audio_stream::create(
+      &system_audio,
+      content.as_deref(),
+      output.as_ref(),
+      &queue,
+      primary_video.as_ref(),
+    )?
+  };
+  let process_audio = if uses_process_audio {
+    match ProcessAudioTap::start(&system_audio, commands.clone(), Arc::clone(&stats)) {
+      Ok(tap) => Some(tap),
+      Err(error) => {
+        let _ = commands.send(Command::Cancel);
+        let _ = worker.join();
+        return Err(format!("System audio could not start: {error}"));
+      }
+    }
+  } else {
+    None
+  };
   let video_stream = primary_video
     .as_ref()
     .map(|video| {
@@ -223,6 +240,7 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
       microphone,
       objects: StreamObjects {
         _output: output,
+        process_audio,
         queue,
         streams,
       },
