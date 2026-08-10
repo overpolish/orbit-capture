@@ -12,6 +12,41 @@ pub(super) struct SystemAudioStreams {
   pub video_captures_all: bool,
 }
 
+impl SystemAudioStreams {
+  pub(super) async fn start(&self) -> Result<(), String> {
+    if let Some(stream) = &self.selected {
+      stream.start().await.map_err(|error| error.to_string())?;
+    }
+    if let Some(stream) = &self.all {
+      if let Err(error) = stream.start().await {
+        if let Some(stream) = &self.selected {
+          stream.stop_with_ch(|_| {});
+        }
+        return Err(error.to_string());
+      }
+    }
+    Ok(())
+  }
+
+  pub(super) fn stop(&self) {
+    if let Some(stream) = &self.selected {
+      stream.stop_with_ch(|_| {});
+    }
+    if let Some(stream) = &self.all {
+      stream.stop_with_ch(|_| {});
+    }
+  }
+
+  pub(super) fn append_to(self, streams: &mut Vec<arc::R<sc::Stream>>) {
+    if let Some(stream) = self.all {
+      streams.push(stream);
+    }
+    if let Some(stream) = self.selected {
+      streams.push(stream);
+    }
+  }
+}
+
 pub(super) fn create(
   selection: &SystemAudioSelection,
   content: Option<&sc::ShareableContent>,
@@ -24,11 +59,7 @@ pub(super) fn create(
   let video_captures_all =
     captures_all && video.is_some_and(|primary_video| !primary_video.is_window);
   if !selection.enabled {
-    return Ok(SystemAudioStreams {
-      all: None,
-      selected: None,
-      video_captures_all,
-    });
+    return Ok(SystemAudioStreams::default());
   }
 
   let content = content.expect("audio has content");

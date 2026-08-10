@@ -25,10 +25,10 @@
 //! ordered against the frames for free. There is no lock anywhere in the hot
 //! path, and no state that two threads can see at once.
 
+mod audio_writer;
 mod camera;
 mod media;
 mod output;
-mod process_audio_tap;
 mod session;
 mod startup;
 mod writer;
@@ -42,7 +42,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use cidre::{
-  arc, cat, cf, cg, cm, core_audio, cv, define_obj_type, dispatch, ns, objc, os, sc,
+  arc, cat, cg, cm, cv, define_obj_type, dispatch, ns, objc, sc,
   sc::stream::{Output, OutputImpl},
 };
 use cpal::Stream;
@@ -57,9 +57,7 @@ use super::{CameraCaptureMode, CaptureStartupConfig, PrimaryCaptureSource};
 #[cfg(test)]
 use media::microphone_buffer_from_origin;
 use media::{even, frame_status, time_to_ns, VideoEncoder};
-use output::SystemAudioSample;
 use output::{AudioSample, CaptureStats, Command, Frame, ScreenOutput, ScreenOutputInner};
-use process_audio_tap::ProcessAudioTap;
 pub use session::CaptureSession;
 use session::StreamObjects;
 use writer::{Container, Writer, WriterConfig};
@@ -76,6 +74,27 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
     .build()
     .map_err(|error| error.to_string())?
     .block_on(startup::begin(config))
+}
+
+/// AVFoundation's localized writer error is often only "The operation could
+/// not be completed". Preserve the domain and code so a failed live capture
+/// identifies the actual framework condition instead of hiding it.
+fn asset_writer_error(writer: &cidre::av::AssetWriter, fallback: &str) -> String {
+  writer.error().map_or_else(
+    || fallback.to_owned(),
+    |error| {
+      let reason = error
+        .localized_failure_reason()
+        .map(|reason| format!("; reason: {reason}"))
+        .unwrap_or_default();
+      format!(
+        "{} (domain: {:?}, code: {}{reason})",
+        error.localized_desc(),
+        error.domain(),
+        error.code(),
+      )
+    },
+  )
 }
 
 /// How many frames ScreenCaptureKit may have in flight for us.

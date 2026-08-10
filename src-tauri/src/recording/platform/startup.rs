@@ -4,13 +4,14 @@
 use super::*;
 use super::{camera::CameraSpec, writer::VideoSource};
 
+mod audio_only;
 mod audio_stream;
 mod camera_writer;
+mod microphone_stream;
 mod screen_stream;
 mod video_source;
 mod writer_thread;
 
-use audio_stream::SystemAudioStreams;
 use camera_writer::CameraWriterSetup;
 use screen_stream::VideoStreamRequest;
 use writer_thread::{both_first_frames, spawn_writer, WriterThread};
@@ -25,15 +26,17 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
     primary,
     system_audio,
   } = config;
+  if matches!(primary, PrimaryCaptureSource::Audio) {
+    return audio_only::begin(microphone_id, on_failure, path, system_audio).await;
+  }
   let camera_primary = matches!(primary, PrimaryCaptureSource::Camera);
-  let uses_process_audio = camera_primary && system_audio.enabled;
   let camera_flipped = camera.as_ref().is_some_and(|camera| camera.flipped);
   let camera_spec = camera.map(CameraSpec::resolve).transpose()?;
   if camera_primary && camera_spec.is_none() {
     return Err("No camera is selected to record".to_owned());
   }
 
-  let needs_content = !camera_primary;
+  let needs_content = !camera_primary || system_audio.enabled;
   let content = if needs_content {
     Some(
       sc::ShareableContent::current()
@@ -128,33 +131,14 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
   });
   let queue = dispatch::Queue::serial_with_ar_pool();
   let mut streams = Vec::new();
-  let SystemAudioStreams {
-    all: all_audio_stream,
-    selected: selected_audio_stream,
-    video_captures_all: video_captures_all_audio,
-  } = if uses_process_audio {
-    SystemAudioStreams::default()
-  } else {
-    audio_stream::create(
-      &system_audio,
-      content.as_deref(),
-      output.as_ref(),
-      &queue,
-      primary_video.as_ref(),
-    )?
-  };
-  let process_audio = if uses_process_audio {
-    match ProcessAudioTap::start(&system_audio, commands.clone(), Arc::clone(&stats)) {
-      Ok(tap) => Some(tap),
-      Err(error) => {
-        let _ = commands.send(Command::Cancel);
-        let _ = worker.join();
-        return Err(format!("System audio could not start: {error}"));
-      }
-    }
-  } else {
-    None
-  };
+  let system_audio_streams = audio_stream::create(
+    &system_audio,
+    content.as_deref(),
+    output.as_ref(),
+    &queue,
+    primary_video.as_ref(),
+  )?;
+  let video_captures_all_audio = system_audio_streams.video_captures_all;
   let video_stream = primary_video
     .as_ref()
     .map(|video| {
@@ -167,44 +151,12 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
     })
     .transpose()?;
 
-  let microphone = if let Some(source) = microphone_source {
-    let sample_commands = commands.clone();
-    let sample_stats = Arc::clone(&stats);
-    let on_buffer = Arc::new(move |buffer| {
-      if let Err(TrySendError::Full(_)) = sample_commands.try_send(Command::Microphone(buffer)) {
-        sample_stats
-          .microphone_dropped
-          .fetch_add(1, Ordering::Relaxed);
-      }
-    });
-    let error_commands = commands.clone();
-    let on_error = Arc::new(move |error| {
-      let _ = error_commands.send(Command::MicrophoneFailed(error));
-    });
-    Some(source.start(on_buffer, on_error)?)
-  } else {
-    None
-  };
+  let microphone = microphone_stream::start(microphone_source, &commands, &stats)?;
 
-  if let Some(stream) = &selected_audio_stream {
-    stream.start().await.map_err(|error| error.to_string())?;
-  }
-  if let Some(stream) = &all_audio_stream {
-    if let Err(error) = stream.start().await {
-      if let Some(stream) = &selected_audio_stream {
-        stream.stop_with_ch(|_| {});
-      }
-      return Err(error.to_string());
-    }
-  }
+  system_audio_streams.start().await?;
   if let Some(stream) = &video_stream {
     if let Err(error) = stream.start().await {
-      if let Some(stream) = &selected_audio_stream {
-        stream.stop_with_ch(|_| {});
-      }
-      if let Some(stream) = &all_audio_stream {
-        stream.stop_with_ch(|_| {});
-      }
+      system_audio_streams.stop();
       return Err(error.to_string());
     }
   }
@@ -222,13 +174,7 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
   if let Some(stream) = video_stream {
     streams.push(stream);
   }
-  if let Some(stream) = all_audio_stream {
-    streams.push(stream);
-  }
-  if let Some(stream) = selected_audio_stream {
-    streams.push(stream);
-  }
-
+  system_audio_streams.append_to(&mut streams);
   let first_frame = match camera_first_frame {
     Some(camera) => both_first_frames(first_frame, camera),
     None => first_frame,
@@ -240,7 +186,6 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
       microphone,
       objects: StreamObjects {
         _output: output,
-        process_audio,
         queue,
         streams,
       },

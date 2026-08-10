@@ -3,6 +3,7 @@
 
 use super::super::*;
 use crate::capture_geometry::{physical_capture_rect, video_capture_rect};
+use crate::capture_kit::our_windows;
 use crate::recording::Region;
 
 pub(super) struct PrimaryVideo {
@@ -124,7 +125,7 @@ pub(super) fn resolve(
       show_cursor,
       window_id,
     } => window_video(content, *fps, *show_cursor, *window_id).map(Some),
-    PrimaryCaptureSource::Camera => Ok(None),
+    PrimaryCaptureSource::Camera | PrimaryCaptureSource::Audio => Ok(None),
   }
 }
 

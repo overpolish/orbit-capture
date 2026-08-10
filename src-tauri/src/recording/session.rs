@@ -133,12 +133,6 @@ pub(super) fn begin_capture(
   app: &AppHandle,
   options: &StartRecordingOptions,
 ) -> Result<(CaptureHandles, Receiver<Result<(), String>>), String> {
-  if !matches!(
-    options.mode,
-    RecordingMode::Screen | RecordingMode::Region | RecordingMode::Window | RecordingMode::Camera
-  ) {
-    return Err("That kind of recording is not available yet".to_owned());
-  }
   let camera_primary = options.mode == RecordingMode::Camera;
   let camera = options
     .camera_id
@@ -153,7 +147,11 @@ pub(super) fn begin_capture(
   let directory = recordings_directory(app)?;
   std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
   let started_at = Local::now().naive_local();
-  let output_path = directory.join(encoding::temp_file_name(started_at));
+  let output_path = directory.join(if options.mode == RecordingMode::Audio {
+    encoding::audio_temp_file_name(started_at)
+  } else {
+    encoding::temp_file_name(started_at)
+  });
   let camera_path = options
     .camera_id
     .as_ref()
@@ -186,7 +184,7 @@ pub(super) fn begin_capture(
       window_id: options.window_id.expect("validated above"),
     },
     RecordingMode::Camera => PrimaryCaptureSource::Camera,
-    RecordingMode::Audio => unreachable!("rejected above"),
+    RecordingMode::Audio => PrimaryCaptureSource::Audio,
   };
   let capture::CaptureStart {
     first_frame,

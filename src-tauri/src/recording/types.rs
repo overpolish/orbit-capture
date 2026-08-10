@@ -115,6 +115,7 @@ pub(crate) enum PrimaryCaptureSource {
     window_id: u32,
   },
   Camera,
+  Audio,
 }
 
 /// Everything a native capture adapter needs to open one recording. Keeping
@@ -131,12 +132,15 @@ pub(crate) struct CaptureStartupConfig {
 }
 
 /// A source snapshot taken when Record is pressed. Bundle identifiers resolve
-/// ScreenCaptureKit applications identify pixel-capture filters. Process IDs
-/// feed Core Audio process taps on macOS and WASAPI loopback on Windows.
+/// ScreenCaptureKit application filters on macOS; process IDs identify WASAPI
+/// loopback sessions on Windows.
 #[derive(Clone, Debug, Default)]
 pub struct SystemAudioSelection {
   pub application_ids: Vec<String>,
   pub enabled: bool,
+  /// Reserved for the Windows WASAPI adapter, which selects audio sessions by
+  /// process rather than by ScreenCaptureKit bundle identifier.
+  #[allow(dead_code)]
   pub process_ids: Vec<u32>,
 }
 

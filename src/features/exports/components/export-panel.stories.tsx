@@ -89,6 +89,12 @@ const cameraOnlyPreviewLayout = {
   width: 1280,
 };
 
+const audioPreviewLayout = {
+  height: 0,
+  panes: [],
+  width: 0,
+};
+
 const meta = {
   args: {
     artifact: screenshot,
@@ -205,6 +211,26 @@ export const CameraRecording: Story = {
     },
     recordingPreviewLayout: cameraOnlyPreviewLayout,
     resolutionScalePercent: 75,
+  },
+};
+
+/** Audio-only capture has transport, waveforms and tracks, but no video controls. */
+export const AudioRecording: Story = {
+  args: {
+    ...Recording.args,
+    artifact: {
+      ...recording,
+      canCompress: false,
+      extension: "m4a",
+      height: 0,
+      path: "/tmp/Recordings/audio-20260808-143205.000.mov",
+      primaryKind: "audio",
+      sourceScalePercent: 100,
+      width: 0,
+    },
+    estimatedSizeBytes: null,
+    recordingPreviewLayout: audioPreviewLayout,
+    resolutionScalePercent: 100,
   },
 };
 

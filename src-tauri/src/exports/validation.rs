@@ -27,5 +27,6 @@ pub(super) fn validate_primary_resolution_scale(
   match kind {
     PrimaryRecordingKind::Camera => validate_camera_resolution_scale(selected),
     PrimaryRecordingKind::Screen => validate_resolution_scale(selected, source),
+    PrimaryRecordingKind::Audio => Ok(()),
   }
 }

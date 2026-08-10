@@ -96,6 +96,7 @@ export function useRecordingPreviewFrames({
   const setLayout = useCallback((next: RecordingPreviewLayout) => {
     layoutRef.current = next;
     setPreviewLayout(next);
+    if (next.panes.length === 0) setIsPreparing(false);
   }, []);
 
   return {

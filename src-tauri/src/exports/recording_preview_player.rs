@@ -102,7 +102,7 @@ impl PreviewPlayerManager {
       .clone()
       .ok_or_else(|| "The recording preview event channel is unavailable".to_owned())?;
     #[cfg(target_os = "macos")]
-    if matches!(mode, PlaybackMode::Still) {
+    if matches!(mode, PlaybackMode::Still) && !sources.layout.panes.is_empty() {
       if self.still_decoder.is_none() {
         self.still_decoder = Some(NativeStillDecoder::spawn(
           sources,
@@ -179,6 +179,7 @@ fn sources(app: &AppHandle, artifact_id: u64) -> Result<PlayerSources, String> {
   let primary_pane = match primary_kind {
     PrimaryRecordingKind::Screen => Some((*width, *height, layout::PreviewPaneKind::Screen)),
     PrimaryRecordingKind::Camera => Some((*width, *height, layout::PreviewPaneKind::Camera)),
+    PrimaryRecordingKind::Audio => None,
   };
   Ok(PlayerSources {
     audio_tracks: audio_tracks.clone(),

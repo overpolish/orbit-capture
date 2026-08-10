@@ -22,18 +22,18 @@ use cidre::{arc, av, cm, ns};
 
 use super::output::FrameClock;
 use super::{
+  asset_writer_error,
   media::{
-    audio_sample_from_origin, audio_sample_with_pts, microphone_audio_settings,
-    microphone_buffer_from_origin, microphone_format_description, microphone_sample_buffer, nanos,
-    system_audio_settings, time_to_ns, video_settings, VideoEncoder,
+    audio_sample_from_origin, microphone_audio_settings, microphone_buffer_from_origin,
+    microphone_format_description, microphone_sample_buffer, nanos, system_audio_settings,
+    time_to_ns, video_settings, VideoEncoder,
   },
-  AudioSample, CaptureStats, Command, Frame, SystemAudioSample, CAMERA_ENCODER_POLL,
-  CAMERA_ENCODER_WAIT, MICROPHONE_PREROLL_LIMIT, NANOS_PER_MS, POSTER_MAX_EDGE,
-  REJECTION_STREAK_LIMIT, SYSTEM_AUDIO_CHANNELS, SYSTEM_AUDIO_PREROLL_LIMIT,
-  SYSTEM_AUDIO_SAMPLE_RATE, TAIL_APPEND_ATTEMPTS, TAIL_APPEND_WAIT,
+  AudioSample, CaptureStats, Command, Frame, CAMERA_ENCODER_POLL, CAMERA_ENCODER_WAIT,
+  MICROPHONE_PREROLL_LIMIT, NANOS_PER_MS, POSTER_MAX_EDGE, REJECTION_STREAK_LIMIT,
+  SYSTEM_AUDIO_CHANNELS, SYSTEM_AUDIO_PREROLL_LIMIT, SYSTEM_AUDIO_SAMPLE_RATE,
+  TAIL_APPEND_ATTEMPTS, TAIL_APPEND_WAIT,
 };
 pub(super) use container::Container;
-use finish::writer_error;
 
 use crate::recording::{
   encoding::{nv12_poster_rgba, poster_size, FailureReport, FinalizeInfo, Plane, Timeline},
@@ -67,7 +67,7 @@ pub(super) struct Writer {
   pub(super) on_failure: FailureReport,
   pub(super) path: PathBuf,
   pending_microphone: VecDeque<MicrophoneBuffer>,
-  pending_system_audio: VecDeque<SystemAudioSample>,
+  pending_system_audio: VecDeque<AudioSample>,
   primary_video: bool,
   rejection_streak: u64,
   source: VideoSource,
@@ -196,7 +196,10 @@ impl Writer {
     };
 
     if !writer.start_writing() {
-      return Err(writer_error(&writer, "The recording could not be started"));
+      return Err(asset_writer_error(
+        &writer,
+        "The recording could not be started",
+      ));
     }
     writer.start_session_at_src_time(cm::Time::zero());
 
@@ -249,6 +252,7 @@ impl Writer {
 
     while let Ok(command) = commands.recv() {
       match command {
+        Command::Begin { .. } => {}
         Command::Frame(frame) => {
           if self.timeline.is_paused() {
             // Still worth keeping: it is the frame the movie resumes from and

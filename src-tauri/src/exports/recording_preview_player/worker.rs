@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod audio_only;
+
 use std::{
   process::Child,
   sync::{
@@ -97,6 +99,19 @@ fn run(context: RunContext) {
     video_child,
     audio_child,
   } = context;
+  if sources.layout.panes.is_empty() {
+    return audio_only::run(audio_only::RunContext {
+      audio_child,
+      cancelled,
+      event_channel,
+      mode,
+      position_ms,
+      request_id,
+      selected_audio,
+      sources,
+      start_ms,
+    });
+  }
   let (frame_tx, frame_rx) = mpsc::sync_channel(3);
   #[cfg(target_os = "macos")]
   let video_result = video_macos::spawn(&sources, start_ms, Arc::clone(&cancelled), frame_tx);

@@ -116,11 +116,12 @@ fn recovers_an_unsaved_recording_whichever_container_it_was_written_in() {
   // What this version writes, and what the version before it wrote. Someone
   // who upgraded with an unsaved recording still on disk has the second.
   let quicktime = directory.join("recording-20260808-143205.000.mov");
+  let audio = directory.join("audio-20260808-153205.000.mov");
   let legacy = directory.join("recording-20260807-091500.000.mp4");
   // Case is the file system's business, not ours.
   let shouted = directory.join("recording-20260806-091500.000.MOV");
   let unrelated = directory.join("notes.txt");
-  for path in [&quicktime, &legacy, &shouted, &unrelated] {
+  for path in [&quicktime, &audio, &legacy, &shouted, &unrelated] {
     std::fs::write(path, b"movie").unwrap();
   }
 
@@ -129,7 +130,7 @@ fn recovers_an_unsaved_recording_whichever_container_it_was_written_in() {
     .map(|(path, _)| path)
     .collect();
   found.sort();
-  let mut expected = vec![quicktime, legacy, shouted];
+  let mut expected = vec![quicktime, audio, legacy, shouted];
   expected.sort();
 
   assert_eq!(found, expected);

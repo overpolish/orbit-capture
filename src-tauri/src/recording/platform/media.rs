@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use cidre::{arc, av, cat, cf, cm, ns, os, sc};
+use cidre::{arc, av, cat, cm, ns, sc};
 
 use super::{
   AudioSample, MicrophoneBuffer, MicrophoneFormat, MICROPHONE_AUDIO_BITRATE, NANOS_PER_SEC,
@@ -148,91 +148,29 @@ pub(super) fn microphone_audio_settings(
   )
 }
 
-unsafe extern "C" {
-  fn CMSampleBufferCreateCopyWithNewTiming(
-    allocator: Option<&cf::Allocator>,
-    original: &cm::SampleBuf,
-    timing_count: cm::ItemCount,
-    timing: *const cm::SampleTimingInfo,
-    output: *mut Option<arc::R<cm::SampleBuf>>,
-  ) -> os::Status;
-
-  fn CMSampleBufferCopySampleBufferForRange(
-    allocator: Option<&cf::Allocator>,
-    original: &cm::SampleBuf,
-    range: cf::Range,
-    output: *mut Option<arc::R<cm::SampleBuf>>,
-  ) -> os::Status;
-}
-
-/// Keeps only the part of a PCM buffer at or after the movie origin.
-///
-/// ScreenCaptureKit normally delivers audio before its first video frame. The
-/// first video frame remains time zero, but retaining the overlapping portion
-/// of that audio buffer means the AAC track begins at zero as well instead of
-/// waiting for the next 21 ms buffer boundary.
 pub(super) fn audio_sample_from_origin(
-  sample: AudioSample,
+  mut sample: AudioSample,
   origin_source_ns: i64,
 ) -> Option<AudioSample> {
   let delta_ns = origin_source_ns.saturating_sub(sample.source_ns);
   if delta_ns <= 0 {
     return Some(sample);
   }
-
-  let sample_count = sample.buf.num_samples();
-  if sample_count <= 0 {
+  let channels = SYSTEM_AUDIO_CHANNELS as usize;
+  let frames = sample.samples.len() / channels;
+  if frames == 0 {
     return None;
   }
-  let duration_ns = time_to_ns(sample.buf.duration())?;
-  if duration_ns <= 0 || delta_ns >= duration_ns {
+  let trim_frames =
+    (i128::from(delta_ns) * i128::from(SYSTEM_AUDIO_SAMPLE_RATE) + i128::from(NANOS_PER_SEC) - 1)
+      / i128::from(NANOS_PER_SEC);
+  let trim_frames = trim_frames.clamp(0, frames as i128) as usize;
+  if trim_frames >= frames {
     return None;
   }
-
-  // Round up: the retained first PCM frame must not precede the video origin.
-  let trim = ((i128::from(delta_ns) * sample_count as i128 + i128::from(duration_ns) - 1)
-    / i128::from(duration_ns))
-  .clamp(0, sample_count as i128) as cf::Index;
-  if trim >= sample_count {
-    return None;
-  }
-
-  let mut output = None;
-  unsafe {
-    CMSampleBufferCopySampleBufferForRange(
-      None,
-      &sample.buf,
-      cf::Range::new(trim, sample_count - trim),
-      &mut output,
-    )
-  }
-  .result()
-  .ok()?;
-  let buf = output?;
-  let source_ns = time_to_ns(buf.pts()).unwrap_or(origin_source_ns);
-
-  Some(AudioSample {
-    buf,
-    source_ns: source_ns.max(origin_source_ns),
-    wall: sample.wall,
-  })
-}
-
-pub(super) fn audio_sample_with_pts(
-  sample: &cm::SampleBuf,
-  pts_ns: i64,
-) -> Result<arc::R<cm::SampleBuf>, String> {
-  let original = sample.timing_info(0).map_err(|error| error.to_string())?;
-  let timing = cm::SampleTimingInfo {
-    duration: original.duration,
-    pts: nanos(pts_ns),
-    dts: cm::Time::invalid(),
-  };
-  let mut output = None;
-  unsafe { CMSampleBufferCreateCopyWithNewTiming(None, sample, 1, &timing, &mut output) }
-    .result()
-    .map_err(|error| error.to_string())?;
-  output.ok_or_else(|| "The system-audio sample could not be retimed".to_owned())
+  sample.samples = sample.samples.split_off(trim_frames * channels);
+  sample.source_ns = origin_source_ns;
+  Some(sample)
 }
 
 pub(super) fn microphone_format_description(

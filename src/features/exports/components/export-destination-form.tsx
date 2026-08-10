@@ -17,6 +17,7 @@ export function ExportDestinationForm({
   directory,
   error,
   fileStem,
+  hasExportableContent = true,
   isExportPreparationPending,
   isSaving,
   onBrowse,
@@ -29,6 +30,7 @@ export function ExportDestinationForm({
   directory: string | null;
   fileStem: string;
   error?: string | null;
+  hasExportableContent?: boolean;
   isExportPreparationPending?: boolean;
   isSaving?: boolean;
   onBrowse?: () => void;
@@ -41,6 +43,7 @@ export function ExportDestinationForm({
   const isRecording = artifact?.kind === "recording";
   const canSave =
     Boolean(artifact) &&
+    hasExportableContent &&
     fileStem.trim().length > 0 &&
     !isExportPreparationPending &&
     !isSaving;

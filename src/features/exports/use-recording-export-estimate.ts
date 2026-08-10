@@ -40,7 +40,9 @@ export function useRecordingExportEstimate({
     ? mixSignature(enabledStreamIndices)
     : null;
   const signature =
-    artifact?.kind === "recording" && enabledSignature !== null
+    artifact?.kind === "recording" &&
+    artifact.primaryKind !== "audio" &&
+    enabledSignature !== null
       ? [
           artifact.id,
           bakeCamera ? "baked" : "separate",
@@ -142,6 +144,7 @@ export function useRecordingExportEstimate({
     estimatedSizeBytes: current?.bytes,
     isEstimatingSize:
       artifact?.kind === "recording" &&
+      artifact.primaryKind !== "audio" &&
       (current === null || current.isEstimating),
     isPending: activeJobs > 0,
   };

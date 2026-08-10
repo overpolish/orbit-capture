@@ -44,9 +44,6 @@ pub(super) fn save_recording(
   Ok(path)
 }
 
-/// Writes a deliverable without consuming its working movie. Multi-file
-/// camera exports use this transactionally: both outputs must land before
-/// either recoverable source is removed.
 pub(super) fn save_recording_copy(
   working: &Path,
   directory: &Path,
@@ -67,10 +64,6 @@ pub(super) fn save_recording_copy(
   Ok(path)
 }
 
-/// Saves a recording whose audio streams or layout differ from the source.
-/// There is deliberately no `.mov` fallback here: keeping the source would
-/// also keep tracks the user turned off, or fail to produce the requested
-/// mixdown. The working recording remains untouched on every failure.
 #[cfg(test)]
 pub(super) fn save_selected_recording(
   working: &Path,
@@ -211,6 +204,21 @@ pub async fn save_export(
           } else {
             track_selection::AudioLayout::SeparateTracks
           };
+
+          if *primary_kind == PrimaryRecordingKind::Audio {
+            return audio_save::save_audio(audio_save::AudioSaveRequest {
+              app: &progress_app,
+              cancelled: &job_cancellation,
+              directory: &writing,
+              duration_ms: *duration_ms,
+              id: *id,
+              layout,
+              selected_any: !enabled_stream_indices.is_empty(),
+              selection: &selection,
+              stem: &stem,
+              working,
+            });
+          }
 
           if bake_camera {
             let camera = camera

@@ -19,7 +19,8 @@ export const startRecordingOptions = (): StartRecordingOptions => {
     selectedMicrophone,
     selectedSystemAudio,
   } = useRecordingInputStore.getState();
-  const wantsCamera = inputs.camera || recordingMode === "camera";
+  const wantsCamera =
+    recordingMode !== "audio" && (inputs.camera || recordingMode === "camera");
   const recordsAllSystemAudio = selectedSystemAudio.some(
     (source) => source.kind === "all",
   );

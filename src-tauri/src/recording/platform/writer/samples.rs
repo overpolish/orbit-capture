@@ -11,12 +11,10 @@ impl Writer {
     }
   }
 
-  /// AVAssetWriter omits an audio input that never receives a sample. Core
-  /// Audio process taps are intentionally quiet until a tapped process makes
-  /// sound, so a silent recording would otherwise shift every later audio
-  /// stream index and leave export metadata pointing at tracks that do not
-  /// exist. One AAC packet at time zero materializes the selected track; real
-  /// audio retains its honest wall-clock start when it arrives.
+  /// AVAssetWriter omits an audio input that never receives a sample. A silent
+  /// recording would therefore shift every later audio stream index and leave
+  /// export metadata pointing at tracks that do not exist. One AAC packet at
+  /// time zero materializes the selected track.
   pub(super) fn ensure_system_audio_track(&mut self) {
     if self.system_audio_input.is_none() || self.last_system_audio_pts_ns.is_some() {
       return;
@@ -43,52 +41,16 @@ impl Writer {
     self.append_system_audio_buffer(&sample, 0);
   }
 
-  pub(super) fn append_system_audio_from_origin(&mut self, sample: SystemAudioSample) {
-    match sample {
-      SystemAudioSample::Pcm(buffer) => self.append_system_audio_pcm_from_origin(buffer),
-      SystemAudioSample::ScreenCaptureKit(sample) => {
-        let Some(origin_source_ns) = self.origin_source_ns else {
-          return;
-        };
-        if let Some(sample) = audio_sample_from_origin(sample, origin_source_ns) {
-          self.append_mapped_system_audio(&sample);
-        }
-      }
+  pub(super) fn append_system_audio_from_origin(&mut self, sample: AudioSample) {
+    let Some(origin_source_ns) = self.origin_source_ns else {
+      return;
+    };
+    if let Some(sample) = audio_sample_from_origin(sample, origin_source_ns) {
+      self.append_mapped_system_audio(sample);
     }
   }
 
-  fn append_system_audio_pcm_from_origin(&mut self, buffer: MicrophoneBuffer) {
-    let (Some(origin), Some(description)) = (
-      self.origin_wall,
-      self.system_audio_format_description.as_ref(),
-    ) else {
-      return;
-    };
-    let format = MicrophoneFormat {
-      channels: SYSTEM_AUDIO_CHANNELS as u16,
-      sample_rate: SYSTEM_AUDIO_SAMPLE_RATE as u32,
-    };
-    let Some(buffer) = microphone_buffer_from_origin(buffer, origin, format) else {
-      return;
-    };
-    let mut pts = self
-      .timeline
-      .wall_pts_ns(self.elapsed_ns(buffer.captured_at));
-    if let Some(end) = self.system_audio_end_ns {
-      pts = pts.max(end);
-    }
-    let sample = match microphone_sample_buffer(&buffer, format, description, pts) {
-      Ok(sample) => sample,
-      Err(error) => {
-        self.stats.audio_rejected.fetch_add(1, Ordering::Relaxed);
-        self.refused(error);
-        return;
-      }
-    };
-    self.append_system_audio_buffer(&sample, pts);
-  }
-
-  pub(super) fn append_mapped_system_audio(&mut self, sample: &AudioSample) {
+  fn append_mapped_system_audio(&mut self, sample: AudioSample) {
     let mut pts = self
       .timeline
       .media_pts_ns(sample.source_ns, self.elapsed_ns(sample.wall));
@@ -96,6 +58,40 @@ impl Writer {
       pts = pts.max(end);
     }
     self.append_system_audio(sample, pts);
+  }
+
+  fn append_system_audio(&mut self, sample: AudioSample, pts_ns: i64) {
+    if self.failed.is_some() || self.system_audio_input.is_none() {
+      return;
+    }
+    if !self
+      .system_audio_input
+      .as_ref()
+      .is_some_and(|input| input.is_ready_for_more_media_data())
+    {
+      self.stats.audio_not_ready.fetch_add(1, Ordering::Relaxed);
+      return;
+    }
+    let Some(description) = self.system_audio_format_description.as_ref() else {
+      return;
+    };
+    let buffer = MicrophoneBuffer {
+      captured_at: sample.wall,
+      samples: sample.samples,
+    };
+    let format = MicrophoneFormat {
+      channels: SYSTEM_AUDIO_CHANNELS as u16,
+      sample_rate: SYSTEM_AUDIO_SAMPLE_RATE as u32,
+    };
+    let owned = match microphone_sample_buffer(&buffer, format, description, pts_ns) {
+      Ok(sample) => sample,
+      Err(error) => {
+        self.stats.audio_rejected.fetch_add(1, Ordering::Relaxed);
+        self.refused(error);
+        return;
+      }
+    };
+    self.append_system_audio_buffer(&owned, pts_ns);
   }
 
   pub(super) fn flush_microphone_preroll(&mut self) {
@@ -147,14 +143,14 @@ impl Writer {
         true
       }
       Ok(false) => {
-        self.refused(writer_error(
-          &self.writer,
-          "the recording could not continue",
+        self.refused(format!(
+          "Video track failed: {}",
+          asset_writer_error(&self.writer, "the recording could not continue")
         ));
         false
       }
       Err(error) => {
-        self.refused(error.to_string());
+        self.refused(format!("Video sample was rejected: {error}"));
         false
       }
     }
@@ -183,30 +179,6 @@ impl Writer {
     false
   }
 
-  pub(super) fn append_system_audio(&mut self, sample: &AudioSample, pts_ns: i64) {
-    if self.failed.is_some() || self.system_audio_input.is_none() {
-      return;
-    }
-    if !self
-      .system_audio_input
-      .as_ref()
-      .is_some_and(|input| input.is_ready_for_more_media_data())
-    {
-      self.stats.audio_not_ready.fetch_add(1, Ordering::Relaxed);
-      return;
-    }
-
-    let retimed = match audio_sample_with_pts(&sample.buf, pts_ns) {
-      Ok(sample) => sample,
-      Err(error) => {
-        self.stats.audio_rejected.fetch_add(1, Ordering::Relaxed);
-        self.refused(error);
-        return;
-      }
-    };
-    self.append_system_audio_buffer(&retimed, pts_ns);
-  }
-
   fn append_system_audio_buffer(&mut self, sample: &cm::SampleBuf, pts_ns: i64) {
     let duration_ns = time_to_ns(sample.duration()).unwrap_or_default();
     let result = self
@@ -221,14 +193,14 @@ impl Writer {
       }
       Ok(false) => {
         self.stats.audio_rejected.fetch_add(1, Ordering::Relaxed);
-        self.refused(writer_error(
-          &self.writer,
-          "the system-audio track could not continue",
+        self.refused(format!(
+          "System-audio track failed: {}",
+          asset_writer_error(&self.writer, "the system-audio track could not continue")
         ));
       }
       Err(error) => {
         self.stats.audio_rejected.fetch_add(1, Ordering::Relaxed);
-        self.refused(error.to_string());
+        self.refused(format!("System-audio sample was rejected: {error}"));
       }
     }
   }
@@ -284,9 +256,9 @@ impl Writer {
           .stats
           .microphone_rejected
           .fetch_add(1, Ordering::Relaxed);
-        self.refused(writer_error(
-          &self.writer,
-          "the microphone track could not continue",
+        self.refused(format!(
+          "Microphone track failed: {}",
+          asset_writer_error(&self.writer, "the microphone track could not continue")
         ));
       }
       Err(error) => {
@@ -294,7 +266,7 @@ impl Writer {
           .stats
           .microphone_rejected
           .fetch_add(1, Ordering::Relaxed);
-        self.refused(error.to_string());
+        self.refused(format!("Microphone sample was rejected: {error}"));
       }
     }
   }

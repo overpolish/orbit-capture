@@ -106,7 +106,8 @@ export const recordingSavePlan = ({
   const hasMeasuredWork =
     artifact?.kind === "recording" &&
     artifact.durationMs > 0 &&
-    (compression > 0 ||
+    (artifact.primaryKind === "audio" ||
+      compression > 0 ||
       resolutionScalePercent < originalResolutionScale ||
       (hasCamera &&
         (bakeCamera ||

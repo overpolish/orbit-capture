@@ -36,10 +36,15 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
       } => ExportArtifactSnapshot::Recording {
         audio_tracks: audio_tracks.clone(),
         camera: camera.clone(),
-        can_compress: media_preview::supports_compression(),
+        can_compress: *primary_kind != PrimaryRecordingKind::Audio
+          && media_preview::supports_compression(),
         id: *id,
         suggested_file_stem: suggested_file_stem.clone(),
-        extension: delivered_extension(path, media_preview::remuxer().is_some()).to_owned(),
+        extension: if *primary_kind == PrimaryRecordingKind::Audio {
+          AUDIO_EXTENSION.to_owned()
+        } else {
+          delivered_extension(path, media_preview::remuxer().is_some()).to_owned()
+        },
         width: *width,
         height: *height,
         duration_ms: *duration_ms,

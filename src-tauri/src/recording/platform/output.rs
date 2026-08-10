@@ -3,10 +3,47 @@
 
 use super::*;
 
+fn copy_stereo_samples(input: &cat::AudioBufList<2>) -> Option<Vec<f32>> {
+  let buffers = &input.buffers[..usize::try_from(input.number_buffers).ok()?.min(2)];
+  if buffers.len() == 1 && buffers[0].number_channels == 2 {
+    return Some(unsafe { float_samples(&buffers[0]) }.to_vec());
+  }
+  if buffers.len() != 2 {
+    return None;
+  }
+  let left = unsafe { float_samples(&buffers[0]) };
+  let right = unsafe { float_samples(&buffers[1]) };
+  let frames = left.len().min(right.len());
+  let mut samples = Vec::with_capacity(frames * 2);
+  for index in 0..frames {
+    samples.extend_from_slice(&[left[index], right[index]]);
+  }
+  Some(samples)
+}
+
+unsafe fn float_samples(buffer: &cat::AudioBuf) -> &[f32] {
+  if buffer.data.is_null() {
+    return &[];
+  }
+  unsafe {
+    std::slice::from_raw_parts(
+      buffer.data.cast::<f32>(),
+      buffer.data_bytes_size as usize / size_of::<f32>(),
+    )
+  }
+}
+
 /// A captured frame on its way to the writer thread.
 pub(super) struct Frame {
   pub(super) buf: arc::R<cv::PixelBuf>,
   pub(super) clock: FrameClock,
+  pub(super) wall: Instant,
+}
+
+/// A ScreenCaptureKit PCM buffer on its way to the system-audio track.
+pub(super) struct AudioSample {
+  pub(super) samples: Vec<f32>,
+  pub(super) source_ns: i64,
   pub(super) wall: Instant,
 }
 
@@ -23,22 +60,13 @@ pub(super) enum FrameClock {
 // exactly once, which is the guarantee `Send` asks for.
 unsafe impl Send for Frame {}
 
-/// A ScreenCaptureKit PCM buffer on its way to the system-audio track.
-pub(super) struct AudioSample {
-  pub(super) buf: arc::R<cm::SampleBuf>,
-  pub(super) source_ns: i64,
-  pub(super) wall: Instant,
-}
-
-pub(super) enum SystemAudioSample {
-  Pcm(MicrophoneBuffer),
-  ScreenCaptureKit(AudioSample),
-}
-
 /// Everything the writer thread reacts to, in the order it happened.
 pub(super) enum Command {
+  Begin {
+    at: Instant,
+  },
   Frame(Frame),
-  SystemAudio(SystemAudioSample),
+  SystemAudio(AudioSample),
   Microphone(MicrophoneBuffer),
   MicrophoneFailed(String),
   Pause {
@@ -116,18 +144,20 @@ impl ScreenOutputInner {
     let Some(source_ns) = time_to_ns(sample.pts()) else {
       return;
     };
+    let Ok(buffers) = sample.audio_buf_list::<2>() else {
+      self.stats.audio_rejected.fetch_add(1, Ordering::Relaxed);
+      return;
+    };
+    let Some(samples) = copy_stereo_samples(buffers.list()) else {
+      self.stats.audio_rejected.fetch_add(1, Ordering::Relaxed);
+      return;
+    };
     let audio = AudioSample {
-      buf: sample.retained(),
+      samples,
       source_ns,
       wall: Instant::now(),
     };
-    if let Err(TrySendError::Full(_)) =
-      self
-        .commands
-        .try_send(Command::SystemAudio(SystemAudioSample::ScreenCaptureKit(
-          audio,
-        )))
-    {
+    if let Err(TrySendError::Full(_)) = self.commands.try_send(Command::SystemAudio(audio)) {
       self.stats.audio_dropped.fetch_add(1, Ordering::Relaxed);
     }
   }

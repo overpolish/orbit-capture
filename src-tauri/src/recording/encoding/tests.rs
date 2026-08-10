@@ -209,6 +209,19 @@ fn names_the_working_file_so_it_sorts_by_time() {
 }
 
 #[test]
+fn names_audio_working_files_separately_from_movies() {
+  let started = chrono::NaiveDate::from_ymd_opt(2026, 8, 10)
+    .unwrap()
+    .and_hms_milli_opt(12, 34, 56, 789)
+    .unwrap();
+
+  assert_eq!(
+    audio_temp_file_name(started),
+    "audio-20260810-123456.789.mov"
+  );
+}
+
+#[test]
 fn fits_a_poster_inside_its_longest_edge() {
   assert_eq!(poster_size(3840, 2160, 640), (640, 360));
   assert_eq!(poster_size(1080, 1920, 640), (360, 640));

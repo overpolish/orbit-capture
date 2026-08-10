@@ -87,7 +87,7 @@ export type ExportArtifact =
       originalSizeBytes: number;
       /** The working recording consumed by the native preview and export paths. */
       path: string;
-      primaryKind: "camera" | "screen";
+      primaryKind: "audio" | "camera" | "screen";
       /** Captured pixels per logical display point, multiplied by 100. */
       sourceScalePercent: number;
     })

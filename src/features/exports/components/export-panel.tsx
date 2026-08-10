@@ -118,6 +118,7 @@ export function ExportPanel({
   screenshotRadiusPercent = 0,
 }: ExportPanelProps) {
   const isRecording = artifact?.kind === "recording";
+  const isAudio = isRecording && artifact.primaryKind === "audio";
   const contentRef = useRef<HTMLDivElement>(null);
   const availableResolutionScales =
     artifact?.kind === "recording" ? resolutionScales(artifact) : [];
@@ -162,13 +163,15 @@ export function ExportPanel({
             value={saveProgress ?? undefined}
           />
           <span className="text-sm text-content-fg">
-            {isRecording
-              ? savePhase === "camera"
-                ? "Saving camera…"
-                : savePhase === "finalizing"
-                  ? "Finalizing recording…"
-                  : "Saving recording…"
-              : "Saving screenshot…"}
+            {isAudio
+              ? "Saving audio…"
+              : isRecording
+                ? savePhase === "camera"
+                  ? "Saving camera…"
+                  : savePhase === "finalizing"
+                    ? "Finalizing recording…"
+                    : "Saving recording…"
+                : "Saving screenshot…"}
           </span>
           <Button
             isDisabled={isCancelingSave}
@@ -194,7 +197,11 @@ export function ExportPanel({
               src={logoUrl}
             />
             <h1 className="pointer-events-none m-0 animate-gradient bg-linear-to-r from-sky-400 to-blue-400 bg-clip-text bg-size-[300%] text-2xl font-bold text-transparent">
-              {isRecording ? "Save recording" : "Save screenshot"}
+              {isAudio
+                ? "Save audio"
+                : isRecording
+                  ? "Save recording"
+                  : "Save screenshot"}
             </h1>
 
             <Button
@@ -213,7 +220,7 @@ export function ExportPanel({
             </Button>
           </header>
 
-          {artifact?.kind === "recording" ? (
+          {artifact?.kind === "recording" && !isAudio ? (
             <RecordingExportOptions
               artifact={artifact}
               availableResolutionScales={availableResolutionScales}
@@ -301,6 +308,7 @@ export function ExportPanel({
             directory={directory}
             error={error}
             fileStem={fileStem}
+            hasExportableContent={!isAudio || (enabledAudioTrackCount ?? 0) > 0}
             isExportPreparationPending={isExportPreparationPending}
             isSaving={isSaving}
             onBrowse={onBrowse}

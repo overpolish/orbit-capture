@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 mod artifact;
+mod audio_save;
 mod camera_save;
 pub(crate) mod commands;
 mod directory;
@@ -55,6 +56,7 @@ const SCREENSHOT_EXTENSION: &str = "png";
 /// What a saved recording is delivered as when it can be, which is whenever
 /// FFmpeg is on the machine. See [`save_recording`] for the other case.
 const RECORDING_EXTENSION: &str = "mp4";
+const AUDIO_EXTENSION: &str = "m4a";
 /// The container a recording is written to while it runs. It is a QuickTime
 /// movie because that is the only container that survives being fragmented,
 /// and only a fragmented file is worth anything if the app dies mid-recording

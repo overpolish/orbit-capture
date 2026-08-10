@@ -54,7 +54,7 @@ pub(super) fn orphaned_recordings(directory: &Path) -> Vec<(PathBuf, SystemTime)
       if !path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name.starts_with("recording-"))
+        .is_some_and(|name| name.starts_with("recording-") || name.starts_with("audio-"))
       {
         return None;
       }
@@ -150,6 +150,15 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
       chrono::DateTime::<chrono::Local>::from,
     );
   let suggested_file_stem = crate::screenshots::capture_file_stem(recorded_at.naive_local());
+  let primary_kind = if path
+    .file_name()
+    .and_then(|name| name.to_str())
+    .is_some_and(|name| name.starts_with("audio-"))
+  {
+    crate::recording::PrimaryRecordingKind::Audio
+  } else {
+    crate::recording::PrimaryRecordingKind::Screen
+  };
   if let Err(error) = present_recording(
     app,
     FinalizeInfo {
@@ -165,7 +174,7 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
       height: 0,
       path,
       poster: None,
-      primary_kind: crate::recording::PrimaryRecordingKind::Screen,
+      primary_kind,
       source_scale_factor: 1.0,
       width: 0,
     },

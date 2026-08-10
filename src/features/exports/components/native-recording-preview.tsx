@@ -101,7 +101,7 @@ export function NativeRecordingPreview({
             {screenPane.sourceWidth} &times; {screenPane.sourceHeight}
           </p>
         </div>
-      ) : (
+      ) : layout.panes.length > 0 ? (
         <div
           className={
             layout.panes.length > 1
@@ -128,7 +128,7 @@ export function NativeRecordingPreview({
             </div>
           ))}
         </div>
-      )}
+      ) : null}
 
       {layout ? (
         <RecordingPlaybackControls

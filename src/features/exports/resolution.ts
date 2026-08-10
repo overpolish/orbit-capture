@@ -12,6 +12,7 @@ export const sourceScalePercent = (
 export const resolutionScales = (
   artifact: Extract<ExportArtifact, { kind: "recording" }>,
 ) => {
+  if (artifact.primaryKind === "audio") return [100];
   if (artifact.primaryKind === "camera") return cameraResolutionScales;
   const source = sourceScalePercent(artifact);
   return [source, 200, 150, 100].filter(

@@ -40,6 +40,7 @@ pub struct FinalizeInfo {
 pub enum PrimaryRecordingKind {
   Screen,
   Camera,
+  Audio,
 }
 
 pub struct CameraFinalizeInfo {
@@ -93,6 +94,10 @@ pub fn camera_temp_file_name(started_at: NaiveDateTime) -> String {
   started_at
     .format("camera-%Y%m%d-%H%M%S%.3f.mov")
     .to_string()
+}
+
+pub fn audio_temp_file_name(started_at: NaiveDateTime) -> String {
+  started_at.format("audio-%Y%m%d-%H%M%S%.3f.mov").to_string()
 }
 
 #[derive(Clone, Copy, Debug)]

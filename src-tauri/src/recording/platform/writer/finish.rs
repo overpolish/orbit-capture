@@ -85,7 +85,7 @@ impl Writer {
     self.writer.finish_writing();
 
     if self.writer.status() != av::AssetWriterStatus::Completed {
-      return Err(writer_error(
+      return Err(asset_writer_error(
         &self.writer,
         "The recording could not be saved",
       ));
@@ -134,12 +134,6 @@ impl Writer {
       width: self.width,
     })
   }
-}
-
-pub(super) fn writer_error(writer: &av::AssetWriter, fallback: &str) -> String {
-  writer
-    .error()
-    .map_or_else(|| fallback.to_owned(), |error| error.to_string())
 }
 
 /// Draws the still shown in the export window from the recording's last frame.
