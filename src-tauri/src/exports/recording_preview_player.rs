@@ -31,6 +31,7 @@ pub use commands::stop_all;
 #[derive(Clone)]
 pub(super) struct PlayerSources {
   audio_tracks: Vec<RecordingAudioTrack>,
+  camera_duration_ms: Option<u64>,
   camera_path: Option<PathBuf>,
   duration_ms: u64,
   layout: RecordingPreviewLayout,
@@ -175,6 +176,7 @@ fn sources(app: &AppHandle, artifact_id: u64) -> Result<PlayerSources, String> {
   let camera_size = camera.as_ref().map(|value| (value.width, value.height));
   Ok(PlayerSources {
     audio_tracks: audio_tracks.clone(),
+    camera_duration_ms: camera.as_ref().map(|value| value.duration_ms),
     camera_path: camera.as_ref().map(|value| value.path.clone()),
     duration_ms: *duration_ms,
     layout: preview_layout((*width, *height), camera_size, *height),

@@ -3,9 +3,12 @@
 
 use super::*;
 use super::{camera::CameraSpec, session::CameraObjects, writer::VideoSource};
+use crate::capture_geometry::{physical_capture_rect, video_capture_rect};
 
+mod screen_stream;
 mod writer_thread;
 
+use screen_stream::ScreenStreamRequest;
 use writer_thread::{both_first_frames, spawn_writer, WriterThread};
 
 pub(super) async fn begin(
@@ -20,13 +23,19 @@ pub(super) async fn begin(
     primary,
     system_audio,
   } = config;
-  let (monitor_id, show_cursor, fps, camera_primary) = match primary {
+  let (monitor_id, region, show_cursor, fps, camera_primary) = match primary {
     PrimaryCaptureSource::Screen {
       fps,
       monitor_id,
       show_cursor,
-    } => (Some(monitor_id), show_cursor, fps, false),
-    PrimaryCaptureSource::Camera { fps } => (None, false, fps, true),
+    } => (Some(monitor_id), None, show_cursor, fps, false),
+    PrimaryCaptureSource::Region {
+      fps,
+      monitor_id,
+      region,
+      show_cursor,
+    } => (Some(monitor_id), Some(region), show_cursor, fps, false),
+    PrimaryCaptureSource::Camera { fps } => (None, None, false, fps, true),
   };
   let camera_flipped = camera.as_ref().is_some_and(|camera| camera.flipped);
   let camera_spec = camera.map(CameraSpec::resolve).transpose()?;
@@ -54,13 +63,23 @@ pub(super) async fn begin(
     return Err("No monitor is available for recording".to_owned());
   }
 
-  let (width, height, primary_fps) = if camera_primary {
+  let (width, height, primary_fps, source_rect, display_scale) = if camera_primary {
     let camera = camera_spec.as_ref().expect("checked above");
-    (camera.width, camera.height, camera.fps)
+    (camera.width, camera.height, camera.fps, None, 1.0)
   } else {
     let monitor_id = monitor_id.ok_or_else(|| "No monitor is selected to record".to_owned())?;
-    let (_, width, height) = monitor_geometry(monitor_id)?;
-    (even(width), even(height), fps)
+    let (scale, monitor_width, monitor_height) = monitor_geometry(monitor_id)?;
+    let source_rect = region
+      .map(|region| {
+        physical_capture_rect(region, scale, monitor_width, monitor_height)
+          .and_then(video_capture_rect)
+          .ok_or_else(|| "The selected region is too small or outside the monitor".to_owned())
+      })
+      .transpose()?;
+    let (width, height) = source_rect
+      .map(|rect| (rect.width, rect.height))
+      .unwrap_or_else(|| (even(monitor_width), even(monitor_height)));
+    (width, height, fps, source_rect, scale)
   };
   if width == 0 || height == 0 {
     return Err("The selected video source has no usable size".to_owned());
@@ -164,47 +183,21 @@ pub(super) async fn begin(
   let queue = dispatch::Queue::serial_with_ar_pool();
   let mut streams = Vec::new();
 
-  let screen_stream = if !camera_primary || system_audio.enabled && !captures_selected_audio {
-    let content = content.as_ref().expect("required above");
-    let display = display.expect("required above");
-    let mut cfg = sc::StreamCfg::new();
-    cfg.set_width(width as usize);
-    cfg.set_height(height as usize);
-    cfg.set_pixel_format(cv::PixelFormat::_420V);
-    cfg.set_minimum_frame_interval(cm::Time::new(1, fps as cm::TimeScale));
-    cfg.set_queue_depth(STREAM_QUEUE_DEPTH);
-    cfg.set_shows_cursor(show_cursor && !camera_primary);
-    cfg.set_captures_audio(system_audio.enabled && !captures_selected_audio);
-    if system_audio.enabled {
-      cfg.set_excludes_current_process_audio(true);
-      cfg.set_sample_rate(SYSTEM_AUDIO_SAMPLE_RATE);
-      cfg.set_channel_count(SYSTEM_AUDIO_CHANNELS);
-    }
-    cfg.set_color_space_name(cg::color_space::names::srgb());
-    let filter = sc::ContentFilter::with_display_excluding_windows(display, &our_windows(content));
-    let stream = sc::Stream::new(&filter, &cfg);
-    if !camera_primary {
-      stream
-        .add_stream_output(
-          output.as_ref().expect("content has output").as_ref(),
-          sc::OutputType::Screen,
-          Some(&queue),
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    if system_audio.enabled && !captures_selected_audio {
-      stream
-        .add_stream_output(
-          output.as_ref().expect("content has output").as_ref(),
-          sc::OutputType::Audio,
-          Some(&queue),
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    Some(stream)
-  } else {
-    None
-  };
+  let screen_stream = screen_stream::create(ScreenStreamRequest {
+    camera_primary,
+    captures_selected_audio,
+    content: content.as_deref(),
+    display,
+    display_scale,
+    fps,
+    height,
+    output: output.as_ref(),
+    queue: &queue,
+    show_cursor,
+    source_rect,
+    system_audio: system_audio.enabled,
+    width,
+  })?;
 
   let selected_audio_stream = if captures_selected_audio {
     let content = content.as_ref().expect("required above");

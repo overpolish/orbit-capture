@@ -53,11 +53,15 @@ fn bake_geometry(options: BakedVideoExportOptions) -> Result<BakeGeometry, Strin
     f64::from(output_width) * options.overlay.camera_x_percent / 100.0 - camera_width / 2.0;
   let camera_y =
     f64::from(output_height) * options.overlay.camera_y_percent / 100.0 - camera_height / 2.0;
-  let epsilon = 0.01;
-  if frame_x + epsilon < camera_x
-    || frame_y + epsilon < camera_y
-    || frame_x + frame_width > camera_x + camera_width + epsilon
-    || frame_y + frame_height > camera_y + camera_height + epsilon
+  // The interactive preview is rounded to whole display pixels. Half a per
+  // cent of the output's short edge covers that quantization even for a very
+  // wide region, while still rejecting a crop that is meaningfully outside
+  // the camera image. The crop below clamps the tolerated sliver away.
+  let tolerance = f64::from(output_width.min(output_height)) * 0.005;
+  if frame_x + tolerance < camera_x
+    || frame_y + tolerance < camera_y
+    || frame_x + frame_width > camera_x + camera_width + tolerance
+    || frame_y + frame_height > camera_y + camera_height + tolerance
   {
     return Err("The camera image no longer covers its crop window".to_owned());
   }
@@ -252,5 +256,45 @@ mod tests {
     assert!(text.contains("eof_action=repeat"));
     assert!(text.contains("geq="));
     assert!(text.contains("-an"));
+  }
+
+  #[test]
+  fn accepts_a_crop_fitted_in_a_rounded_region_preview() {
+    let screen_preview = (2_104.0, 720.0);
+    let camera_preview = (954.0, 720.0);
+    let frame_width_percent = 25.0;
+    let frame_height =
+      screen_preview.0 * frame_width_percent / 100.0 * camera_preview.1 / camera_preview.0;
+    let frame_height_percent = frame_height * 100.0 / screen_preview.1;
+
+    let geometry = bake_geometry(BakedVideoExportOptions {
+      camera_height: 1_328,
+      camera_width: 1_760,
+      overlay: CameraOverlaySettings {
+        camera_width_percent: frame_width_percent,
+        camera_x_percent: 50.0,
+        camera_y_percent: 50.0,
+        frame_height_percent,
+        frame_width_percent,
+        frame_x_percent: 50.0 - frame_width_percent / 2.0,
+        frame_y_percent: 50.0 - frame_height_percent / 2.0,
+        radius_percent: 8.0,
+      },
+      screen_height: 924,
+      screen_width: 2_700,
+      video: VideoExportOptions {
+        compression: 2,
+        resolution_scale_percent: 200,
+        source_scale_percent: 200,
+      },
+    })
+    .unwrap();
+
+    assert_eq!(
+      (geometry.output_width, geometry.output_height),
+      (2_700, 924)
+    );
+    assert!(geometry.crop_width <= 1_760);
+    assert!(geometry.crop_height <= 1_328);
   }
 }

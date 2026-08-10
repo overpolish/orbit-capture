@@ -9,6 +9,7 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 use super::{layout::PreviewPane, PlayerSources, RecordingPreviewPlayerEvent};
 
 const NATIVE_FRAME_MARKER: u32 = u32::from_le_bytes(*b"OCPF");
+const STILL_BACKWARD_TOLERANCE_MS: i64 = 100;
 
 enum DecoderCommand {
   Seek {
@@ -33,9 +34,12 @@ fn image_generator(path: &Path) -> Result<cidre::arc::R<av::AssetImageGenerator>
     .ok_or_else(|| format!("AVFoundation could not open {}", path.display()))?;
   let mut generator = av::AssetImageGenerator::with_asset(&asset);
   generator.set_applies_preferred_track_transform(true);
-  let tolerance = cm::Time::new(1, 60);
-  generator.set_requested_time_tolerance_before(tolerance);
-  generator.set_requested_time_tolerance_after(tolerance);
+  // The writer may finish between two 30/60 fps samples. A generous backward
+  // tolerance lets an exact end-of-timeline scrub hold the final real frame
+  // instead of asking AVFoundation for pixels beyond the asset.
+  let backward_tolerance = cm::Time::new(STILL_BACKWARD_TOLERANCE_MS, 1_000);
+  generator.set_requested_time_tolerance_before(backward_tolerance);
+  generator.set_requested_time_tolerance_after(cm::Time::new(1, 60));
   Ok(generator)
 }
 
@@ -69,24 +73,30 @@ pub(super) fn jpeg(image: &cg::Image) -> Result<Vec<u8>, String> {
 fn images_at(
   screen: &av::AssetImageGenerator,
   camera: Option<&av::AssetImageGenerator>,
-  position_ms: u64,
+  screen_position_ms: u64,
+  camera_position_ms: Option<u64>,
 ) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
-  let time = cm::Time::new(position_ms as i64, 1_000);
-  if let Some(camera) = camera {
+  let screen_time = cm::Time::new(screen_position_ms as i64, 1_000);
+  if let (Some(camera), Some(camera_position_ms)) = (camera, camera_position_ms) {
+    let camera_time = cm::Time::new(camera_position_ms as i64, 1_000);
     let (screen, camera) = tauri::async_runtime::block_on(async {
       tokio::join!(
-        screen.cg_image_for_time(time),
-        camera.cg_image_for_time(time)
+        screen.cg_image_for_time(screen_time),
+        camera.cg_image_for_time(camera_time)
       )
     });
     let (screen, _) = screen.map_err(|error| error.to_string())?;
     let (camera, _) = camera.map_err(|error| error.to_string())?;
     Ok((jpeg(&screen)?, Some(jpeg(&camera)?)))
   } else {
-    let (screen, _) = tauri::async_runtime::block_on(screen.cg_image_for_time(time))
+    let (screen, _) = tauri::async_runtime::block_on(screen.cg_image_for_time(screen_time))
       .map_err(|error| error.to_string())?;
     Ok((jpeg(&screen)?, None))
   }
+}
+
+fn frame_position(requested_ms: u64, duration_ms: u64) -> u64 {
+  requested_ms.min(duration_ms.saturating_sub(1))
 }
 
 pub(super) fn send_frame(
@@ -152,7 +162,16 @@ fn run(
     if let (Some(generator), Some(pane)) = (camera.as_mut(), sources.playback_layout.panes.get(1)) {
       set_size(generator, pane, full_resolution);
     }
-    match images_at(&screen, camera.as_deref(), position_ms) {
+    let screen_position_ms = frame_position(position_ms, sources.duration_ms);
+    let camera_position_ms = sources
+      .camera_duration_ms
+      .map(|duration_ms| frame_position(position_ms, duration_ms));
+    match images_at(
+      &screen,
+      camera.as_deref(),
+      screen_position_ms,
+      camera_position_ms,
+    ) {
       Ok((screen, camera)) => {
         if send_frame(&frame_channel, request_id, &screen, camera.as_deref()) {
           let _ = event_channel.send(RecordingPreviewPlayerEvent::Ready {
@@ -206,5 +225,15 @@ impl NativeStillDecoder {
     if let Some(thread) = self.thread.take() {
       let _ = thread.join();
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::frame_position;
+
+  #[test]
+  fn a_shorter_camera_holds_its_last_frame_at_the_screen_end() {
+    assert_eq!(frame_position(7_891, 7_855), 7_854);
   }
 }

@@ -184,6 +184,11 @@ pub(super) fn present(
   }
 
   window::show(app).map_err(|error| error.to_string())?;
+  // Once an artifact is safely in front of the user, the capture controls
+  // have finished their job. Keeping this at the shared presentation boundary
+  // gives screenshots and recordings the same handoff without affecting
+  // clipboard-only screenshots, which never open the export window.
+  let _ = crate::windows::hide_recording_ui(app.clone());
   emit_snapshot(app);
 
   Ok(())

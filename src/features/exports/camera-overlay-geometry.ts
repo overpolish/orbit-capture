@@ -91,7 +91,14 @@ export const cameraOverlayGeometry = (
     y: (screen.height * settings.frameYPercent) / 100,
   };
   const cameraWidth = (screen.width * settings.cameraWidthPercent) / 100;
-  const cameraHeight = cameraWidth * (camera.height / camera.width);
+  // The panes are independently rounded to whole preview pixels. Derive the
+  // camera's height from the original media aspects so a crop that is valid
+  // here reconstructs identically against the source files during export.
+  const cameraHeightPercent =
+    settings.cameraWidthPercent *
+    (screen.sourceWidth / Math.max(1, screen.sourceHeight)) *
+    (camera.sourceHeight / Math.max(1, camera.sourceWidth));
+  const cameraHeight = (screen.height * cameraHeightPercent) / 100;
   const cameraCenterX = (screen.width * settings.cameraXPercent) / 100;
   const cameraCenterY = (screen.height * settings.cameraYPercent) / 100;
   return {

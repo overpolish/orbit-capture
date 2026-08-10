@@ -531,9 +531,7 @@ pub fn hide_recording_ui(app: AppHandle) -> tauri::Result<()> {
   if let Some(selector) = app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str()) {
     selector.hide()?;
   }
-  if let Some(bar) = app.get_webview_window(WindowLabel::RecordingBar.as_str()) {
-    bar.hide()?;
-  }
+  hide_recording_bar(&app)?;
   if let Some(region) = app.get_webview_window(WindowLabel::RegionSelector.as_str()) {
     region.hide()?;
   }

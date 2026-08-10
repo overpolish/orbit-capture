@@ -17,11 +17,11 @@ export type RecordingReadiness = {
 /**
  * Modes with a capture pipeline behind them, updated as each slice lands.
  *
- * Today: screen. Still to come: region, window, camera and audio. Offering a
+ * Today: screen and region. Still to come: window, camera and audio. Offering a
  * Record button that starts nothing would be worse than a disabled one, so the
  * readiness check owns this list rather than the button.
  */
-const implementedModes: RecordingMode[] = ["screen"];
+const implementedModes: RecordingMode[] = ["region", "screen"];
 
 /**
  * A recording can only start when its mode has both an unlocked permission and

@@ -136,13 +136,14 @@ pub(super) fn spawn(
   )?;
   let mut camera = match (
     sources.camera_path.as_deref(),
+    sources.camera_duration_ms,
     sources.playback_layout.panes.get(1),
   ) {
-    (Some(path), Some(pane)) => Some(NativeVideoReader::open(
+    (Some(path), Some(duration_ms), Some(pane)) => Some(NativeVideoReader::open(
       path,
       pane,
-      start_ms,
-      sources.duration_ms,
+      start_ms.min(duration_ms.saturating_sub(1)),
+      duration_ms,
     )?),
     _ => None,
   };

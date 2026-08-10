@@ -104,6 +104,12 @@ pub(crate) enum PrimaryCaptureSource {
     monitor_id: u32,
     show_cursor: bool,
   },
+  Region {
+    fps: u32,
+    monitor_id: u32,
+    region: Region,
+    show_cursor: bool,
+  },
   Camera {
     fps: u32,
   },

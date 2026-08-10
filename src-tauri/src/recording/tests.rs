@@ -194,3 +194,32 @@ fn takes_the_frame_rate_the_bar_sends() {
 
   assert_eq!(options.fps, 30);
 }
+
+#[test]
+fn accepts_a_region_with_monitor_local_geometry() {
+  let options: StartRecordingOptions = serde_json::from_str(
+    r#"{
+      "mode":"region",
+      "monitorId":7,
+      "region":{
+        "position":{"x":100,"y":50},
+        "size":{"width":1280,"height":720}
+      }
+    }"#,
+  )
+  .unwrap();
+
+  assert!(validate_options(&options).is_ok());
+  assert_eq!(options.region.unwrap().position.x, 100.0);
+}
+
+#[test]
+fn rejects_a_region_without_geometry() {
+  let options: StartRecordingOptions =
+    serde_json::from_str(r#"{"mode":"region","monitorId":7}"#).unwrap();
+
+  assert_eq!(
+    validate_options(&options),
+    Err("No region is selected to record".to_owned())
+  );
+}

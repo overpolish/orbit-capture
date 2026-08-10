@@ -5,6 +5,7 @@ mod audio_preview;
 mod camera_format;
 mod camera_frames;
 mod camera_preview;
+mod capture_geometry;
 #[cfg(target_os = "macos")]
 mod capture_kit;
 mod exports;

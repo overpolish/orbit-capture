@@ -181,22 +181,23 @@ pub fn stop(app: &AppHandle) -> Result<(), String> {
   tauri::async_runtime::spawn_blocking(move || {
     let finalized = take_handles(&app).map(finalize_capture);
 
-    // The chrome comes back before the export window opens, so the export
-    // window is the last thing raised and therefore the frontmost.
     restore_windows(&app);
     if let Err(error) = transition(&app, RecordingStatus::Idle, None) {
       emit_error(&app, "stop", &error);
     }
-    show_recording_ui(&app);
 
     match finalized {
       Some(Ok((info, suggested_file_stem))) => {
         if let Err(error) = crate::exports::present_recording(&app, info, suggested_file_stem) {
           emit_error(&app, "stop", &error);
+          show_recording_ui(&app);
         }
       }
-      Some(Err(error)) => emit_error(&app, "stop", &error),
-      None => {}
+      Some(Err(error)) => {
+        emit_error(&app, "stop", &error);
+        show_recording_ui(&app);
+      }
+      None => show_recording_ui(&app),
     }
   });
 

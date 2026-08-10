@@ -347,6 +347,7 @@ mod tests {
           stream_index: 1,
         },
       ],
+      camera_duration_ms: None,
       camera_path: None,
       duration_ms: 1_000,
       layout: layout.clone(),

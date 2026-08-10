@@ -104,6 +104,9 @@ pub(super) fn validate_options(options: &StartRecordingOptions) -> Result<(), St
     RecordingMode::Screen | RecordingMode::Region if options.monitor_id.is_none() => {
       Err("No monitor is selected to record".to_owned())
     }
+    RecordingMode::Region if options.region.is_none() => {
+      Err("No region is selected to record".to_owned())
+    }
     RecordingMode::Window if options.window_id.is_none() => {
       Err("No window is selected to record".to_owned())
     }
@@ -130,11 +133,10 @@ pub(super) fn begin_capture(
   app: &AppHandle,
   options: &StartRecordingOptions,
 ) -> Result<(CaptureHandles, Receiver<Result<(), String>>), String> {
-  let _ = (
-    options.region.map(|region| (region.position, region.size)),
-    options.window_id,
-  );
-  if !matches!(options.mode, RecordingMode::Screen | RecordingMode::Camera) {
+  if !matches!(
+    options.mode,
+    RecordingMode::Screen | RecordingMode::Region | RecordingMode::Camera
+  ) {
     return Err("That kind of recording is not available yet".to_owned());
   }
   let camera_primary = options.mode == RecordingMode::Camera;
@@ -181,14 +183,20 @@ pub(super) fn begin_capture(
   });
 
   crate::camera_preview::stop_all(app);
-  let primary = if camera_primary {
-    PrimaryCaptureSource::Camera { fps: options.fps }
-  } else {
-    PrimaryCaptureSource::Screen {
+  let primary = match options.mode {
+    RecordingMode::Screen => PrimaryCaptureSource::Screen {
       fps: options.fps,
       monitor_id: options.monitor_id.expect("validated above"),
       show_cursor: options.show_cursor,
-    }
+    },
+    RecordingMode::Region => PrimaryCaptureSource::Region {
+      fps: options.fps,
+      monitor_id: options.monitor_id.expect("validated above"),
+      region: options.region.expect("validated above"),
+      show_cursor: options.show_cursor,
+    },
+    RecordingMode::Camera => PrimaryCaptureSource::Camera { fps: options.fps },
+    RecordingMode::Window | RecordingMode::Audio => unreachable!("rejected above"),
   };
   let (session, first_frame) = capture::begin_blocking(CaptureStartupConfig {
     camera,

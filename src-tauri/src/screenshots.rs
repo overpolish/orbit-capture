@@ -18,6 +18,9 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::recording::Region;
 
+pub(crate) use crate::capture_geometry::physical_capture_rect;
+#[cfg(test)]
+pub(crate) use crate::capture_geometry::CaptureRect;
 pub use encoding::{encode_png, rounded_corners};
 
 /// A captured still: straight (non-premultiplied) RGBA8, packed rows, top down.
@@ -38,68 +41,6 @@ pub enum ScreenshotTarget {
   Screen { monitor_id: u32 },
   Window { window_id: u32 },
   Region { monitor_id: u32, region: Region },
-}
-
-/// A capture rectangle in physical device pixels, relative to its monitor.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CaptureRect {
-  pub x: u32,
-  pub y: u32,
-  pub width: u32,
-  pub height: u32,
-}
-
-/// Converts a logical, monitor-local region into physical device pixels.
-///
-/// The two platforms disagree about units - ScreenCaptureKit's source rect is
-/// in points, xcap's capture region is in physical pixels - so everything is
-/// normalised to physical here, exactly once, and the macOS caller divides back
-/// down. Edges are rounded before the size is derived from them, so the
-/// rectangle can never disagree with its own corners by a pixel, and the result
-/// is clamped to the monitor because xcap errors on an out-of-bounds region
-/// rather than trimming it.
-pub fn physical_capture_rect(
-  region: Region,
-  scale: f64,
-  monitor_width: u32,
-  monitor_height: u32,
-) -> Option<CaptureRect> {
-  let edges = [
-    region.position.x,
-    region.position.y,
-    region.size.width,
-    region.size.height,
-    scale,
-  ];
-  if !edges.iter().all(|edge| edge.is_finite()) || scale <= 0.0 {
-    return None;
-  }
-
-  let monitor_width = f64::from(monitor_width);
-  let monitor_height = f64::from(monitor_height);
-  let left = (region.position.x * scale)
-    .round()
-    .clamp(0.0, monitor_width);
-  let top = (region.position.y * scale)
-    .round()
-    .clamp(0.0, monitor_height);
-  let right = ((region.position.x + region.size.width) * scale)
-    .round()
-    .clamp(0.0, monitor_width);
-  let bottom = ((region.position.y + region.size.height) * scale)
-    .round()
-    .clamp(0.0, monitor_height);
-
-  if right <= left || bottom <= top {
-    return None;
-  }
-
-  Some(CaptureRect {
-    x: left as u32,
-    y: top as u32,
-    width: (right - left) as u32,
-    height: (bottom - top) as u32,
-  })
 }
 
 /// The naming macOS's own `screencapture` uses, which is the least surprising
@@ -193,6 +134,7 @@ pub async fn capture_still(
       .clipboard()
       .write_image(&Image::new(&image.rgba, image.width, image.height))
       .map_err(|error| error.to_string())?;
+    let _ = crate::windows::hide_recording_ui(app.clone());
 
     return Ok(None);
   }
