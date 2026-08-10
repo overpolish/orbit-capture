@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 overpolish
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# `tauri dev` normally launches a bare executable on macOS. Once a tray app
+# hides and restores its Dock entry, macOS forgets the metadata embedded in
+# that executable and displays it as a generic `exec`. Run it from a lightweight
+# app bundle so development has the same identity as a packaged build.
+[target.aarch64-apple-darwin]
+runner = ["../scripts/run-macos-dev-app.sh"]
+
+[target.x86_64-apple-darwin]
+runner = ["../scripts/run-macos-dev-app.sh"]

@@ -1,10 +1,18 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::Duration;
+
+use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow, WindowEvent};
 use tauri_plugin_window_state::{StateFlags, WindowExt};
 
-use super::{geometry::keep_window_on_a_monitor, platform, WindowLabel};
+use super::{
+  geometry::{contain_window_in_work_area, keep_window_on_a_monitor},
+  platform, WindowLabel,
+};
+
+const EXPORT_WINDOW_SETTLE_TIME: Duration = Duration::from_millis(150);
 
 pub fn get_or_create<F>(
   app: &AppHandle,
@@ -96,9 +104,39 @@ pub fn initialize_standalone_listbox(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn initialize_export(window: &WebviewWindow) -> tauri::Result<()> {
-  platform::initialize_export(window)
+  platform::initialize_export(window)?;
+  // A bundled macOS application can order its ordinary main window onscreen
+  // during application activation even when it was configured as invisible.
+  // Export only becomes visible when an artifact is presented.
+  window.hide()?;
+
+  let (movement, movements) = mpsc::channel();
+  window.on_window_event(move |event| {
+    if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+      let _ = movement.send(());
+    }
+  });
+
+  let app = window.app_handle().clone();
+  let export = window.clone();
+  std::thread::spawn(move || {
+    while movements.recv().is_ok() {
+      loop {
+        match movements.recv_timeout(EXPORT_WINDOW_SETTLE_TIME) {
+          Ok(()) => {}
+          Err(RecvTimeoutError::Timeout) => {
+            let _ = contain_window_in_work_area(&app, &export);
+            break;
+          }
+          Err(RecvTimeoutError::Disconnected) => return,
+        }
+      }
+    }
+  });
+
+  Ok(())
 }
 
-pub fn raise_export(window: &WebviewWindow) -> tauri::Result<()> {
-  platform::raise_export(window)
+pub fn contain_export(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()> {
+  contain_window_in_work_area(app, window)
 }

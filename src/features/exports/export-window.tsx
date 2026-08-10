@@ -22,7 +22,6 @@ import { sourceScalePercent } from "./resolution";
 import { selectArtifact, selectDirectory, useExportStore } from "./store";
 import { useExportPreviewImage } from "./use-export-preview-image";
 import { useExportProgress } from "./use-export-progress";
-import { useExportWindowSize } from "./use-export-window-size";
 import { useRecordingExportEstimate } from "./use-recording-export-estimate";
 import { useRecordingExportPreview } from "./use-recording-export-preview";
 
@@ -60,9 +59,6 @@ export function ExportWindow() {
   const artifactId = artifact?.id;
   const saveProgress = useExportProgress(artifactId);
   const { loadFullPreview, previewUrl } = useExportPreviewImage(artifactId);
-  const onContentHeightChange = useExportWindowSize(
-    artifact?.kind === "recording" && artifact.camera ? 920 : undefined,
-  );
   const canCompress = artifact?.kind === "recording" && artifact.canCompress;
   const originalResolutionScale =
     artifact?.kind === "recording" ? sourceScalePercent(artifact) : 100;
@@ -219,7 +215,6 @@ export function ExportWindow() {
         if (next === 0) setResolutionScalePercent(originalResolutionScale);
         setError(null);
       }}
-      onContentHeightChange={onContentHeightChange}
       onCopy={() => {
         copyExportToClipboard(screenshotRadiusPercent).catch(report("copy"));
       }}

@@ -25,9 +25,10 @@ pub use dock::{
 };
 use geometry::monitor_with_most_overlap;
 pub use lifecycle::{
-  get_or_create, initialize_export, initialize_recording_bar, initialize_recording_bar_position,
-  initialize_recording_options, initialize_recording_source_selector, initialize_region_selector,
-  initialize_standalone_listbox, raise_export, show,
+  contain_export, get_or_create, initialize_export, initialize_recording_bar,
+  initialize_recording_bar_position, initialize_recording_options,
+  initialize_recording_source_selector, initialize_region_selector, initialize_standalone_listbox,
+  show,
 };
 pub use options::hide_recording_options;
 pub use region::{

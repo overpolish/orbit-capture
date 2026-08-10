@@ -13,6 +13,28 @@
     "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "export",
+        "title": "Orbit Capture",
+        "url": "/export",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "acceptFirstMouse": true,
+        "alwaysOnTop": false,
+        "decorations": false,
+        "resizable": true,
+        "shadow": true,
+        "skipTaskbar": false,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["underWindowBackground", "mica"],
+          "radius": 10,
+          "state": "active"
+        },
+        "visible": false
+      },
+      {
         "label": "recording-bar",
         "title": "Orbit Capture Recording Bar",
         "url": "/recording-bar",

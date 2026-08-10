@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { X } from "lucide-react";
-import { useEffect, useRef } from "react";
 
 import logoUrl from "../../../assets/orbit-capture-mark.svg";
 import { Button } from "../../../components/base/button/button";
@@ -51,7 +50,6 @@ type ExportPanelProps = {
   onCancelSave?: () => void;
   onCollapseAudioChange?: (collapse: boolean) => void;
   onCompressionChange?: (compression: number) => void;
-  onContentHeightChange?: (height: number) => void;
   onCopy?: () => void;
   onEnabledTracksChange?: (streamIndices: number[]) => void;
   onFileStemChange?: (fileStem: string) => void;
@@ -99,7 +97,6 @@ export function ExportPanel({
   onCancelSave,
   onCollapseAudioChange,
   onCompressionChange,
-  onContentHeightChange,
   onCopy,
   onEnabledTracksChange,
   onFileStemChange,
@@ -119,32 +116,13 @@ export function ExportPanel({
 }: ExportPanelProps) {
   const isRecording = artifact?.kind === "recording";
   const isAudio = isRecording && artifact.primaryKind === "audio";
-  const contentRef = useRef<HTMLDivElement>(null);
   const availableResolutionScales =
     artifact?.kind === "recording" ? resolutionScales(artifact) : [];
   const effectiveResolutionScale =
     artifact?.kind === "recording"
       ? (resolutionScalePercent ?? availableResolutionScales[0])
       : 100;
-  useEffect(() => {
-    const content = contentRef.current;
-    if (!content || !onContentHeightChange) return;
-
-    const observer = new ResizeObserver(() => {
-      onContentHeightChange(content.getBoundingClientRect().height);
-    });
-    observer.observe(content);
-
-    return () => {
-      observer.disconnect();
-    };
-  }, [onContentHeightChange]);
-
   return (
-    // The outer surface follows the native window. The content remains free
-    // to take its natural height inside the scroll viewport, which lets the
-    // resize observer ask for a smaller window while still making an export
-    // with two video previews usable on a shorter display.
     <main className="window-surface relative h-screen overflow-hidden rounded-[10px] bg-content/92 text-content-fg">
       <Overlay blur="lg" contained isOpen={isSaving}>
         <div className="flex flex-col items-center gap-3">
@@ -185,7 +163,7 @@ export function ExportPanel({
         </div>
       </Overlay>
       <OverflowShadow className="p-6" rootClassName="h-full" shadowRadius="md">
-        <div className="flex flex-col gap-4" ref={contentRef}>
+        <div className="flex flex-col gap-4">
           <header
             className="-m-6 mb-0 flex shrink-0 cursor-grab items-center gap-3 p-6 pb-0"
             data-tauri-drag-region

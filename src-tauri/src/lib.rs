@@ -19,6 +19,8 @@ mod screenshots;
 mod tray;
 mod windows;
 
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let builder = tauri::Builder::default()
@@ -37,7 +39,7 @@ pub fn run() {
     .plugin(tauri_plugin_macos_permissions::init())
     .plugin(tauri_nspanel::init());
 
-  builder
+  let mut app = builder
     .manage(audio_preview::AudioPreviewState::default())
     .manage(camera_preview::CameraPreviewState::default())
     .manage(exports::ExportState::default())
@@ -106,9 +108,6 @@ pub fn run() {
       windows::options::toggle_recording_options,
     ])
     .setup(|app| {
-      #[cfg(target_os = "macos")]
-      app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
       #[cfg(desktop)]
       tray::initialize(app)?;
 
@@ -118,12 +117,16 @@ pub fn run() {
       windows::initialize_recording_options(app.handle())?;
       windows::initialize_standalone_listbox(app.handle())?;
       windows::initialize_recording_dock(app.handle())?;
+      if let Some(window) = app.get_webview_window(windows::WindowLabel::Export.as_str()) {
+        windows::initialize_export(&window)?;
+      }
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingBar);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingSourceSelector);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RegionSelector);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingOptions);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::StandaloneListbox);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingDock);
+      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::Export);
       windows::initialize_recording_bar_position(app.handle())?;
       windows::manage_recording_bar_movement(app.handle());
       windows::manage_recording_dock_movement(app.handle());
@@ -145,8 +148,27 @@ pub fn run() {
 
       permissions::start_watcher(app.handle().clone());
 
+      #[cfg(target_os = "macos")]
+      {
+        // Native window effects finish after `setup` returns and can order the
+        // configured export window onscreen. Its first presentation always
+        // belongs to an actual capture.
+        let app_handle = app.handle().clone();
+        app.handle().run_on_main_thread(move || {
+          if let Some(export) = app_handle.get_webview_window(windows::WindowLabel::Export.as_str())
+          {
+            let _ = export.hide();
+          }
+        })?;
+      }
+
       Ok(())
     })
-    .run(tauri::generate_context!())
+    .build(tauri::generate_context!())
     .expect("error while running tauri application");
+
+  #[cfg(target_os = "macos")]
+  app.set_dock_visibility(false);
+
+  app.run(|_, _| {});
 }

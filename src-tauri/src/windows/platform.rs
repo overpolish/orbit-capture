@@ -109,29 +109,6 @@ pub fn initialize_export(_window: &WebviewWindow) -> tauri::Result<()> {
   Ok(())
 }
 
-/// Above every panel this app owns, which run 27 to 32.
-#[cfg(target_os = "macos")]
-const EXPORT_WINDOW_LEVEL: isize = 33;
-
-/// Lifts the export window over our own overlays.
-///
-/// `always_on_top` only puts an ordinary window at the floating level, which is
-/// below all of our panels, so a region capture would open the window beneath
-/// its own overlay. A window level is independent of key/focus state, so this
-/// does not stop the file name field from taking input.
-#[cfg(target_os = "macos")]
-pub fn raise_export(window: &WebviewWindow) -> tauri::Result<()> {
-  use objc2_app_kit::NSWindow;
-
-  let address = window.ns_window()? as usize;
-  window.app_handle().run_on_main_thread(move || {
-    // SAFETY: Tauri hands back a live NSWindow for a macOS webview window, and
-    // this closure runs on the thread that owns it.
-    let ns_window: &NSWindow = unsafe { &*(address as *const NSWindow) };
-    ns_window.setLevel(EXPORT_WINDOW_LEVEL);
-  })
-}
-
 #[cfg(target_os = "macos")]
 pub fn set_opacity(window: &WebviewWindow, opacity: f64) -> tauri::Result<()> {
   let panel = registered_panel(window)?;
@@ -253,13 +230,6 @@ pub fn initialize_export(window: &WebviewWindow) -> tauri::Result<()> {
   exclude_from_capture(window)
 }
 
-/// The overlays are all topmost, so re-asserting z-order on show puts the
-/// export window at the front of that band without taking focus off it.
-#[cfg(target_os = "windows")]
-pub fn raise_export(window: &WebviewWindow) -> tauri::Result<()> {
-  raise_without_activation(window)
-}
-
 #[cfg(target_os = "windows")]
 pub fn restore_recording_level(window: &WebviewWindow) -> tauri::Result<()> {
   raise_without_activation(window)
@@ -354,11 +324,6 @@ pub fn initialize_recording_dock(_window: &WebviewWindow) -> tauri::Result<()> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn initialize_export(_window: &WebviewWindow) -> tauri::Result<()> {
-  Ok(())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub fn raise_export(_window: &WebviewWindow) -> tauri::Result<()> {
   Ok(())
 }
 
