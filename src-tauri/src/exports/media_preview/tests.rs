@@ -7,7 +7,6 @@ use super::{
     selected_export_args,
   },
   estimate::{compression_crf, estimate_filter},
-  preview_mix::{mix_args, mix_path_for, mix_temp_path, plays_without_mixing},
   *,
 };
 
@@ -33,64 +32,6 @@ fn recognises_its_own_derivatives_by_name() {
   )));
 }
 
-#[test]
-fn names_a_mix_after_the_combination_it_holds() {
-  let source = Path::new("/tmp/recording-123.mp4");
-  assert_eq!(
-    mix_path_for(source, 42, 7, "0-1"),
-    Path::new("/tmp/preview-42-7-mix-0-1.mp4")
-  );
-}
-
-#[test]
-fn keeps_two_instances_off_one_another_s_mixes() {
-  let source = Path::new("/tmp/recording-123.mp4");
-  // Both processes are on their first artifact and the same combination of
-  // tracks; only the process id keeps them apart.
-  assert_ne!(
-    mix_path_for(source, 42, 1, "0-1"),
-    mix_path_for(source, 43, 1, "0-1")
-  );
-}
-
-#[test]
-fn encodes_beside_the_mix_rather_than_onto_it() {
-  let destination = mix_path_for(Path::new("/tmp/recording-123.mp4"), 42, 7, "0-1");
-  let temporary = mix_temp_path(&destination);
-
-  assert_ne!(temporary, destination);
-  assert_eq!(temporary.parent(), destination.parent());
-  assert!(is_preview_file(&temporary));
-  assert_eq!(temporary.extension().unwrap(), "part");
-  // Two encodes in flight at once still write to files of their own.
-  assert_ne!(mix_temp_path(&destination), temporary);
-}
-
-#[test]
-fn plays_a_remembered_mix_only_while_it_stands_up() {
-  let directory = test_directory("preview-mix-cache");
-  let healthy = directory.join("preview-42-7-mix-0.mp4");
-  let empty = directory.join("preview-42-7-mix-1.mp4");
-  let missing = directory.join("preview-42-7-mix-2.mp4");
-  std::fs::write(&healthy, b"not really a movie, but not nothing").unwrap();
-  std::fs::write(&empty, b"").unwrap();
-
-  let mut mixes = PreviewMixes::default();
-  mixes.remember(7, "0".to_owned(), healthy.clone());
-  mixes.remember(7, "1".to_owned(), empty.clone());
-  mixes.remember(7, "2".to_owned(), missing.clone());
-
-  assert_eq!(mixes.cached(7, "0"), Some(healthy));
-  // A truncation left by an interrupted encode is not a preview, and neither
-  // is a name whose file has been swept from under it.
-  assert_eq!(mixes.cached(7, "1"), None);
-  assert_eq!(mixes.cached(7, "2"), None);
-  // Forgotten as well as refused, so the next request rebuilds them.
-  assert!(!mixes.by_signature.contains_key("1"));
-  assert!(!mixes.by_signature.contains_key("2"));
-  assert!(!empty.exists());
-}
-
 fn tracks(count: usize) -> Vec<RecordingAudioTrack> {
   (0..count)
     .map(|stream_index| RecordingAudioTrack {
@@ -99,62 +40,6 @@ fn tracks(count: usize) -> Vec<RecordingAudioTrack> {
       stream_index,
     })
     .collect()
-}
-
-#[test]
-fn lets_a_recording_stand_in_for_itself_only_while_one_track_can_be_heard() {
-  assert!(plays_without_mixing(&tracks(0)));
-  assert!(plays_without_mixing(&tracks(1)));
-  // The second track would be inaudible in a media element, so the mix is
-  // the only thing that carries what was recorded.
-  assert!(!plays_without_mixing(&tracks(2)));
-  assert!(!plays_without_mixing(&tracks(3)));
-}
-
-#[test]
-fn writes_one_timeline_the_picture_is_copied_onto() {
-  let both = tracks(2);
-  let selection = TrackSelection::new(&both, &[0, 1]);
-
-  assert_eq!(
-    mix_args(
-      Path::new("/tmp/recording-123.mp4"),
-      Path::new("/tmp/out.mp4"),
-      &selection
-    ),
-    [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-nostdin",
-      "-y",
-      "-i",
-      "/tmp/recording-123.mp4",
-      "-map",
-      "0:v:0",
-      "-c:v",
-      "copy",
-      "-filter_complex",
-      "[0:a:0][0:a:1]amix=inputs=2:normalize=0[mix]",
-      "-map",
-      "[mix]",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      // Named rather than guessed: the file this is written to is a `.part`,
-      // and FFmpeg will not start without being told what to make of it.
-      "-f",
-      "mp4",
-      "-movflags",
-      // Signed composition offsets keep FFmpeg from inserting an edit that
-      // starts after the H.264 decoder's initial reference frames. WebKit is
-      // far less forgiving of that edit than ordinary movie players.
-      "+faststart+negative_cts_offsets",
-      "/tmp/out.mp4",
-    ]
-    .map(OsString::from)
-  );
 }
 
 #[test]

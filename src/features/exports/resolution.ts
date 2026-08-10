@@ -17,15 +17,36 @@ export const resolutionScales = (
   );
 };
 
+export const cameraResolutionScales = [100, 75, 50];
+
+export const scaledVideoDimensions = ({
+  height,
+  scale,
+  sourceScale,
+  width,
+}: {
+  height: number;
+  scale: number;
+  sourceScale: number;
+  width: number;
+}) => {
+  const even = (value: number) => Math.max(2, Math.floor(value / 2) * 2);
+
+  return {
+    height: even((height * scale) / sourceScale),
+    width: even((width * scale) / sourceScale),
+  };
+};
+
 export const scaledDimensions = (
   artifact: Extract<ExportArtifact, { kind: "recording" }>,
   scale: number,
 ) => {
   const source = sourceScalePercent(artifact);
-  const even = (value: number) => Math.max(2, Math.floor(value / 2) * 2);
-
-  return {
-    height: even((artifact.height * scale) / source),
-    width: even((artifact.width * scale) / source),
-  };
+  return scaledVideoDimensions({
+    height: artifact.height,
+    scale,
+    sourceScale: source,
+    width: artifact.width,
+  });
 };

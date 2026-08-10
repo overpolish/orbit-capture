@@ -51,6 +51,13 @@ pub(super) fn orphaned_recordings(directory: &Path) -> Vec<(PathBuf, SystemTime)
       if media_preview::is_preview_file(&path) {
         return None;
       }
+      if !path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("recording-"))
+      {
+        return None;
+      }
       let extension = path.extension()?;
       if WORKING_RECORDING_EXTENSIONS
         .iter()
@@ -65,6 +72,29 @@ pub(super) fn orphaned_recordings(directory: &Path) -> Vec<(PathBuf, SystemTime)
       }
     })
     .collect()
+}
+
+pub(super) fn camera_for_recording(recording: &Path) -> Option<PathBuf> {
+  let name = recording.file_name()?.to_str()?;
+  let suffix = name.strip_prefix("recording-")?;
+  let camera = recording.with_file_name(format!("camera-{suffix}"));
+  camera.is_file().then_some(camera)
+}
+
+pub(super) fn sweep_unclaimed_cameras(directory: &Path, keep: Option<&Path>) {
+  let Ok(entries) = std::fs::read_dir(directory) else {
+    return;
+  };
+  for entry in entries.flatten() {
+    let path = entry.path();
+    let is_camera = path
+      .file_name()
+      .and_then(|name| name.to_str())
+      .is_some_and(|name| name.starts_with("camera-"));
+    if is_camera && keep != Some(path.as_path()) {
+      let _ = std::fs::remove_file(path);
+    }
+  }
 }
 
 /// Offers back the recording an earlier run never got to save.
@@ -107,8 +137,11 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
     let _ = std::fs::remove_file(path);
   }
   let Some(path) = plan.present else {
+    sweep_unclaimed_cameras(&directory, None);
     return;
   };
+  let camera_path = camera_for_recording(&path);
+  sweep_unclaimed_cameras(&directory, camera_path.as_deref());
 
   let recorded_at = std::fs::metadata(&path)
     .and_then(|metadata| metadata.modified())
@@ -120,6 +153,12 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
   if let Err(error) = present_recording(
     app,
     FinalizeInfo {
+      camera: camera_path.map(|path| crate::recording::CameraFinalizeInfo {
+        duration_ms: 0,
+        height: 0,
+        path,
+        width: 0,
+      }),
       has_microphone: false,
       has_system_audio: false,
       duration_ms: 0,
@@ -143,6 +182,12 @@ pub fn initialize(app: &AppHandle) {
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(directory);
   }
+
+  *app
+    .state::<ExportState>()
+    .screenshot_radius_percent
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_screenshot_radius(app);
 
   sweep_orphaned_recordings(app);
 }

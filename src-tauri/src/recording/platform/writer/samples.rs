@@ -63,7 +63,7 @@ impl Writer {
       self.stats.rejected.fetch_add(1, Ordering::Relaxed);
       return false;
     }
-    if !self.input.is_ready_for_more_media_data() {
+    if !self.video_input_is_ready() {
       self.stats.not_ready.fetch_add(1, Ordering::Relaxed);
       return false;
     }
@@ -90,6 +90,29 @@ impl Writer {
         false
       }
     }
+  }
+
+  /// A screen frame may be replaced by the next changed frame, so it is
+  /// dropped immediately under backpressure. Every camera frame represents a
+  /// point in continuous motion: wait on this writer thread while the bounded
+  /// capture queue absorbs a short hardware-encoder stall. The capture
+  /// callback itself always remains non-blocking.
+  fn video_input_is_ready(&self) -> bool {
+    if self.input.is_ready_for_more_media_data() {
+      return true;
+    }
+    if !matches!(self.source, VideoSource::Camera) {
+      return false;
+    }
+
+    let deadline = Instant::now() + CAMERA_ENCODER_WAIT;
+    while Instant::now() < deadline {
+      std::thread::sleep(CAMERA_ENCODER_POLL);
+      if self.input.is_ready_for_more_media_data() {
+        return true;
+      }
+    }
+    false
   }
 
   pub(super) fn append_system_audio(&mut self, sample: &AudioSample, pts_ns: i64) {

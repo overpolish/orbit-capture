@@ -22,7 +22,7 @@ use platform as capture;
 #[cfg(not(target_os = "macos"))]
 use platform_unsupported as capture;
 
-pub use encoding::FinalizeInfo;
+pub use encoding::{CameraFinalizeInfo, FinalizeInfo};
 pub use session::recordings_directory;
 pub use state::{is_idle, snapshot, RecordingState};
 pub use types::{
@@ -37,8 +37,10 @@ use session::{
 #[cfg(test)]
 use state::apply_transition;
 use state::{state, transition};
+pub(crate) use types::CameraCaptureMode;
 #[cfg(test)]
 use types::DEFAULT_FPS;
+pub(crate) use types::{CaptureStartupConfig, PrimaryCaptureSource};
 use ui::{prepare_windows, restore_windows, show_recording_ui};
 
 // ---------------------------------------------------------------------------

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 mod audio_preview;
+mod camera_format;
+mod camera_frames;
 mod camera_preview;
 #[cfg(target_os = "macos")]
 mod capture_kit;
@@ -38,6 +40,7 @@ pub fn run() {
     .manage(audio_preview::AudioPreviewState::default())
     .manage(camera_preview::CameraPreviewState::default())
     .manage(exports::ExportState::default())
+    .manage(exports::recording_preview_player::RecordingPreviewPlayerState::default())
     .manage(permissions::PermissionState::default())
     .manage(recording::RecordingState::default())
     .invoke_handler(tauri::generate_handler![
@@ -52,10 +55,17 @@ pub fn run() {
       exports::preview::estimate_recording_export,
       exports::preview::get_export_preview,
       exports::preview::get_export_snapshot,
-      exports::preview::get_recording_preview,
-      exports::preview::get_recording_preview_mix,
+      exports::recording_preview::get_recording_preview,
+      exports::recording_preview_player::commands::pause_recording_preview,
+      exports::recording_preview_player::commands::play_recording_preview,
+      exports::recording_preview_player::commands::request_recording_preview_full_resolution,
+      exports::recording_preview_player::commands::seek_recording_preview,
+      exports::recording_preview_player::commands::select_recording_preview_audio,
+      exports::recording_preview_player::commands::start_recording_preview_player,
+      exports::recording_preview_player::commands::stop_recording_preview_player,
       exports::save::save_export,
       exports::commands::set_export_directory,
+      exports::commands::set_screenshot_radius,
       permissions::open_permission_settings,
       permissions::permission_snapshot,
       permissions::request_permission,

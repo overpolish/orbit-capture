@@ -4,22 +4,10 @@
 //! Which recorded audio tracks a derived file carries, and how they are laid
 //! out in it.
 //!
-//! # The preview mix is a playback mechanism, not export semantics
-//!
-//! A `<video>` element plays exactly one audio track. Hearing two recorded
-//! tracks at once therefore requires summing them into one before playback,
-//! which is what [`AudioLayout::Mixdown`] exists for. That is a limitation of
-//! the player and nothing else: it says nothing about what saving the
-//! recording should produce.
-//!
 //! The export path keeps every included track as its own track
 //! ([`AudioLayout::SeparateTracks`]) so system audio and a voice-over can still
 //! be balanced, soloed or muted afterwards. Collapsing them into one is an
-//! opt-in the user asks for, not a consequence of having previewed them.
-//!
-//! Both paths share this type so the toggle rows mean the same thing in each,
-//! and only the layout differs. Do not reach for the mixdown because the
-//! preview uses it.
+//! explicit export option.
 
 use super::RecordingAudioTrack;
 
@@ -32,8 +20,8 @@ const MIXDOWN_BITRATE: &str = "192k";
 /// How the selected tracks appear in the file being produced.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioLayout {
-  /// Every selected track summed into a single encoded track. The only layout
-  /// a browser video element can play in full, and so the preview's.
+  /// Every selected track summed into a single encoded track when the user
+  /// enables “Collapse audio tracks”.
   Mixdown,
   /// Every selected track kept as its own stream-copied track. What an export
   /// writes unless the user asks for the tracks to be collapsed.
@@ -113,28 +101,17 @@ impl TrackSelection {
     bitrate.saturating_mul(duration_ms) / 8_000
   }
 
-  /// A stable, file-name-safe name for this combination of tracks.
-  ///
-  /// Derived files are named with it, which is what makes flipping a toggle
-  /// back instant: the file for that combination is already on disk.
-  pub fn signature(&self) -> String {
-    if self.stream_indices.is_empty() {
-      return "silent".to_owned();
-    }
-
-    self
-      .stream_indices
-      .iter()
-      .map(usize::to_string)
-      .collect::<Vec<_>>()
-      .join("-")
-  }
-
   /// The FFmpeg arguments that put this selection into the output.
   ///
   /// Video is never among them: nothing here touches the picture. Callers pair
   /// these with either a stream copy or the requested compression encode.
   pub fn audio_args(&self, layout: AudioLayout) -> Vec<String> {
+    self.audio_args_from(layout, 0)
+  }
+
+  /// The same mapping when video and recorded audio are separate FFmpeg
+  /// inputs, such as camera export processing.
+  pub fn audio_args_from(&self, layout: AudioLayout, input: usize) -> Vec<String> {
     if self.stream_indices.is_empty() {
       return vec!["-an".to_owned()];
     }
@@ -144,7 +121,7 @@ impl TrackSelection {
       // decoded and re-encoded for the sake of passing through a filter.
       AudioLayout::Mixdown if self.stream_indices.len() == 1 => vec![
         "-map".to_owned(),
-        format!("0:a:{}", self.stream_indices[0]),
+        format!("{input}:a:{}", self.stream_indices[0]),
         "-c:a".to_owned(),
         "copy".to_owned(),
       ],
@@ -152,7 +129,7 @@ impl TrackSelection {
         let inputs: String = self
           .stream_indices
           .iter()
-          .map(|index| format!("[0:a:{index}]"))
+          .map(|index| format!("[{input}:a:{index}]"))
           .collect();
 
         vec![
@@ -177,7 +154,7 @@ impl TrackSelection {
         let mut args = Vec::with_capacity(self.stream_indices.len() * 2 + 2);
         for index in &self.stream_indices {
           args.push("-map".to_owned());
-          args.push(format!("0:a:{index}"));
+          args.push(format!("{input}:a:{index}"));
         }
         args.push("-c:a".to_owned());
         args.push("copy".to_owned());
@@ -207,22 +184,22 @@ mod tests {
   fn keeps_the_recordings_own_order_whatever_order_the_window_sent() {
     let selection = TrackSelection::new(&tracks(3), &[2, 0]);
 
-    assert_eq!(selection.signature(), "0-2");
+    assert_eq!(selection.stream_indices, vec![0, 2]);
   }
 
   #[test]
   fn drops_a_track_this_recording_does_not_have() {
     let selection = TrackSelection::new(&tracks(1), &[0, 7]);
 
-    assert_eq!(selection.signature(), "0");
+    assert_eq!(selection.stream_indices, vec![0]);
     assert!(selection.covers(&tracks(1)));
   }
 
   #[test]
-  fn names_the_empty_selection_rather_than_leaving_a_blank() {
+  fn maps_the_empty_selection_to_no_audio() {
     let selection = TrackSelection::new(&tracks(2), &[]);
 
-    assert_eq!(selection.signature(), "silent");
+    assert!(selection.stream_indices.is_empty());
     assert_eq!(
       selection.audio_args(AudioLayout::Mixdown),
       vec!["-an".to_owned()]

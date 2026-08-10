@@ -6,8 +6,14 @@ use super::*;
 /// A captured frame on its way to the writer thread.
 pub(super) struct Frame {
   pub(super) buf: arc::R<cv::PixelBuf>,
-  pub(super) source_ns: i64,
+  pub(super) clock: FrameClock,
   pub(super) wall: Instant,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum FrameClock {
+  Source(i64),
+  Wall,
 }
 
 // SAFETY: a `cv::PixelBuf` is not `Send` because nothing stops two threads
@@ -48,6 +54,8 @@ pub(super) enum Command {
 #[derive(Default)]
 pub(super) struct CaptureStats {
   pub(super) appended: AtomicU64,
+  /// Frames AVFoundation discarded before invoking the camera callback.
+  pub(super) capture_dropped: AtomicU64,
   /// Frames the capture callback could not hand over, because the writer was
   /// still busy with the ones before them.
   pub(super) dropped: AtomicU64,
@@ -86,7 +94,7 @@ impl ScreenOutputInner {
 
     let frame = Frame {
       buf: image.retained(),
-      source_ns,
+      clock: FrameClock::Source(source_ns),
       wall: Instant::now(),
     };
     // Never blocks. A full channel means the writer is behind, and stalling

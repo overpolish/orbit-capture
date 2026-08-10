@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { type Meta, type StoryObj } from "@storybook/react-vite";
+import { ComponentProps, useState } from "react";
 
 import { ExportArtifact } from "../types";
 
 import { ExportPanel } from "./export-panel";
+import screenshotPreview from "./export-panel-preview.svg";
 
 const screenshot: ExportArtifact = {
   extension: "png",
@@ -16,11 +18,12 @@ const screenshot: ExportArtifact = {
   width: 3456,
 };
 
-const recording: ExportArtifact = {
+const recording: Extract<ExportArtifact, { kind: "recording" }> = {
   audioTracks: [
     { kind: "system-audio", label: "System audio", streamIndex: 0 },
     { kind: "microphone", label: "Microphone", streamIndex: 1 },
   ],
+  camera: null,
   canCompress: true,
   durationMs: 3_845_000,
   extension: "mp4",
@@ -34,6 +37,39 @@ const recording: ExportArtifact = {
   sourceScalePercent: 200,
   suggestedFileStem: "Orbit Capture 2026-08-08 at 14.32.05",
   width: 3840,
+};
+
+const screenPreviewLayout = {
+  height: 720,
+  panes: [
+    {
+      height: 720,
+      kind: "screen" as const,
+      sourceHeight: 2160,
+      sourceWidth: 3840,
+      width: 1280,
+      x: 0,
+      y: 0,
+    },
+  ],
+  width: 1280,
+};
+
+const cameraPreviewLayout = {
+  height: 720,
+  panes: [
+    ...screenPreviewLayout.panes,
+    {
+      height: 720,
+      kind: "camera" as const,
+      sourceHeight: 1080,
+      sourceWidth: 1920,
+      width: 1280,
+      x: 1280,
+      y: 0,
+    },
+  ],
+  width: 2560,
 };
 
 const meta = {
@@ -53,6 +89,25 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
+
+function RoundedScreenshotPanel(args: ComponentProps<typeof ExportPanel>) {
+  const [radius, setRadius] = useState(args.screenshotRadiusPercent ?? 12);
+  return (
+    <ExportPanel
+      {...args}
+      onScreenshotRadiusChange={setRadius}
+      screenshotRadiusPercent={radius}
+    />
+  );
+}
+
+export const RoundedScreenshot: Story = {
+  args: {
+    previewUrl: screenshotPreview,
+    screenshotRadiusPercent: 12,
+  },
+  render: (args) => <RoundedScreenshotPanel {...args} />,
+};
 
 export const Saving: Story = {
   args: { isSaving: true },
@@ -88,6 +143,7 @@ export const Recording: Story = {
     enabledAudioTrackCount: 2,
     estimatedSizeBytes: 74_200_000,
     fileStem: recording.suggestedFileStem,
+    recordingPreviewLayout: screenPreviewLayout,
     recordingPreviewTracks: [
       {
         kind: "system-audio",
@@ -119,11 +175,69 @@ export const RecordingWithCollapsedAudio: Story = {
   },
 };
 
+/** Screen and camera captures remain separate, synchronized preview panels. */
+export const RecordingWithCamera: Story = {
+  args: {
+    ...Recording.args,
+    artifact: {
+      ...recording,
+      camera: {
+        durationMs: recording.durationMs,
+        height: 1080,
+        originalSizeBytes: 18_400_000,
+        path: "/tmp/Recordings/camera-20260808-143205.000.mov",
+        width: 1920,
+      },
+    },
+    cameraCompression: 2,
+    cameraResolutionScalePercent: 100,
+    recordingPreviewLayout: cameraPreviewLayout,
+  },
+};
+
+function CameraBakePanel(args: ComponentProps<typeof ExportPanel>) {
+  const [cameraOverlay, setCameraOverlay] = useState(args.cameraOverlay);
+  return (
+    <ExportPanel
+      {...args}
+      cameraOverlay={cameraOverlay}
+      onCameraOverlayChange={setCameraOverlay}
+    />
+  );
+}
+
+export const RecordingWithBakedCamera: Story = {
+  args: {
+    ...RecordingWithCamera.args,
+    bakeCamera: true,
+    cameraOverlay: {
+      cameraWidthPercent: 25,
+      cameraXPercent: 85,
+      cameraYPercent: 18,
+      frameHeightPercent: 14.0625,
+      frameWidthPercent: 25,
+      frameXPercent: 72,
+      frameYPercent: 4,
+      radiusPercent: 8,
+    },
+  },
+  render: (args) => <CameraBakePanel {...args} />,
+};
+
 export const SavingRecording: Story = {
   args: {
     ...Recording.args,
     isSaving: true,
     saveProgress: 58,
+  },
+};
+
+export const SavingCamera: Story = {
+  args: {
+    ...RecordingWithCamera.args,
+    isSaving: true,
+    savePhase: "camera",
+    saveProgress: 68,
   },
 };
 
@@ -152,10 +266,9 @@ export const RecordingWithoutCompressionSupport: Story = {
   },
 };
 
-export const PreparingRecordingAudio: Story = {
+export const PreparingRecordingPreview: Story = {
   args: {
-    artifact: recording,
-    fileStem: recording.suggestedFileStem,
+    ...Recording.args,
     isPreparingRecordingPreview: true,
   },
 };

@@ -1,9 +1,28 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
-import { ExportSnapshot, RecordingPreview } from "./types";
+import {
+  CameraOverlaySettings,
+  ExportSnapshot,
+  RecordingPreview,
+  RecordingPreviewLayout,
+} from "./types";
+
+export type RecordingPreviewPlayerEvent =
+  | { event: "ended" }
+  | { data: { message: string }; event: "error" }
+  | {
+      data: { positionMs: number };
+      event: "paused" | "playing" | "position";
+    }
+  | { data: { positionMs: number; requestId: number }; event: "ready" };
+
+export type RecordingPreviewPlayerInfo = {
+  durationMs: number;
+  layout: RecordingPreviewLayout;
+};
 
 export const getExportSnapshot = () =>
   invoke<ExportSnapshot>("get_export_snapshot");
@@ -18,66 +37,139 @@ export const getExportPreview = (full = false) =>
 export const getRecordingPreview = (artifactId: number) =>
   invoke<RecordingPreview>("get_recording_preview", { artifactId });
 
-/**
- * The path of the one file the preview should play for these tracks.
- *
- * A video element plays a single audio track, so hearing two recorded tracks
- * at once means handing it a file in which they are already one. That is a
- * property of the player and not of the export, which keeps them separate.
- */
-export const getRecordingPreviewMix = (
-  artifactId: number,
-  enabledStreamIndices: number[],
-) =>
-  invoke<string>("get_recording_preview_mix", {
+export const startRecordingPreviewPlayer = ({
+  artifactId,
+  enabledStreamIndices,
+  eventChannel,
+  frameChannel,
+  sessionId,
+}: {
+  artifactId: number;
+  enabledStreamIndices: number[];
+  eventChannel: Channel<RecordingPreviewPlayerEvent>;
+  frameChannel: Channel<ArrayBuffer>;
+  sessionId: number;
+}) =>
+  invoke<RecordingPreviewPlayerInfo>("start_recording_preview_player", {
     artifactId,
     enabledStreamIndices,
+    eventChannel,
+    frameChannel,
+    sessionId,
   });
 
-type RecordingExportOptions = {
-  artifactId: number;
+export const playRecordingPreview = (sessionId: number) =>
+  invoke<null>("play_recording_preview", { sessionId });
+
+export const pauseRecordingPreview = (sessionId: number) =>
+  invoke<null>("pause_recording_preview", { sessionId });
+
+export const requestRecordingPreviewFullResolution = (sessionId: number) =>
+  invoke<null>("request_recording_preview_full_resolution", { sessionId });
+
+export const seekRecordingPreview = (
+  positionMs: number,
+  requestId: number,
+  sessionId: number,
+) =>
+  invoke<null>("seek_recording_preview", {
+    positionMs: Number.isFinite(positionMs)
+      ? Math.max(0, Math.round(positionMs))
+      : 0,
+    requestId,
+    sessionId,
+  });
+
+export const selectRecordingPreviewAudio = (
+  enabledStreamIndices: number[],
+  sessionId: number,
+) =>
+  invoke<null>("select_recording_preview_audio", {
+    enabledStreamIndices,
+    sessionId,
+  });
+
+export const stopRecordingPreviewPlayer = (sessionId: number) =>
+  invoke<null>("stop_recording_preview_player", { sessionId });
+
+type RecordingProcessingOptions = {
+  bakeCamera: boolean;
+  cameraCompression: number;
+  cameraOverlay: CameraOverlaySettings;
+  cameraResolutionScalePercent: number;
   collapseAudio: boolean;
   compression: number;
   enabledStreamIndices: number[];
   resolutionScalePercent: number;
+  screenshotRadiusPercent: number;
 };
 
 export const estimateRecordingExport = ({
   artifactId,
+  bakeCamera,
+  cameraCompression,
+  cameraOverlay,
+  cameraResolutionScalePercent,
   collapseAudio,
   compression,
   enabledStreamIndices,
   resolutionScalePercent,
-}: RecordingExportOptions) =>
+  screenshotRadiusPercent,
+}: RecordingProcessingOptions & { artifactId: number }) =>
   invoke<number>("estimate_recording_export", {
     artifactId,
-    collapseAudio,
-    compression,
-    enabledStreamIndices,
-    resolutionScalePercent,
+    options: {
+      bakeCamera,
+      cameraCompression,
+      cameraOverlay,
+      cameraResolutionScalePercent,
+      collapseAudio,
+      compression,
+      enabledStreamIndices,
+      resolutionScalePercent,
+      screenshotRadiusPercent,
+    },
   });
 
-type SaveExportOptions = Omit<RecordingExportOptions, "artifactId"> & {
+type SaveExportOptions = RecordingProcessingOptions & {
   fileStem: string;
 };
 
 export const saveExport = ({
+  bakeCamera,
+  cameraCompression,
+  cameraOverlay,
+  cameraResolutionScalePercent,
   collapseAudio,
   compression,
   enabledStreamIndices,
   fileStem,
   resolutionScalePercent,
+  screenshotRadiusPercent,
 }: SaveExportOptions) =>
   invoke<string | null>("save_export", {
-    collapseAudio,
-    compression,
-    enabledStreamIndices,
     fileStem,
-    resolutionScalePercent,
+    options: {
+      bakeCamera,
+      cameraCompression,
+      cameraOverlay,
+      cameraResolutionScalePercent,
+      collapseAudio,
+      compression,
+      enabledStreamIndices,
+      resolutionScalePercent,
+      screenshotRadiusPercent,
+    },
   });
 
-export const copyExportToClipboard = async () => {
-  await invoke<null>("copy_export_to_clipboard");
+export const copyExportToClipboard = async (
+  screenshotRadiusPercent: number,
+) => {
+  await invoke<null>("copy_export_to_clipboard", { screenshotRadiusPercent });
+};
+
+export const setScreenshotRadius = async (radiusPercent: number) => {
+  await invoke<null>("set_screenshot_radius", { radiusPercent });
 };
 
 export const cancelExport = async () => {

@@ -8,8 +8,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::{
-  capture, encoding, snapshot, state, FinalizeInfo, RecordingMode, RecordingStatus,
-  StartRecordingOptions, SystemAudioSelection,
+  capture, encoding, snapshot, state, CameraCaptureMode, CaptureStartupConfig, FinalizeInfo,
+  PrimaryCaptureSource, RecordingMode, RecordingStatus, StartRecordingOptions,
+  SystemAudioSelection,
 };
 
 const RECORDING_ERROR_EVENT: &str = "recording://error";
@@ -109,6 +110,16 @@ pub(super) fn validate_options(options: &StartRecordingOptions) -> Result<(), St
     RecordingMode::Audio if !options.system_audio && options.microphone_id.is_none() => {
       Err("No audio source is selected to record".to_owned())
     }
+    RecordingMode::Camera if options.camera_id.is_none() => {
+      Err("No camera is selected to record".to_owned())
+    }
+    _ if options.camera_id.is_some()
+      && (options.camera_width.is_none()
+        || options.camera_height.is_none()
+        || options.camera_fps.is_none()) =>
+    {
+      Err("The selected camera mode is incomplete".to_owned())
+    }
     _ => Ok(()),
   }
 }
@@ -119,56 +130,86 @@ pub(super) fn begin_capture(
   app: &AppHandle,
   options: &StartRecordingOptions,
 ) -> Result<(CaptureHandles, Receiver<Result<(), String>>), String> {
-  // The slices that add these have their own sources to resolve; the Record
-  // button is already gated so none of them can arrive here yet.
   let _ = (
-    options.camera_id.as_deref(),
     options.region.map(|region| (region.position, region.size)),
     options.window_id,
   );
-  if options.mode != RecordingMode::Screen {
+  if !matches!(options.mode, RecordingMode::Screen | RecordingMode::Camera) {
     return Err("That kind of recording is not available yet".to_owned());
   }
-  let monitor_id = options
-    .monitor_id
-    .ok_or_else(|| "No monitor is selected to record".to_owned())?;
-  let source_scale_factor = xcap::Monitor::all()
-    .map_err(|error| error.to_string())?
-    .into_iter()
-    .find(|monitor| monitor.id().ok() == Some(monitor_id))
-    .ok_or_else(|| "The selected monitor is no longer available".to_owned())?
-    .scale_factor()
-    .map_err(|error| error.to_string())?;
+  let camera_primary = options.mode == RecordingMode::Camera;
+  let camera = options
+    .camera_id
+    .as_ref()
+    .map(|device_id| CameraCaptureMode {
+      device_id: device_id.clone(),
+      flipped: options.camera_flipped,
+      fps: options.camera_fps.expect("validated above"),
+      height: options.camera_height.expect("validated above"),
+      width: options.camera_width.expect("validated above"),
+    });
+  let source_scale_factor = if camera_primary {
+    1.0
+  } else {
+    let monitor_id = options
+      .monitor_id
+      .ok_or_else(|| "No monitor is selected to record".to_owned())?;
+    xcap::Monitor::all()
+      .map_err(|error| error.to_string())?
+      .into_iter()
+      .find(|monitor| monitor.id().ok() == Some(monitor_id))
+      .ok_or_else(|| "The selected monitor is no longer available".to_owned())?
+      .scale_factor()
+      .map_err(|error| error.to_string())?
+  };
 
   let directory = recordings_directory(app)?;
   std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
   let started_at = Local::now().naive_local();
   let output_path = directory.join(encoding::temp_file_name(started_at));
+  let camera_path = options
+    .camera_id
+    .as_ref()
+    .filter(|_| !camera_primary)
+    .map(|_| directory.join(encoding::camera_temp_file_name(started_at)));
 
   // Reported at most once per recording, from the writer thread, however many
   // frames the failure goes on to affect.
   let reporter = app.clone();
-  let on_failure = Box::new(move |reason: String| {
+  let on_failure = std::sync::Arc::new(move |reason: String| {
     emit_error(&reporter, "capture", &reason);
   });
 
-  let (session, first_frame) = capture::begin_blocking(
-    monitor_id,
-    options.show_cursor,
-    SystemAudioSelection {
+  crate::camera_preview::stop_all(app);
+  let primary = if camera_primary {
+    PrimaryCaptureSource::Camera { fps: options.fps }
+  } else {
+    PrimaryCaptureSource::Screen {
+      fps: options.fps,
+      monitor_id: options.monitor_id.expect("validated above"),
+      show_cursor: options.show_cursor,
+    }
+  };
+  let (session, first_frame) = capture::begin_blocking(CaptureStartupConfig {
+    camera,
+    camera_path: camera_path.clone(),
+    microphone_id: options.microphone_id.clone(),
+    on_failure,
+    path: output_path.clone(),
+    primary,
+    system_audio: SystemAudioSelection {
       application_ids: options.system_audio_application_ids.clone(),
       enabled: options.system_audio,
       #[cfg(target_os = "windows")]
       process_ids: options.system_audio_process_ids.clone(),
     },
-    options.microphone_id.clone(),
-    options.fps,
-    output_path.clone(),
-    on_failure,
-  )
+  })
   .inspect_err(|_| {
     // A start that never got going leaves an empty container behind.
     let _ = std::fs::remove_file(&output_path);
+    if let Some(camera_path) = &camera_path {
+      let _ = std::fs::remove_file(camera_path);
+    }
   })?;
 
   Ok((

@@ -1,14 +1,8 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-export const permissionKinds = [
-  "accessibility",
-  "screenRecording",
-  "camera",
-  "microphone",
-] as const;
-
-export type PermissionKind = (typeof permissionKinds)[number];
+export type PermissionKind =
+  "accessibility" | "camera" | "microphone" | "screenRecording";
 
 export type PermissionStatus = {
   canRequest: boolean;

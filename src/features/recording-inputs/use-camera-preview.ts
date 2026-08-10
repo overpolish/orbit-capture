@@ -5,6 +5,7 @@ import { Channel } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 
 import { startCameraPreview, stopCameraPreview } from "./camera-preview-api";
+import { CameraResolution } from "./types";
 
 const FRAME_HEADER_LENGTH = 9;
 const FRAME_TYPE_MJPEG = 0;
@@ -43,11 +44,13 @@ const drawFrame = async (canvas: HTMLCanvasElement, frame: ArrayBuffer) => {
 type UseCameraPreviewOptions = {
   active: boolean;
   deviceId?: string;
+  mode?: CameraResolution;
 };
 
 export const useCameraPreview = ({
   active,
   deviceId,
+  mode,
 }: UseCameraPreviewOptions) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const latestFrameRef = useRef<ArrayBuffer | null>(null);
@@ -91,15 +94,16 @@ export const useCameraPreview = ({
       .then(async () => {
         setHasFrame(false);
         await stopCameraPreview();
-        if (!active || !deviceId || cancelled) return;
+        if (!active || !deviceId || !mode || cancelled) return;
 
         const channel = new Channel<ArrayBuffer>();
         channel.onmessage = (frame) => {
           if (!cancelled) latestFrameRef.current = frame;
         };
-        await startCameraPreview(deviceId, channel);
+        await startCameraPreview(deviceId, mode, channel);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error("Could not start camera preview", error);
         if (!cancelled) setHasFrame(false);
       });
 
@@ -110,7 +114,7 @@ export const useCameraPreview = ({
         .then(stopCameraPreview)
         .catch(() => undefined);
     };
-  }, [active, deviceId]);
+  }, [active, deviceId, mode]);
 
   return { canvasRef, hasFrame };
 };

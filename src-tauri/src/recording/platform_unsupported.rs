@@ -9,11 +9,10 @@
 //! `CaptureSession` has no variants, so the compiler knows no session can
 //! exist and the lifecycle code below it needs no platform branches at all.
 
-use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-use super::encoding::{FailureReport, FinalizeInfo};
-use super::SystemAudioSelection;
+use super::encoding::FinalizeInfo;
+use super::CaptureStartupConfig;
 
 pub enum CaptureSession {}
 
@@ -36,23 +35,9 @@ impl CaptureSession {
 }
 
 pub fn begin_blocking(
-  monitor_id: u32,
-  show_cursor: bool,
-  system_audio: SystemAudioSelection,
-  microphone_id: Option<String>,
-  fps: u32,
-  path: PathBuf,
-  on_failure: FailureReport,
+  config: CaptureStartupConfig,
 ) -> Result<(CaptureSession, Receiver<Result<(), String>>), String> {
-  let _ = (
-    monitor_id,
-    show_cursor,
-    system_audio,
-    microphone_id,
-    fps,
-    path,
-    on_failure,
-  );
+  let _ = config;
 
   Err("Screen recording is not yet implemented on Windows".to_owned())
 }

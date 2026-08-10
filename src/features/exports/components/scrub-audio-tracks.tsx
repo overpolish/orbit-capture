@@ -7,7 +7,7 @@ import { Button } from "../../../components/base/button/button";
 import { PreparedAudioTrack } from "../types";
 
 import { Playhead } from "./scrub-playhead";
-import { Waveform } from "./scrub-timeline";
+import { SeekHandler, Waveform } from "./scrub-timeline";
 
 export function ScrubAudioTracks({
   audioTracks,
@@ -19,7 +19,7 @@ export function ScrubAudioTracks({
   audioTracks: PreparedAudioTrack[];
   enabledTracks: Set<number>;
   onEnabledTracksChange: (tracks: Set<number>) => void;
-  onSeek: (ratio: number) => void;
+  onSeek: SeekHandler;
   playhead: Playhead;
 }) {
   return (

@@ -3,7 +3,8 @@
 
 #![allow(clippy::useless_transmute)]
 
-//! Screen recording on macOS: ScreenCaptureKit into AVAssetWriter, H.264, no
+//! Screen recording on macOS: ScreenCaptureKit into AVAssetWriter, hardware
+//! H.264/HEVC encoding, no
 //! intermediate files and no ffmpeg.
 //!
 //! # Who owns what
@@ -24,6 +25,7 @@
 //! ordered against the frames for free. There is no lock anywhere in the hot
 //! path, and no state that two threads can see at once.
 
+mod camera;
 mod media;
 mod output;
 mod session;
@@ -34,6 +36,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -45,19 +48,28 @@ use cpal::Stream;
 
 use crate::capture_kit::{application_audio_filter, monitor_geometry, our_windows};
 
-use super::encoding::{FailureReport, FinalizeInfo};
+use super::encoding::FinalizeInfo;
 use super::microphone::{
   Buffer as MicrophoneBuffer, Format as MicrophoneFormat, Source as MicrophoneSource,
 };
-use super::SystemAudioSelection;
+use super::{CameraCaptureMode, CaptureStartupConfig, PrimaryCaptureSource};
 #[cfg(test)]
 use media::microphone_buffer_from_origin;
-use media::{even, frame_status, time_to_ns};
+use media::{even, frame_status, time_to_ns, VideoEncoder};
 use output::{AudioSample, CaptureStats, Command, Frame, ScreenOutput, ScreenOutputInner};
 pub use session::CaptureSession;
 use session::StreamObjects;
-pub use startup::begin_blocking;
 use writer::{Container, Writer, WriterConfig};
+
+pub fn begin_blocking(
+  config: CaptureStartupConfig,
+) -> Result<(CaptureSession, Receiver<Result<(), String>>), String> {
+  tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .map_err(|error| error.to_string())?
+    .block_on(startup::begin(config))
+}
 
 /// How many frames ScreenCaptureKit may have in flight for us.
 const STREAM_QUEUE_DEPTH: isize = 8;
@@ -65,6 +77,11 @@ const STREAM_QUEUE_DEPTH: isize = 8;
 /// buys latency: a backlog the writer cannot clear is a dropped frame either
 /// way, and dropping it early keeps memory flat.
 const FRAME_QUEUE_DEPTH: usize = 8;
+/// Camera frames have a real cadence, unlike a screen stream that only emits
+/// when pixels change. Give a temporarily busy camera encoder enough time to
+/// drain into the bounded queue instead of punching visible holes in motion.
+const CAMERA_ENCODER_WAIT: Duration = Duration::from_millis(100);
+const CAMERA_ENCODER_POLL: Duration = Duration::from_millis(1);
 const NANOS_PER_SEC: i64 = 1_000_000_000;
 const NANOS_PER_MS: i64 = 1_000_000;
 /// The long edge of the poster shipped to the export window.

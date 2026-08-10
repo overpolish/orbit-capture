@@ -57,30 +57,49 @@ pub(super) const fn even(value: u32) -> u32 {
   value & !1
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum VideoEncoder {
+  H264,
+  Hevc,
+}
+
 /// The encoder settings for one recording.
 pub(super) fn video_settings(
   width: u32,
   height: u32,
   fps: u32,
+  encoder: VideoEncoder,
 ) -> arc::R<ns::DictionaryMut<ns::String, ns::Id>> {
   // These keys have no bound constants, so they are spelled out the way
   // cidre's own examples do.
   let bitrate = ns::Number::with_i32(bitrate_bps(width, height, fps));
   let expected_frame_rate = ns::Number::with_i32(fps as i32);
-  // A keyframe every two seconds: often enough to scrub, rare enough not to
-  // spend the bitrate on it.
-  let max_key_frame_interval = ns::Number::with_i32((fps * 2) as i32);
+  // A keyframe every half second keeps native export-preview seeks responsive.
+  // Working recordings favour interaction; final exports choose their own GOP.
+  let max_key_frame_interval = ns::Number::with_i32((fps / 2).max(1) as i32);
 
   let mut compression = ns::DictionaryMut::<ns::String, ns::Id>::with_capacity(4);
   compression.insert(ns::str!(c"AverageBitRate"), &bitrate);
   compression.insert(ns::str!(c"ExpectedFrameRate"), &expected_frame_rate);
   compression.insert(ns::str!(c"MaxKeyFrameInterval"), &max_key_frame_interval);
-  compression.insert(ns::str!(c"ProfileLevel"), ns::str!(c"H264_High_AutoLevel"));
+  compression.insert(
+    ns::str!(c"ProfileLevel"),
+    match encoder {
+      VideoEncoder::H264 => ns::str!(c"H264_High_AutoLevel"),
+      VideoEncoder::Hevc => ns::str!(c"HEVC_Main_AutoLevel"),
+    },
+  );
 
   let width = ns::Number::with_i32(width as i32);
   let height = ns::Number::with_i32(height as i32);
   let mut settings = ns::DictionaryMut::<ns::String, ns::Id>::with_capacity(4);
-  settings.insert(av::video_settings_keys::codec(), av::VideoCodec::h264());
+  settings.insert(
+    av::video_settings_keys::codec(),
+    match encoder {
+      VideoEncoder::H264 => av::VideoCodec::h264(),
+      VideoEncoder::Hevc => av::VideoCodec::hevc(),
+    },
+  );
   settings.insert(av::video_settings_keys::width(), &width);
   settings.insert(av::video_settings_keys::height(), &height);
   settings.insert(av::video_settings_keys::compression_props(), &compression);

@@ -6,18 +6,19 @@
 //! Everything here is pure so the timing rules - which are what a recording
 //! actually is - can be tested without a display, an encoder or a thread.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use chrono::NaiveDateTime;
 
 /// Told once, from the writer thread, when a recording stops being able to
 /// accept frames. The user sees one message however many frames follow.
-pub type FailureReport = Box<dyn Fn(String) + Send>;
+pub type FailureReport = Arc<dyn Fn(String) + Send + Sync>;
 
 /// What a finished recording leaves behind. Platform-independent on purpose:
 /// it is what the export window is handed, and the export window knows nothing
 /// about how the file was made.
 pub struct FinalizeInfo {
+  pub camera: Option<CameraFinalizeInfo>,
   pub has_microphone: bool,
   pub has_system_audio: bool,
   pub duration_ms: u64,
@@ -29,6 +30,13 @@ pub struct FinalizeInfo {
   /// The captured pixels per logical display point. Export uses this to offer
   /// meaningful 1x/1.5x output rather than arbitrary percentages.
   pub source_scale_factor: f32,
+  pub width: u32,
+}
+
+pub struct CameraFinalizeInfo {
+  pub duration_ms: u64,
+  pub height: u32,
+  pub path: PathBuf,
   pub width: u32,
 }
 
@@ -72,6 +80,12 @@ pub fn temp_file_name(started_at: NaiveDateTime) -> String {
     .to_string()
 }
 
+pub fn camera_temp_file_name(started_at: NaiveDateTime) -> String {
+  started_at
+    .format("camera-%Y%m%d-%H%M%S%.3f.mov")
+    .to_string()
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Origin {
   source_ns: i64,
@@ -101,6 +115,13 @@ pub struct Timeline {
 }
 
 impl Timeline {
+  /// Pins this timeline to a source shared with another writer. Camera and
+  /// screen are encoded into separate working movies, but an editor must see
+  /// the same zero and the same removed pauses in both.
+  pub fn start_at(&mut self, source_ns: i64, wall_ns: i64) {
+    self.origin.get_or_insert(Origin { source_ns, wall_ns });
+  }
+
   /// Whether a first frame has been appended, which is what starts the movie.
   pub const fn has_started(&self) -> bool {
     self.origin.is_some()

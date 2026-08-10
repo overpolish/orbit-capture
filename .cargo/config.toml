@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 overpolish
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[build]
+# rustc 1.96/LLVM 22 can leave macOS incremental objects referring to private
+# anonymous rav1e symbols that are absent at the final Tauri link. A clean
+# non-incremental build is reliable; make that the project default so normal
+# development commands cannot recreate the corrupt cache state.
+incremental = false

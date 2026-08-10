@@ -24,6 +24,7 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
       },
       ExportArtifact::Recording {
         audio_tracks,
+        camera,
         duration_ms,
         height,
         id,
@@ -33,6 +34,7 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
         width,
       } => ExportArtifactSnapshot::Recording {
         audio_tracks: audio_tracks.clone(),
+        camera: camera.clone(),
         can_compress: media_preview::supports_compression(),
         id: *id,
         suggested_file_stem: suggested_file_stem.clone(),
@@ -40,15 +42,25 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
         width: *width,
         height: *height,
         duration_ms: *duration_ms,
-        original_size_bytes: std::fs::metadata(path).map_or(0, |metadata| metadata.len()),
+        original_size_bytes: std::fs::metadata(path).map_or(0, |metadata| metadata.len())
+          + camera
+            .as_ref()
+            .and_then(|camera| std::fs::metadata(&camera.path).ok())
+            .map_or(0, |metadata| metadata.len()),
         path: path.clone(),
         source_scale_percent: *source_scale_percent,
       },
     });
 
+  let screenshot_radius_percent = *state
+    .screenshot_radius_percent
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner());
+
   ExportSnapshot {
     artifact,
     directory: current_directory(app),
+    screenshot_radius_percent,
   }
 }
 
@@ -104,8 +116,11 @@ pub(super) fn full_preview_png(image: &CapturedImage) -> Result<Vec<u8>, String>
 /// A screenshot lives in memory and needs nothing; a recording is a file, and
 /// every path that lets go of one without saving it comes through here.
 pub(super) fn delete_working_file(artifact: &ExportArtifact) {
-  if let ExportArtifact::Recording { path, .. } = artifact {
+  if let ExportArtifact::Recording { camera, path, .. } = artifact {
     let _ = std::fs::remove_file(path);
+    if let Some(camera) = camera {
+      let _ = std::fs::remove_file(&camera.path);
+    }
   }
 }
 
@@ -115,17 +130,13 @@ pub(super) fn delete_working_file(artifact: &ExportArtifact) {
 /// new capture, saving it - comes through here, so no derivative outlives the
 /// artifact it was made from.
 pub(super) fn clear_recording_preview(app: &AppHandle) {
+  super::recording_preview_player::stop_all(app);
   let state = app.state::<ExportState>();
   state
     .recording_preview
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner())
     .take();
-  state
-    .preview_mixes
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner())
-    .cleanup();
   state
     .compression_estimates
     .lock()
@@ -208,6 +219,7 @@ pub fn present_recording(
   suggested_file_stem: String,
 ) -> Result<(), String> {
   let FinalizeInfo {
+    camera,
     has_microphone,
     has_system_audio,
     duration_ms,
@@ -228,6 +240,13 @@ pub fn present_recording(
     ExportArtifact::Recording {
       id: next_id(app),
       audio_tracks,
+      camera: camera.map(|camera| RecordingCamera {
+        duration_ms: camera.duration_ms,
+        height: camera.height,
+        original_size_bytes: std::fs::metadata(&camera.path).map_or(0, |metadata| metadata.len()),
+        path: camera.path,
+        width: camera.width,
+      }),
       duration_ms,
       height,
       path,

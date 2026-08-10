@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/base/button/button";
 import { ToggleButton } from "../../../components/base/button/toggle-button";
 import { ContentRotate } from "../../../components/base/content-rotate/content-rotate";
+import { Overlay } from "../../../components/base/overlay/overlay";
 import { cn } from "../../../lib/styling";
 import { formatElapsedTime } from "../elapsed-time";
 import { RecordingStatus } from "../types";
@@ -116,9 +117,20 @@ export function RecordingDock({
 
   return (
     <main
-      className="window-surface flex h-full min-h-11 w-full min-w-[216px] items-center overflow-hidden rounded-[10px] bg-content/92 pr-1 text-content-fg"
+      className="window-surface relative flex h-full min-h-11 w-full min-w-[216px] items-center overflow-hidden rounded-[10px] bg-content/92 pr-1 text-content-fg"
       onPointerUpCapture={onPointerUp}
     >
+      <Overlay
+        aria-label={
+          status === "starting" ? "Starting recording" : "Finishing recording"
+        }
+        className="z-60 gap-2 rounded-[10px] bg-content/70 text-xs font-semibold text-content-fg"
+        contained
+        isOpen={isBusy}
+      >
+        <LoaderCircle className="animate-spin text-muted" size={ICON_SIZE} />
+        {status === "starting" ? "Starting" : "Finishing"}
+      </Overlay>
       <div
         className="flex h-full grow cursor-grab items-center pr-1 pl-0.5 text-muted"
         data-tauri-drag-region
@@ -127,19 +139,10 @@ export function RecordingDock({
       </div>
 
       <div className="flex w-[68px] justify-center text-xs font-semibold tabular-nums">
-        {isBusy ? (
-          <ContentRotate className="text-muted" contentKey={status}>
-            {status === "starting" ? "Starting" : "Finishing"}
-          </ContentRotate>
-        ) : (
-          <div
-            className={cn("flex transition-colors", isPaused && "text-muted")}
-          >
-            <RotatingDigits value={hours} />:
-            <RotatingDigits value={minutes} />:
-            <RotatingDigits value={seconds} />
-          </div>
-        )}
+        <div className={cn("flex transition-colors", isPaused && "text-muted")}>
+          <RotatingDigits value={hours} />:<RotatingDigits value={minutes} />:
+          <RotatingDigits value={seconds} />
+        </div>
       </div>
 
       <ToggleButton
@@ -171,17 +174,13 @@ export function RecordingDock({
         showFocus={false}
         variant="ghost"
       >
-        {isBusy ? (
-          <LoaderCircle className="animate-spin text-muted" size={ICON_SIZE} />
-        ) : (
-          <CircleStop
-            className={cn(
-              "transition-colors",
-              isRecording && "animate-pulse text-error",
-            )}
-            size={ICON_SIZE}
-          />
-        )}
+        <CircleStop
+          className={cn(
+            "transition-colors",
+            isRecording && "animate-pulse text-error",
+          )}
+          size={ICON_SIZE}
+        />
       </Button>
 
       <DiscardButton

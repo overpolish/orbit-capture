@@ -74,7 +74,7 @@
         "title": "Orbit Capture Recording Options",
         "url": "/recording-options",
         "width": 240,
-        "height": 270,
+        "height": 300,
         "acceptFirstMouse": true,
         "alwaysOnTop": false,
         "decorations": false,

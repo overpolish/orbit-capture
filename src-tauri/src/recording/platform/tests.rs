@@ -4,6 +4,8 @@
 use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
+use super::output::FrameClock;
+use super::writer::VideoSource;
 use super::*;
 
 /// An NV12 frame of the right shape, standing in for a captured one.
@@ -74,7 +76,7 @@ fn synthetic_frame(width: u32, height: u32, source_ns: i64, wall: Instant) -> Fr
 
   Frame {
     buf,
-    source_ns,
+    clock: FrameClock::Source(source_ns),
     wall,
   }
 }
@@ -301,11 +303,15 @@ fn record_at(
     width,
     height,
     fps: 30,
+    encoder: VideoEncoder::H264,
     system_audio: false,
     microphone_format: None,
     stats: Arc::clone(&stats),
-    on_failure: Box::new(|reason| println!("failure reported: {reason}")),
+    on_failure: Arc::new(|reason| println!("failure reported: {reason}")),
     container,
+    primary_video: true,
+    source: VideoSource::Screen,
+    timeline_origin: Arc::new(OnceLock::new()),
   })
   .expect("a writer");
   let base = writer.base;
@@ -503,11 +509,15 @@ fn abandon_a_recording(name: &str, container: Container, write_for_ms: u64) {
     width: 640,
     height: 480,
     fps: 30,
+    encoder: VideoEncoder::H264,
     system_audio: false,
     microphone_format: None,
     stats: Arc::clone(&stats),
-    on_failure: Box::new(|reason| println!("failure reported: {reason}")),
+    on_failure: Arc::new(|reason| println!("failure reported: {reason}")),
     container,
+    primary_video: true,
+    source: VideoSource::Screen,
+    timeline_origin: Arc::new(OnceLock::new()),
   })
   .expect("a writer");
   let base = writer.base;

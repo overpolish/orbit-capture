@@ -6,6 +6,7 @@ import {
   CameraOff,
   FlipHorizontal2,
   Lock,
+  Scan,
   Mic,
   Volume2,
 } from "lucide-react";
@@ -20,7 +21,12 @@ import { AudioMeter } from "../audio-inputs/components/audio-meter";
 import { StandaloneMultiSelect } from "../standalone-listbox/standalone-multi-select";
 import { StandaloneSelect } from "../standalone-listbox/standalone-select";
 
-import { InputDevice, SystemAudioSource } from "./types";
+import {
+  CameraDevice,
+  CameraResolution,
+  InputDevice,
+  SystemAudioSource,
+} from "./types";
 
 type InputSelectProps<T extends InputDevice> = {
   icon: React.ReactNode;
@@ -178,12 +184,14 @@ function PermissionOverlay({ label, onPress }: PermissionOverlayProps) {
 
 export type RecordingOptionsProps = {
   audioSources: SystemAudioSource[];
-  cameras: InputDevice[];
+  cameras: CameraDevice[];
   microphones: InputDevice[];
-  onCameraChange: (camera: InputDevice) => void;
+  onCameraChange: (camera: CameraDevice) => void;
+  onCameraResolutionChange: (resolution: CameraResolution) => void;
   onMicrophoneChange: (microphone: InputDevice) => void;
   onSystemAudioChange: (sources: SystemAudioSource[]) => void;
-  selectedCamera: InputDevice | null;
+  selectedCamera: CameraDevice | null;
+  selectedCameraResolution: CameraResolution | null;
   selectedMicrophone: InputDevice | null;
   selectedSystemAudio: SystemAudioSource[];
   cameraFlipped?: boolean;
@@ -196,7 +204,7 @@ export type RecordingOptionsProps = {
   microphonePreviewEnabled?: boolean;
   onCameraFlippedChange?: (flipped: boolean) => void;
   onCameraLockedPress?: () => void;
-  onCameraOptionsOpen?: () => Promise<InputDevice[]>;
+  onCameraOptionsOpen?: () => Promise<CameraDevice[]>;
   onMicrophoneLockedPress?: () => void;
   onMicrophoneOptionsOpen?: () => Promise<InputDevice[]>;
   onSystemAudioOptionsOpen?: () => Promise<SystemAudioSource[]>;
@@ -222,12 +230,14 @@ export function RecordingOptions({
   onCameraFlippedChange,
   onCameraLockedPress,
   onCameraOptionsOpen,
+  onCameraResolutionChange,
   onMicrophoneChange,
   onMicrophoneLockedPress,
   onMicrophoneOptionsOpen,
   onSystemAudioChange,
   onSystemAudioOptionsOpen,
   selectedCamera,
+  selectedCameraResolution,
   selectedMicrophone,
   selectedSystemAudio,
   standalone = false,
@@ -235,8 +245,12 @@ export function RecordingOptions({
   systemAudioPeak = -Infinity,
   systemAudioPreviewEnabled = false,
 }: RecordingOptionsProps) {
+  const previewIsWiderThanStage =
+    selectedCameraResolution !== null &&
+    selectedCameraResolution.width * 9 >= selectedCameraResolution.height * 16;
+
   return (
-    <main className="window-surface flex h-full min-h-[270px] w-full min-w-[240px] flex-col gap-3 overflow-hidden rounded-[10px] bg-content/92 p-4 text-content-fg">
+    <main className="window-surface flex h-full min-h-[300px] w-full min-w-[240px] flex-col gap-3 overflow-hidden rounded-[10px] bg-content/92 p-4 text-content-fg">
       <section className="relative flex flex-col gap-1.5">
         {cameraLocked ? (
           <PermissionOverlay
@@ -245,17 +259,22 @@ export function RecordingOptions({
           />
         ) : null}
 
-        <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-md bg-content-fg/10 text-muted shadow-sm">
-          <canvas
-            aria-label="Camera preview"
-            className={cn(
-              "h-full w-full object-cover",
-              cameraFlipped && "-scale-x-100",
-            )}
-            hidden={!cameraPreviewActive}
-            ref={cameraPreviewRef}
-            role="img"
-          />
+        <div className="relative flex aspect-video w-full shrink-0 items-center justify-center text-muted">
+          <div className="absolute inset-1 flex min-h-0 min-w-0 items-center justify-center">
+            <canvas
+              aria-label="Camera preview"
+              className={cn(
+                "block shrink-0 self-center shadow-[0_2px_12px_rgb(0_0_0/0.38)]",
+                previewIsWiderThanStage
+                  ? "h-auto max-h-full w-full"
+                  : "h-full w-auto max-w-full",
+                cameraFlipped && "-scale-x-100",
+              )}
+              hidden={!cameraPreviewActive}
+              ref={cameraPreviewRef}
+              role="img"
+            />
+          </div>
           {!cameraPreviewActive ? <CameraOff size={24} /> : null}
           {selectedCamera && onCameraFlippedChange ? (
             <ToggleButton
@@ -281,6 +300,16 @@ export function RecordingOptions({
           onOpen={onCameraOptionsOpen}
           placeholder="No camera"
           selected={selectedCamera}
+          standalone={standalone}
+        />
+        <InputSelect
+          icon={<Scan size={14} />}
+          id="camera-resolution"
+          items={selectedCamera?.modes ?? []}
+          label="Camera resolution"
+          onChange={onCameraResolutionChange}
+          placeholder="No resolution"
+          selected={selectedCameraResolution}
           standalone={standalone}
         />
       </section>

@@ -26,6 +26,17 @@ fn starts_the_movie_at_zero_whatever_the_capture_clock_reads() {
 }
 
 #[test]
+fn a_secondary_video_keeps_the_primary_videos_zero() {
+  let mut timeline = Timeline::default();
+  timeline.start_at(WALL_EPOCH, WALL_EPOCH);
+
+  assert_eq!(
+    timeline.frame_pts_ns(WALL_EPOCH + 125 * MS, WALL_EPOCH + 125 * MS),
+    125 * MS
+  );
+}
+
+#[test]
 fn keeps_the_spacing_between_frames() {
   let mut timeline = Timeline::default();
   frame(&mut timeline, 0);

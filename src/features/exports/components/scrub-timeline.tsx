@@ -13,6 +13,9 @@ import { PreparedAudioTrack } from "../types";
 
 import { clamp, Playhead } from "./scrub-playhead";
 
+export type ScrubPhase = "end" | "move" | "start";
+export type SeekHandler = (ratio: number, phase: ScrubPhase) => void;
+
 const waveformPath = (points: number[]) => {
   if (points.length === 0) return "";
   const center = 20;
@@ -33,7 +36,7 @@ export function Waveform({
   track,
 }: {
   enabled: boolean;
-  onSeek: (ratio: number) => void;
+  onSeek: SeekHandler;
   playhead: Playhead;
   track: PreparedAudioTrack;
 }) {
@@ -49,9 +52,12 @@ export function Waveform({
     [playhead],
   );
 
-  const seek = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const seek = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    phase: ScrubPhase,
+  ) => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    onSeek(clamp((event.clientX - bounds.left) / bounds.width, 0, 1));
+    onSeek(clamp((event.clientX - bounds.left) / bounds.width, 0, 1), phase);
   };
 
   return (
@@ -59,12 +65,14 @@ export function Waveform({
       className="relative h-6 min-w-0 grow cursor-ew-resize overflow-hidden rounded bg-muted/8"
       onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId);
-        seek(event);
+        seek(event, "start");
       }}
       onPointerMove={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) seek(event);
+        if (event.currentTarget.hasPointerCapture(event.pointerId))
+          seek(event, "move");
       }}
       onPointerUp={(event) => {
+        seek(event, "end");
         event.currentTarget.releasePointerCapture(event.pointerId);
       }}
     >
@@ -95,7 +103,7 @@ export function Timeline({
   onSeek,
   playhead,
 }: {
-  onSeek: (ratio: number) => void;
+  onSeek: SeekHandler;
   playhead: Playhead;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -120,9 +128,12 @@ export function Timeline({
     [playhead],
   );
 
-  const seek = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const seek = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    phase: ScrubPhase,
+  ) => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    onSeek(clamp((event.clientX - bounds.left) / bounds.width, 0, 1));
+    onSeek(clamp((event.clientX - bounds.left) / bounds.width, 0, 1), phase);
   };
 
   return (
@@ -135,22 +146,24 @@ export function Timeline({
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
         event.preventDefault();
-        onSeek(
-          clamp(
-            ratioRef.current + (event.key === "ArrowRight" ? 0.01 : -0.01),
-            0,
-            1,
-          ),
+        const ratio = clamp(
+          ratioRef.current + (event.key === "ArrowRight" ? 0.01 : -0.01),
+          0,
+          1,
         );
+        onSeek(ratio, "start");
+        onSeek(ratio, "end");
       }}
       onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId);
-        seek(event);
+        seek(event, "start");
       }}
       onPointerMove={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) seek(event);
+        if (event.currentTarget.hasPointerCapture(event.pointerId))
+          seek(event, "move");
       }}
       onPointerUp={(event) => {
+        seek(event, "end");
         event.currentTarget.releasePointerCapture(event.pointerId);
       }}
       ref={rootRef}

@@ -23,8 +23,10 @@ export const createPlayhead = () => {
 
   return {
     publish: (seconds: number, ratio: number) => {
-      last = { ratio, seconds };
-      for (const listener of listeners) listener(seconds, ratio);
+      const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+      const safeRatio = Number.isFinite(ratio) ? clamp(ratio, 0, 1) : 0;
+      last = { ratio: safeRatio, seconds: safeSeconds };
+      for (const listener of listeners) listener(safeSeconds, safeRatio);
     },
     subscribe: (listener: PlayheadListener) => {
       listeners.add(listener);

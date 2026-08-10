@@ -67,9 +67,11 @@ const startRecordingOptions = (): StartRecordingOptions => {
   const { recordingMode, region, selectedMonitor, selectedWindow } =
     useRecordingSourceStore.getState();
   const {
+    cameraFlippedById,
     fps,
     inputs,
     selectedCamera,
+    selectedCameraMode,
     selectedMicrophone,
     selectedSystemAudio,
   } = useRecordingInputStore.getState();
@@ -82,7 +84,14 @@ const startRecordingOptions = (): StartRecordingOptions => {
     : selectedSystemAudio.filter((source) => source.kind === "application");
 
   return {
+    cameraFlipped:
+      wantsCamera && selectedCamera
+        ? (cameraFlippedById[selectedCamera.id] ?? false)
+        : false,
+    cameraFps: wantsCamera ? (selectedCameraMode?.fps ?? null) : null,
+    cameraHeight: wantsCamera ? (selectedCameraMode?.height ?? null) : null,
     cameraId: wantsCamera ? (selectedCamera?.id ?? null) : null,
+    cameraWidth: wantsCamera ? (selectedCameraMode?.width ?? null) : null,
     fps,
     microphoneId: inputs.microphone ? (selectedMicrophone?.id ?? null) : null,
     mode: recordingMode,

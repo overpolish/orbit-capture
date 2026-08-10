@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { VariantProps } from "tailwind-variants";
-
 import { focusStyles, focusWithin } from "../../../lib/styling";
 import { tv } from "../../../lib/variants";
 
@@ -66,5 +64,3 @@ export const inputFieldVariants = tv({
     },
   },
 });
-
-export type InputFieldVariantProps = VariantProps<typeof inputFieldVariants>;

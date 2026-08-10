@@ -90,11 +90,12 @@ impl Writer {
       ));
     }
 
+    let capture_dropped = self.stats.capture_dropped.load(Ordering::Relaxed);
     let dropped = self.stats.dropped.load(Ordering::Relaxed);
     let not_ready = self.stats.not_ready.load(Ordering::Relaxed);
-    if dropped > 0 || not_ready > 0 {
+    if capture_dropped > 0 || dropped > 0 || not_ready > 0 {
       eprintln!(
-        "Recording dropped {dropped} frames at the capture queue and {not_ready} at the encoder"
+        "Recording dropped {capture_dropped} frames at the capture device, {dropped} at the capture queue, and {not_ready} at the encoder"
       );
     }
     let audio_dropped = self.stats.audio_dropped.load(Ordering::Relaxed);
@@ -115,6 +116,7 @@ impl Writer {
     }
 
     Ok(FinalizeInfo {
+      camera: None,
       has_microphone: self.microphone_input.is_some(),
       has_system_audio: self.system_audio_input.is_some(),
       duration_ms: u64::try_from(end_ns / NANOS_PER_MS).unwrap_or_default(),

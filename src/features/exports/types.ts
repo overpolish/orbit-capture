@@ -10,9 +10,9 @@ type ExportArtifactBase = {
   width: number;
 };
 
-export type AudioTrackKind = "microphone" | "system-audio" | "unknown";
+type AudioTrackKind = "microphone" | "system-audio" | "unknown";
 
-export type RecordingAudioTrack = {
+type RecordingAudioTrack = {
   kind: AudioTrackKind;
   label: string;
   streamIndex: number;
@@ -22,8 +22,7 @@ export type PreparedAudioTrack = {
   kind: AudioTrackKind;
   label: string;
   /**
-   * Which recorded track this came from. What a mix is asked for by, and what
-   * identifies the row on screen.
+   * Which recorded track this came from and what identifies its row on screen.
    */
   streamIndex: number;
   waveform: number[];
@@ -34,6 +33,44 @@ export type RecordingPreview = {
   tracks: PreparedAudioTrack[];
 };
 
+export type RecordingPreviewPane = {
+  height: number;
+  kind: "camera" | "screen";
+  sourceHeight: number;
+  sourceWidth: number;
+  width: number;
+  x: number;
+  y: number;
+};
+
+export type RecordingPreviewLayout = {
+  height: number;
+  panes: RecordingPreviewPane[];
+  width: number;
+};
+
+type RecordingCamera = {
+  durationMs: number;
+  height: number;
+  originalSizeBytes: number;
+  path: string;
+  width: number;
+};
+
+export type CameraOverlaySettings = {
+  /** Camera image centre in screen-recording coordinates. */
+  cameraWidthPercent: number;
+  cameraXPercent: number;
+  cameraYPercent: number;
+  /** Crop-window rectangle in screen-recording coordinates. */
+  frameHeightPercent: number;
+  frameWidthPercent: number;
+  frameXPercent: number;
+  frameYPercent: number;
+  /** Corner radius as a percentage of the camera frame's shorter edge. */
+  radiusPercent: number;
+};
+
 /**
  * A capture waiting to be exported. The window switches on `kind` rather than
  * assuming a screenshot: a recording is a file that gets moved, not pixels
@@ -42,12 +79,13 @@ export type RecordingPreview = {
 export type ExportArtifact =
   | (ExportArtifactBase & {
       audioTracks: RecordingAudioTrack[];
+      camera: RecordingCamera | null;
       canCompress: boolean;
       /** Zero for a recording recovered from an earlier run, whose length is unknown. */
       durationMs: number;
       kind: "recording";
       originalSizeBytes: number;
-      /** The working file, played through the asset protocol. */
+      /** The working recording consumed by the native preview and export paths. */
       path: string;
       /** Captured pixels per logical display point, multiplied by 100. */
       sourceScalePercent: number;
@@ -57,9 +95,11 @@ export type ExportArtifact =
 export type ExportSnapshot = {
   artifact: ExportArtifact | null;
   directory: string | null;
+  screenshotRadiusPercent: number;
 };
 
 export const initialExportSnapshot: ExportSnapshot = {
   artifact: null,
   directory: null,
+  screenshotRadiusPercent: 0,
 };

@@ -74,11 +74,10 @@ static REMUX_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 
 /// Where the stream copy writes while it is still working.
 ///
-/// Same discipline as [`mix_temp_path`], for the same reason: FFmpeg only
-/// stamps the index that makes an MP4 playable when it finishes, so until then
-/// the file on disk is a truncation. The final name is created by a rename,
-/// which is atomic within a directory, so what the user goes looking for is
-/// either absent or whole.
+/// FFmpeg only stamps the index that makes an MP4 playable when it finishes,
+/// so until then the file on disk is a truncation. The final name is created
+/// by a rename, which is atomic within a directory, so what the user goes
+/// looking for is either absent or whole.
 ///
 /// A sibling of the destination rather than a temp directory, so the rename
 /// cannot cross a volume - the destination is wherever the user chose to save,
@@ -104,7 +103,7 @@ pub(super) fn remux_error(stderr: &[u8]) -> String {
   let tail = detail
     .char_indices()
     .rev()
-    .nth(MIX_ERROR_DETAIL - 1)
+    .nth(OUTPUT_ERROR_DETAIL - 1)
     .map_or(detail, |(index, _)| &detail[index..]);
 
   format!("{MESSAGE}: {tail}")
@@ -162,15 +161,24 @@ pub fn export_selected_recording(
     return Err("This FFmpeg build does not include the H.264 encoder".to_owned());
   }
   let temporary = remux_temp_path(destination);
+  let args = selected_export_args(source, &temporary, selection, layout, video);
+  run_export(args, &temporary, destination, cancelled, on_progress)
+}
+
+pub(super) fn run_export(
+  args: Vec<OsString>,
+  temporary: &Path,
+  destination: &Path,
+  cancelled: &AtomicBool,
+  on_progress: &mut dyn FnMut(u64),
+) -> Result<ExportRunResult, String> {
   let mut child = Command::new(ffmpeg_path())
-    .args(selected_export_args(
-      source, &temporary, selection, layout, video,
-    ))
+    .args(args)
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .spawn()
     .map_err(|error| {
-      let _ = std::fs::remove_file(&temporary);
+      let _ = std::fs::remove_file(temporary);
       format!("FFmpeg could not be started: {error}")
     })?;
 
@@ -206,23 +214,23 @@ pub fn export_selected_recording(
     let _ = child.kill();
   }
   let status = child.wait().map_err(|error| {
-    let _ = std::fs::remove_file(&temporary);
+    let _ = std::fs::remove_file(temporary);
     format!("FFmpeg could not be completed: {error}")
   })?;
   let stderr = stderr_reader.join().unwrap_or_default();
 
   if cancelled.load(Ordering::Acquire) {
-    let _ = std::fs::remove_file(&temporary);
+    let _ = std::fs::remove_file(temporary);
     return Ok(ExportRunResult::Cancelled);
   }
 
-  if !status.success() || !holds_bytes(&temporary) || !plays_from_start_to_end(&temporary) {
-    let _ = std::fs::remove_file(&temporary);
+  if !status.success() || !holds_bytes(temporary) || !plays_from_start_to_end(temporary) {
+    let _ = std::fs::remove_file(temporary);
     return Err(remux_error(&stderr));
   }
 
-  std::fs::rename(&temporary, destination).map_err(|error| {
-    let _ = std::fs::remove_file(&temporary);
+  std::fs::rename(temporary, destination).map_err(|error| {
+    let _ = std::fs::remove_file(temporary);
     format!("The recording could not be put in place: {error}")
   })?;
 

@@ -21,6 +21,10 @@ pub(super) fn prepare_windows(
   windows::collapse_recording_source_selector(app.clone()).map_err(to_message)?;
   windows::set_recording_source_selector_visible(app.clone(), false).map_err(to_message)?;
   windows::hide_recording_bar(app).map_err(to_message)?;
+  // The dock is useful feedback while hardware streams warm up. Its Starting
+  // overlay prevents controls being used until the first encoded frames prove
+  // that every configured video stream is ready.
+  windows::show_recording_dock(app).map_err(to_message)?;
 
   if options.mode == RecordingMode::Region {
     // The overlay stays up as the recording boundary, but must stop eating
@@ -29,12 +33,6 @@ pub(super) fn prepare_windows(
   } else {
     windows::hide_region_selector(app.clone()).map_err(to_message)?;
   }
-
-  // The pill is deliberately not shown here. Opening a capture takes long
-  // enough to see, and a pill that appears before there is anything to stop
-  // invites stopping a recording that has not started. It goes up with the
-  // first frame instead - which is where it appeared to arrive when opening a
-  // capture was instant.
 
   Ok(())
 }

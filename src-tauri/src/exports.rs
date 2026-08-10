@@ -2,24 +2,32 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 mod artifact;
+mod camera_save;
 pub(crate) mod commands;
 mod directory;
 mod media_preview;
 mod naming;
+mod preferences;
 pub(crate) mod preview;
+pub(crate) mod recording_preview;
+pub(crate) mod recording_preview_player;
 mod recovery;
 pub(crate) mod save;
 mod track_selection;
 
 pub use artifact::{discard, present_recording, present_screenshot};
 use artifact::{emit_snapshot, full_preview_png, snapshot, take_artifact};
+use camera_save::validate_camera_overlay;
 use commands::set_export_directory;
 use directory::{current_directory, load_directory, store_directory};
 use naming::sanitize_file_stem;
+use preferences::{load_screenshot_radius, remember_screenshot_radius};
 pub use recovery::initialize;
 #[cfg(test)]
 use recovery::orphan_plan;
-use save::{delivered_extension, scale_percent, validate_resolution_scale};
+use save::{
+  delivered_extension, scale_percent, validate_camera_resolution_scale, validate_resolution_scale,
+};
 mod window;
 
 use std::collections::HashMap;
@@ -35,11 +43,14 @@ use tauri::{image::Image, ipc::Response, AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::recording::FinalizeInfo;
-use crate::screenshots::{encode_png, screenshot_directory, unique_path, CapturedImage};
+use crate::screenshots::{
+  encode_png, rounded_corners, screenshot_directory, unique_path, CapturedImage,
+};
 
 const EXPORT_CHANGED_EVENT: &str = "export://artifact";
 const EXPORT_PROGRESS_EVENT: &str = "export://progress";
 const EXPORT_DIRECTORY_FILE: &str = "export-directory.json";
+const EXPORT_PREFERENCES_FILE: &str = "export-preferences.json";
 const SCREENSHOT_EXTENSION: &str = "png";
 /// What a saved recording is delivered as when it can be, which is whenever
 /// FFmpeg is on the machine. See [`save_recording`] for the other case.
@@ -78,6 +89,7 @@ pub enum ExportArtifact {
   },
   Recording {
     audio_tracks: Vec<RecordingAudioTrack>,
+    camera: Option<RecordingCamera>,
     id: u64,
     duration_ms: u64,
     height: u32,
@@ -108,6 +120,7 @@ pub enum ExportArtifactSnapshot {
   },
   Recording {
     audio_tracks: Vec<RecordingAudioTrack>,
+    camera: Option<RecordingCamera>,
     can_compress: bool,
     id: u64,
     suggested_file_stem: String,
@@ -140,6 +153,43 @@ pub struct RecordingAudioTrack {
   pub stream_index: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingCamera {
+  pub duration_ms: u64,
+  pub height: u32,
+  pub original_size_bytes: u64,
+  pub path: PathBuf,
+  pub width: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CameraOverlaySettings {
+  pub camera_x_percent: f64,
+  pub camera_y_percent: f64,
+  pub camera_width_percent: f64,
+  pub frame_height_percent: f64,
+  pub frame_width_percent: f64,
+  pub frame_x_percent: f64,
+  pub frame_y_percent: f64,
+  pub radius_percent: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingExportOptions {
+  pub bake_camera: bool,
+  pub camera_compression: u8,
+  pub camera_overlay: CameraOverlaySettings,
+  pub camera_resolution_scale_percent: u16,
+  pub collapse_audio: bool,
+  pub compression: u8,
+  pub enabled_stream_indices: Vec<usize>,
+  pub resolution_scale_percent: u16,
+  pub screenshot_radius_percent: f64,
+}
+
 fn recording_audio_tracks(
   has_system_audio: bool,
   has_microphone: bool,
@@ -162,18 +212,20 @@ fn recording_audio_tracks(
   tracks
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportSnapshot {
   pub artifact: Option<ExportArtifactSnapshot>,
   pub directory: Option<PathBuf>,
+  pub screenshot_radius_percent: f64,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ExportProgress {
   artifact_id: u64,
-  processed_ms: u64,
+  phase: &'static str,
+  progress_percent: f64,
 }
 
 #[derive(Clone)]
@@ -191,11 +243,11 @@ pub struct ExportState {
   /// Built only if the user zooms in, because it is the whole capture.
   full_preview: Mutex<Option<Vec<u8>>>,
   directory: Mutex<Option<PathBuf>>,
+  screenshot_radius_percent: Mutex<f64>,
   recording_preview: Mutex<Option<media_preview::RecordingPreview>>,
   recording_preview_preparation: Mutex<()>,
-  preview_mixes: Mutex<media_preview::PreviewMixes>,
-  preview_mix_preparation: Mutex<()>,
-  compression_estimates: Mutex<HashMap<(u64, u8, u16), u64>>,
+  /// Cached by artifact, stream kind (screen/camera/baked), quality and scale.
+  compression_estimates: Mutex<HashMap<(u64, u8, u8, u16), u64>>,
   compression_estimate_preparation: Mutex<()>,
 }
 

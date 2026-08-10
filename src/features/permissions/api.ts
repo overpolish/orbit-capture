@@ -18,6 +18,3 @@ export const openPermissionSettings = (permission: PermissionKind) =>
 
 export const restartApp = () =>
   invoke<null>("restart_app").then(() => undefined);
-
-export const requirePermissions = (required: PermissionKind[]) =>
-  invoke<null>("require_permissions", { required }).then(() => undefined);

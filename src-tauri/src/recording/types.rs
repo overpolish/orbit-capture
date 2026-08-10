@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 use tauri::{LogicalPosition, LogicalSize};
+
+use super::encoding::FailureReport;
 
 /// Frame rates the bar offers.
 pub(super) const DEFAULT_FPS: u32 = 60;
@@ -70,8 +74,52 @@ pub struct StartRecordingOptions {
   pub microphone_id: Option<String>,
   #[serde(default)]
   pub camera_id: Option<String>,
+  #[serde(default)]
+  pub camera_width: Option<u32>,
+  #[serde(default)]
+  pub camera_height: Option<u32>,
+  #[serde(default)]
+  pub camera_fps: Option<u32>,
+  #[serde(default)]
+  pub camera_flipped: bool,
   #[serde(default = "default_fps")]
   pub fps: u32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CameraCaptureMode {
+  pub(super) device_id: String,
+  pub(super) flipped: bool,
+  pub(super) fps: u32,
+  pub(super) height: u32,
+  pub(super) width: u32,
+}
+
+/// Platform-neutral description of the primary video source. Native capture
+/// adapters translate this intent into ScreenCaptureKit/AVFoundation on macOS
+/// and Windows Graphics Capture/Media Foundation on Windows.
+pub(crate) enum PrimaryCaptureSource {
+  Screen {
+    fps: u32,
+    monitor_id: u32,
+    show_cursor: bool,
+  },
+  Camera {
+    fps: u32,
+  },
+}
+
+/// Everything a native capture adapter needs to open one recording. Keeping
+/// this contract free of framework objects lets each platform use its own
+/// capture stack while sharing lifecycle, timing and export semantics.
+pub(crate) struct CaptureStartupConfig {
+  pub camera: Option<CameraCaptureMode>,
+  pub camera_path: Option<PathBuf>,
+  pub microphone_id: Option<String>,
+  pub on_failure: FailureReport,
+  pub path: PathBuf,
+  pub primary: PrimaryCaptureSource,
+  pub system_audio: SystemAudioSelection,
 }
 
 /// A source snapshot taken when Record is pressed. Bundle identifiers resolve

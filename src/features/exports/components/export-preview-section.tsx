@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useState } from "react";
-
-import { ExportArtifact, PreparedAudioTrack } from "../types";
+import {
+  CameraOverlaySettings,
+  ExportArtifact,
+  PreparedAudioTrack,
+  RecordingPreviewLayout,
+} from "../types";
 
 import { PreviewViewport } from "./preview-viewport";
-import { RecordingMetadata, ScrubPreview } from "./scrub-preview";
+import { ScrubPreview } from "./scrub-preview";
 
 /**
  * The screenshot section. Sibling to `RecordingSection`, and the reason the
@@ -15,10 +18,16 @@ import { RecordingMetadata, ScrubPreview } from "./scrub-preview";
 export function ScreenshotSection({
   artifact,
   onNeedFullResolution,
+  onRadiusChange,
+  onRadiusChangeEnd,
   previewUrl,
+  radiusPercent,
 }: {
   artifact: ExportArtifact;
+  radiusPercent: number;
   onNeedFullResolution?: () => void;
+  onRadiusChange?: (radiusPercent: number) => void;
+  onRadiusChangeEnd?: () => void;
   previewUrl?: string | null;
 }) {
   return (
@@ -29,7 +38,10 @@ export function ScreenshotSection({
         naturalHeight={artifact.height}
         naturalWidth={artifact.width}
         onNeedFullResolution={onNeedFullResolution}
+        onRadiusChange={onRadiusChange}
+        onRadiusChangeEnd={onRadiusChangeEnd}
         previewUrl={previewUrl}
+        radiusPercent={radiusPercent}
       />
       <p className="m-0 text-center text-xxs text-muted tabular-nums">
         {artifact.width} &times; {artifact.height}
@@ -47,54 +59,46 @@ export function ScreenshotSection({
  */
 export function RecordingSection({
   artifact,
+  bakeCamera,
+  cameraOverlay,
+  enabledStreamIndices,
+  isPreparingRecordingAudio,
   isPreparingRecordingPreview,
-  isRemixingRecordingPreview,
+  onCameraOverlayChange,
   onEnabledTracksChange,
-  previewUrl,
-  recordingMixUrl,
   recordingPreviewError,
+  recordingPreviewLayout,
   recordingPreviewTracks,
-  videoUrl,
 }: {
   artifact: Extract<ExportArtifact, { kind: "recording" }>;
+  bakeCamera?: boolean;
+  cameraOverlay?: CameraOverlaySettings;
+  enabledStreamIndices?: number[];
+  isPreparingRecordingAudio?: boolean;
   isPreparingRecordingPreview?: boolean;
-  isRemixingRecordingPreview?: boolean;
+  onCameraOverlayChange?: (settings: CameraOverlaySettings) => void;
   onEnabledTracksChange?: (streamIndices: number[]) => void;
-  previewUrl?: string | null;
-  recordingMixUrl?: string | null;
   recordingPreviewError?: string | null;
+  recordingPreviewLayout?: RecordingPreviewLayout;
   recordingPreviewTracks?: PreparedAudioTrack[];
-  videoUrl?: string | null;
 }) {
-  // A recovered recording is presented knowing none of this, so whatever the
-  // file itself reports fills the gap.
-  const [discovered, setDiscovered] = useState<RecordingMetadata | null>(null);
-  const width = artifact.width || (discovered?.width ?? 0);
-  const height = artifact.height || (discovered?.height ?? 0);
-
   return (
     <div className="flex flex-col gap-2">
       <ScrubPreview
         artifactId={artifact.id}
         audioError={recordingPreviewError}
         audioTracks={recordingPreviewTracks}
+        bakeCamera={bakeCamera}
+        cameraOverlay={cameraOverlay}
         durationMs={artifact.durationMs}
-        isPreparingAudio={isPreparingRecordingPreview}
-        isRemixing={isRemixingRecordingPreview}
+        enabledStreamIndices={enabledStreamIndices}
+        isPreparingAudio={isPreparingRecordingAudio}
+        isPreparingPreview={isPreparingRecordingPreview}
         key={artifact.id}
-        mixUrl={recordingMixUrl}
+        onCameraOverlayChange={onCameraOverlayChange}
         onEnabledTracksChange={onEnabledTracksChange}
-        onMetadata={setDiscovered}
-        posterUrl={previewUrl}
-        videoUrl={videoUrl}
+        previewLayout={recordingPreviewLayout}
       />
-      <div className="flex items-center justify-center gap-2 text-xxs text-muted tabular-nums">
-        {width > 0 && height > 0 ? (
-          <span>
-            {width} &times; {height}
-          </span>
-        ) : null}
-      </div>
     </div>
   );
 }

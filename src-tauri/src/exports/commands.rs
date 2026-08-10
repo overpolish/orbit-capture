@@ -29,7 +29,11 @@ pub fn cancel_export_job(app: AppHandle) -> bool {
 }
 
 #[tauri::command]
-pub fn copy_export_to_clipboard(app: AppHandle) -> Result<(), String> {
+pub fn copy_export_to_clipboard(
+  app: AppHandle,
+  screenshot_radius_percent: f64,
+) -> Result<(), String> {
+  let screenshot_radius_percent = remember_screenshot_radius(&app, screenshot_radius_percent)?;
   // Refused before the artifact is taken, not after: the clipboard cannot hold
   // a movie, and taking one only to put it back would drop its poster on the
   // way through. The window hides the button, so this is for callers that are
@@ -50,16 +54,22 @@ pub fn copy_export_to_clipboard(app: AppHandle) -> Result<(), String> {
   let ExportArtifact::Screenshot { image, .. } = artifact else {
     return Err("There is nothing to copy".to_owned());
   };
+  let rounded = rounded_corners(&image, screenshot_radius_percent);
 
   app
     .clipboard()
-    .write_image(&Image::new(&image.rgba, image.width, image.height))
+    .write_image(&Image::new(&rounded.rgba, rounded.width, rounded.height))
     .map_err(|error| error.to_string())?;
 
   let _ = window::hide(&app);
   emit_snapshot(&app);
 
   Ok(())
+}
+
+#[tauri::command]
+pub fn set_screenshot_radius(app: AppHandle, radius_percent: f64) -> Result<(), String> {
+  remember_screenshot_radius(&app, radius_percent).map(|_| ())
 }
 
 #[tauri::command]

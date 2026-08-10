@@ -14,6 +14,53 @@ use super::CapturedImage;
 /// The largest palette an 8-bit indexed PNG can carry.
 const MAX_PALETTE: usize = 256;
 
+/// Applies an antialiased alpha mask without changing the captured dimensions.
+pub fn rounded_corners(image: &CapturedImage, radius_percent: f64) -> CapturedImage {
+  let radius = f64::from(image.width.min(image.height)) * radius_percent.clamp(0.0, 50.0) / 100.0;
+  let mut rgba = image.rgba.clone();
+  if radius <= 0.0 {
+    return CapturedImage {
+      height: image.height,
+      rgba,
+      width: image.width,
+    };
+  }
+
+  for y in 0..image.height {
+    for x in 0..image.width {
+      let pixel_x = f64::from(x) + 0.5;
+      let pixel_y = f64::from(y) + 0.5;
+      let center_x = if pixel_x < radius {
+        Some(radius)
+      } else if pixel_x > f64::from(image.width) - radius {
+        Some(f64::from(image.width) - radius)
+      } else {
+        None
+      };
+      let center_y = if pixel_y < radius {
+        Some(radius)
+      } else if pixel_y > f64::from(image.height) - radius {
+        Some(f64::from(image.height) - radius)
+      } else {
+        None
+      };
+      let (Some(center_x), Some(center_y)) = (center_x, center_y) else {
+        continue;
+      };
+      let distance = (pixel_x - center_x).hypot(pixel_y - center_y);
+      let coverage = (radius + 0.5 - distance).clamp(0.0, 1.0);
+      let alpha = &mut rgba[((y * image.width + x) * 4 + 3) as usize];
+      *alpha = (f64::from(*alpha) * coverage).round() as u8;
+    }
+  }
+
+  CapturedImage {
+    height: image.height,
+    rgba,
+    width: image.width,
+  }
+}
+
 fn is_opaque(rgba: &[u8]) -> bool {
   rgba.chunks_exact(4).all(|pixel| pixel[3] == u8::MAX)
 }
@@ -246,5 +293,17 @@ mod tests {
     assert_eq!(color, png::ColorType::Rgba);
     let decoded = image::load_from_memory(&png).unwrap().to_rgba8();
     assert_eq!(decoded.into_raw(), image.rgba);
+  }
+
+  #[test]
+  fn rounds_only_the_requested_corners_with_antialiasing() {
+    let image = palette_image(40, 20, 1, 255);
+    let rounded = rounded_corners(&image, 50.0);
+    let alpha = |x: u32, y: u32| rounded.rgba[((y * rounded.width + x) * 4 + 3) as usize];
+    assert_eq!(alpha(0, 0), 0);
+    assert_eq!(alpha(20, 10), 255);
+    assert!(alpha(2, 3) > 0 && alpha(2, 3) < 255);
+    assert_eq!(rounded.width, image.width);
+    assert_eq!(rounded.height, image.height);
   }
 }

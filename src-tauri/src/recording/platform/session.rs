@@ -1,13 +1,21 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use super::camera::CameraStream;
 use super::*;
 
 /// The ScreenCaptureKit objects a running session keeps alive.
 pub(super) struct StreamObjects {
-  pub(super) _output: arc::R<ScreenOutput>,
+  pub(super) _output: Option<arc::R<ScreenOutput>>,
   pub(super) queue: arc::R<dispatch::Queue>,
   pub(super) streams: Vec<arc::R<sc::Stream>>,
+}
+
+pub(super) struct CameraObjects {
+  pub(super) commands: SyncSender<Command>,
+  pub(super) path: PathBuf,
+  pub(super) stream: Option<CameraStream>,
+  pub(super) worker: Option<JoinHandle<()>>,
 }
 
 // SAFETY: `sc::Stream` already declares itself thread-safe. The queue is a
@@ -19,22 +27,42 @@ unsafe impl Send for StreamObjects {}
 
 /// A running recording, as seen by the state machine.
 pub struct CaptureSession {
+  pub(super) camera: Option<CameraObjects>,
   pub(super) commands: SyncSender<Command>,
   pub(super) microphone: Option<Stream>,
   pub(super) objects: StreamObjects,
+  pub(super) primary_camera: Option<CameraStream>,
   pub(super) worker: Option<JoinHandle<()>>,
 }
 
 impl CaptureSession {
   pub fn pause(&self) {
-    let _ = self.commands.send(Command::Pause { at: Instant::now() });
+    self.pause_at(Instant::now());
+  }
+
+  pub fn pause_at(&self, at: Instant) {
+    let _ = self.commands.send(Command::Pause { at });
+    if let Some(camera) = &self.camera {
+      let _ = camera.commands.send(Command::Pause { at });
+    }
   }
 
   pub fn resume(&self) -> Result<(), String> {
+    self.resume_at(Instant::now())
+  }
+
+  pub fn resume_at(&self, at: Instant) -> Result<(), String> {
     self
       .commands
-      .send(Command::Resume { at: Instant::now() })
-      .map_err(|_| "The recording is no longer running".to_owned())
+      .send(Command::Resume { at })
+      .map_err(|_| "The recording is no longer running".to_owned())?;
+    if let Some(camera) = &self.camera {
+      camera
+        .commands
+        .send(Command::Resume { at })
+        .map_err(|_| "The camera recording is no longer running".to_owned())?;
+    }
+    Ok(())
   }
 
   /// Finishes the movie and hands back what was written.
@@ -44,9 +72,20 @@ impl CaptureSession {
   /// followed by a barrier on the serial output queue; only then is the writer
   /// finalized. That ordering guarantees the final audio buffers are written
   /// instead of being stranded behind `Stop`.
-  pub fn stop(mut self) -> Result<FinalizeInfo, String> {
-    let at = Instant::now();
+  pub fn stop(self) -> Result<FinalizeInfo, String> {
+    self.stop_at(Instant::now())
+  }
+
+  pub fn stop_at(mut self, at: Instant) -> Result<FinalizeInfo, String> {
     self.microphone.take();
+    if let Some(camera) = self.primary_camera.take() {
+      camera.stop();
+    }
+    if let Some(camera) = self.camera.as_mut() {
+      if let Some(stream) = camera.stream.take() {
+        stream.stop();
+      }
+    }
     let (stopped, did_stop) = mpsc::channel();
     for stream in &self.objects.streams {
       let stopped = stopped.clone();
@@ -73,12 +112,42 @@ impl CaptureSession {
       .commands
       .send(Command::Stop { at, reply })
       .map_err(|_| "The recording is no longer running".to_owned())?;
-    let finalized = replies
+    let mut finalized = replies
       .recv_timeout(FINALIZE_TIMEOUT)
-      .map_err(|_| "The recording did not finish in time".to_owned())?;
+      .map_err(|_| "The recording did not finish in time".to_owned())??;
     self.join_writer();
 
-    finalized
+    if let Some(camera) = self.camera.as_mut() {
+      let (reply, replies) = mpsc::channel();
+      let camera_result = camera
+        .commands
+        .send(Command::Stop { at, reply })
+        .map_err(|_| "The camera recording is no longer running".to_owned())
+        .and_then(|()| {
+          replies
+            .recv_timeout(FINALIZE_TIMEOUT)
+            .map_err(|_| "The camera recording did not finish in time".to_owned())?
+        });
+      if let Some(worker) = camera.worker.take() {
+        let _ = worker.join();
+      }
+      match camera_result {
+        Ok(info) => {
+          finalized.camera = Some(crate::recording::CameraFinalizeInfo {
+            duration_ms: info.duration_ms,
+            height: info.height,
+            path: info.path,
+            width: info.width,
+          });
+        }
+        Err(error) => {
+          eprintln!("Camera recording could not be finalized: {error}");
+          let _ = std::fs::remove_file(&camera.path);
+        }
+      }
+    }
+
+    Ok(finalized)
   }
 
   /// Throws the recording away. The file itself is deleted by the caller,
@@ -101,6 +170,19 @@ impl CaptureSession {
 
     for stream in &self.objects.streams {
       stream.stop_with_ch(|_| {});
+    }
+    if let Some(camera) = self.primary_camera.take() {
+      camera.stop();
+    }
+    if let Some(mut camera) = self.camera.take() {
+      if let Some(stream) = camera.stream.take() {
+        stream.stop();
+      }
+      let _ = camera.commands.send(Command::Cancel);
+      if let Some(worker) = camera.worker.take() {
+        let _ = worker.join();
+      }
+      let _ = std::fs::remove_file(camera.path);
     }
     self.microphone.take();
     let _ = self.commands.send(Command::Cancel);

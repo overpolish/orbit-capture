@@ -15,17 +15,18 @@ use nokhwa::{
   utils::{ApiBackend, FrameFormat, RequestedFormat, RequestedFormatType},
   Buffer, CallbackCamera,
 };
-use rayon::{
-  iter::{IndexedParallelIterator, ParallelIterator},
-  slice::ParallelSliceMut,
-};
+
+#[cfg(target_os = "macos")]
+use nokhwa::utils::{CameraFormat, Resolution};
 use tauri::{
   ipc::{Channel, InvokeResponseBody},
   AppHandle, Manager,
 };
-use yuv::{YuvPackedImage, YuvRange, YuvStandardMatrix};
 
 use crate::recording_inputs::camera_id;
+
+#[cfg(not(target_os = "macos"))]
+use crate::camera_format::resolve_exact_camera_format;
 
 #[derive(Default)]
 struct CameraPreviewManager {
@@ -60,52 +61,29 @@ impl CameraPreviewManager {
 
 struct CameraPreviewWorker {
   cancelled: Arc<AtomicBool>,
+  thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl CameraPreviewWorker {
-  fn cancel(&self) {
+  fn cancel(mut self) {
     self.cancelled.store(true, Ordering::Release);
+    if let Some(thread) = self.thread.take() {
+      let _ = thread.join();
+    }
   }
 }
 
 #[derive(Default)]
 pub struct CameraPreviewState(Mutex<CameraPreviewManager>);
 
-fn yuyv_to_rgba(buffer: &[u8], width: u32, height: u32) -> Vec<u8> {
-  let yuyv_stride = width * 2;
-  let rgba_stride = width * 4;
-  let mut rgba_buffer = vec![0_u8; (width * height * 4) as usize];
-
-  rgba_buffer
-    .par_chunks_mut(rgba_stride as usize)
-    .enumerate()
-    .for_each(|(row_index, row_rgba)| {
-      let input_offset = row_index * yuyv_stride as usize;
-      let input_slice = &buffer[input_offset..input_offset + yuyv_stride as usize];
-      let packed_image = YuvPackedImage {
-        yuy: input_slice,
-        yuy_stride: yuyv_stride,
-        width,
-        height: 1,
-      };
-      let _ = yuv::yuyv422_to_rgba(
-        &packed_image,
-        row_rgba,
-        rgba_stride,
-        YuvRange::Full,
-        YuvStandardMatrix::Bt601,
-      );
-    });
-
-  rgba_buffer
-}
-
 fn frame_payload(frame: Buffer) -> Result<Vec<u8>, String> {
   let resolution = frame.resolution();
   let is_mjpeg = frame.source_frame_format() == FrameFormat::MJPEG;
   let frame_data = match frame.source_frame_format() {
     FrameFormat::MJPEG => frame.buffer().to_vec(),
-    FrameFormat::YUYV => yuyv_to_rgba(frame.buffer(), resolution.width(), resolution.height()),
+    FrameFormat::YUYV => {
+      crate::camera_frames::yuyv_to_rgba(frame.buffer(), resolution.width(), resolution.height())?
+    }
     _ => frame
       .decode_image::<RgbAFormat>()
       .map_err(|error| error.to_string())?
@@ -119,22 +97,35 @@ fn frame_payload(frame: Buffer) -> Result<Vec<u8>, String> {
   Ok(payload)
 }
 
-fn build_camera_preview(device_id: &str, channel: Channel) -> Result<CameraPreviewWorker, String> {
+fn build_camera_preview(
+  device_id: &str,
+  width: u32,
+  height: u32,
+  fps: u32,
+  channel: Channel,
+) -> Result<CameraPreviewWorker, String> {
   let camera_info = query(ApiBackend::Auto)
     .map_err(|error| error.to_string())?
     .into_iter()
     .find(|camera| camera_id(camera) == device_id)
     .ok_or_else(|| "The selected camera is no longer available".to_owned())?;
   let camera_index = camera_info.index().clone();
+  // AVFoundation already supplied this exact native mode during passive
+  // enumeration. Constructing a Nokhwa Camera here just to enumerate it again
+  // opens the device twice in immediate succession and can leave Continuity
+  // cameras busy before the preview worker starts.
+  #[cfg(target_os = "macos")]
+  let format = CameraFormat::new(Resolution::new(width, height), FrameFormat::YUYV, fps);
+  #[cfg(not(target_os = "macos"))]
+  let format = resolve_exact_camera_format(&camera_index, width, height, fps)?;
   let cancelled = Arc::new(AtomicBool::new(false));
   let owner_cancelled = Arc::clone(&cancelled);
   let callback_cancelled = Arc::clone(&cancelled);
   let (started_tx, started) = mpsc::channel();
-  std::thread::Builder::new()
+  let thread = std::thread::Builder::new()
     .name("camera-preview".to_owned())
     .spawn(move || {
-      let requested =
-        RequestedFormat::new::<RgbAFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
+      let requested = RequestedFormat::new::<RgbAFormat>(RequestedFormatType::Exact(format));
       let mut camera = match CallbackCamera::new(camera_index, requested, move |frame| {
         if callback_cancelled.load(Ordering::Acquire) {
           return;
@@ -167,7 +158,10 @@ fn build_camera_preview(device_id: &str, channel: Channel) -> Result<CameraPrevi
     })
     .map_err(|error| error.to_string())?;
 
-  let worker = CameraPreviewWorker { cancelled };
+  let worker = CameraPreviewWorker {
+    cancelled,
+    thread: Some(thread),
+  };
   started
     .recv()
     .map_err(|_| "The camera preview worker stopped before starting".to_owned())??;
@@ -178,6 +172,9 @@ fn build_camera_preview(device_id: &str, channel: Channel) -> Result<CameraPrevi
 pub async fn start_camera_preview(
   state: tauri::State<'_, CameraPreviewState>,
   device_id: String,
+  width: u32,
+  height: u32,
+  fps: u32,
   channel: Channel,
 ) -> Result<(), String> {
   let generation = state
@@ -185,10 +182,11 @@ pub async fn start_camera_preview(
     .lock()
     .map_err(|_| "Camera preview state is unavailable".to_owned())?
     .begin_start();
-  let worker =
-    tauri::async_runtime::spawn_blocking(move || build_camera_preview(&device_id, channel))
-      .await
-      .map_err(|error| error.to_string())??;
+  let worker = tauri::async_runtime::spawn_blocking(move || {
+    build_camera_preview(&device_id, width, height, fps, channel)
+  })
+  .await
+  .map_err(|error| error.to_string())??;
   state
     .0
     .lock()

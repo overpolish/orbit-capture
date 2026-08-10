@@ -43,7 +43,7 @@ pub(super) fn tool_path(name: &str) -> PathBuf {
   PathBuf::from(executable)
 }
 
-pub(super) fn ffmpeg_path() -> PathBuf {
+pub(in crate::exports) fn ffmpeg_path() -> PathBuf {
   tool_path("ffmpeg")
 }
 

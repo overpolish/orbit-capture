@@ -18,7 +18,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::recording::Region;
 
-pub use encoding::encode_png;
+pub use encoding::{encode_png, rounded_corners};
 
 /// A captured still: straight (non-premultiplied) RGBA8, packed rows, top down.
 /// That is what both the clipboard and the PNG encoder want.

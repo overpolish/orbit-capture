@@ -4,15 +4,8 @@
 import { RecordingFps } from "../recording-inputs/types";
 import { RecordingMode, Region } from "../recording-sources/types";
 
-export const recordingStatuses = [
-  "idle",
-  "starting",
-  "recording",
-  "paused",
-  "stopping",
-] as const;
-
-export type RecordingStatus = (typeof recordingStatuses)[number];
+export type RecordingStatus =
+  "idle" | "paused" | "recording" | "starting" | "stopping";
 
 /**
  * Timestamps are stamped by Rust in epoch milliseconds so that a window which
@@ -35,13 +28,17 @@ export const initialRecordingSnapshot: RecordingSnapshot = {
 };
 
 export type StartRecordingOptions = {
+  cameraFlipped: boolean;
   fps: RecordingFps;
   mode: RecordingMode;
   showCursor: boolean;
   systemAudio: boolean;
   systemAudioApplicationIds: string[];
   systemAudioProcessIds: number[];
+  cameraFps?: number | null;
+  cameraHeight?: number | null;
   cameraId?: string | null;
+  cameraWidth?: number | null;
   microphoneId?: string | null;
   monitorId?: number | null;
   region?: Region | null;
@@ -51,7 +48,7 @@ export type StartRecordingOptions = {
 /** What the screenshot button is currently reflecting. */
 export type ScreenshotState = "done" | "failed" | "idle" | "pending";
 
-export type RecordingErrorPhase = "start" | "pause" | "resume" | "stop";
+type RecordingErrorPhase = "start" | "pause" | "resume" | "stop";
 
 export type RecordingError = {
   message: string;

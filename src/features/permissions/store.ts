@@ -3,11 +3,7 @@
 
 import { create } from "zustand";
 
-import {
-  initialPermissionSnapshot,
-  PermissionKind,
-  PermissionSnapshot,
-} from "./types";
+import { initialPermissionSnapshot, PermissionSnapshot } from "./types";
 
 type PermissionStore = {
   hydrated: boolean;
@@ -22,10 +18,6 @@ export const usePermissionStore = create<PermissionStore>()((set) => ({
     set({ hydrated: true, permissions });
   },
 }));
-
-export const selectPermission =
-  (permission: PermissionKind) => (state: PermissionStore) =>
-    state.permissions[permission];
 
 export const selectCanRecordScreen = (state: PermissionStore) =>
   state.permissions.accessibility.granted &&

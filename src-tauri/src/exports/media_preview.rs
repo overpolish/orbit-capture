@@ -4,16 +4,14 @@
 //! Audio prepared only for the export window.
 //!
 //! The recording remains the source of truth. FFmpeg decodes a low-rate mono
-//! signal from each of its tracks for a waveform, and mixes the enabled ones
-//! into a single file the window can play. Closing or saving the artifact
-//! removes the mixes; none of them can become an export by accident.
+//! signal from each track for a waveform. Playback itself stays native and
+//! decodes the selected tracks on demand without writing preview derivatives.
 //!
 //! Each track was once also stream-copied into its own small M4A. Nothing ever
 //! played them - the waveforms are decoded straight from the recording and the
 //! window plays the mix - so they were an FFmpeg pass and a file per track for
 //! no reader at all.
 
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -24,20 +22,22 @@ use serde::Serialize;
 
 use super::track_selection::{AudioLayout, TrackSelection};
 mod audio;
+mod bake;
 mod encode;
 mod estimate;
-mod preview_mix;
+mod output;
 mod tools;
 
 pub use audio::prepare;
+pub use bake::baked_recording_exporter;
 pub use encode::{remuxer, selected_recording_exporter, Remux, SelectedRecordingExport};
 pub use estimate::{estimate_compressed_video_bytes, supports_compression};
-pub use preview_mix::{preview_mix, PreviewMixes};
 pub use tools::inspect_audio_tracks;
 
 use estimate::{export_crf, resolution_filter};
-use preview_mix::{holds_bytes, plays_from_start_to_end, EXPORT_MP4_OUTPUT, MIX_ERROR_DETAIL};
-use tools::{ffmpeg_path, ffprobe_path};
+use output::{holds_bytes, plays_from_start_to_end, EXPORT_MP4_OUTPUT, OUTPUT_ERROR_DETAIL};
+pub(in crate::exports) use tools::ffmpeg_path;
+use tools::ffprobe_path;
 
 use super::{AudioTrackKind, RecordingAudioTrack};
 
@@ -79,6 +79,16 @@ pub struct VideoExportOptions {
   pub compression: u8,
   pub resolution_scale_percent: u16,
   pub source_scale_percent: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BakedVideoExportOptions {
+  pub camera_height: u32,
+  pub camera_width: u32,
+  pub overlay: super::CameraOverlaySettings,
+  pub screen_height: u32,
+  pub screen_width: u32,
+  pub video: VideoExportOptions,
 }
 
 pub struct ExportRunOptions<'a> {

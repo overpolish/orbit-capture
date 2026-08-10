@@ -7,6 +7,17 @@ export type InputDevice = {
   isDefault?: boolean;
 };
 
+/** One exact native capture mode advertised by a physical camera. */
+export type CameraResolution = InputDevice & {
+  fps: number;
+  height: number;
+  width: number;
+};
+
+export type CameraDevice = InputDevice & {
+  modes: CameraResolution[];
+};
+
 export type SystemAudioSource = InputDevice & {
   kind: "all" | "application";
   iconPath?: string | null;

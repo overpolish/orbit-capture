@@ -33,7 +33,7 @@ export function PermissionsWindow() {
             draggable={false}
             src={logoUrl}
           />
-          <h1 className="m-0 animate-gradient bg-linear-to-r from-orange-400 to-orange-500 bg-clip-text bg-size-[300%] text-3xl font-bold text-transparent">
+          <h1 className="m-0 animate-gradient bg-linear-to-r from-sky-400 to-blue-400 bg-clip-text bg-size-[300%] text-3xl font-bold text-transparent">
             Permissions
           </h1>
         </div>

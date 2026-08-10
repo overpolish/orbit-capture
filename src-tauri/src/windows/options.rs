@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewWi
 use super::{platform, WindowLabel};
 
 const RECORDING_OPTIONS_WIDTH: f64 = 240.0;
-const RECORDING_OPTIONS_HEIGHT: f64 = 270.0;
+const RECORDING_OPTIONS_HEIGHT: f64 = 300.0;
 const RECORDING_OPTIONS_GAP: f64 = 6.0;
 static RECORDING_OPTIONS_VISIBLE: AtomicBool = AtomicBool::new(false);
 static STANDALONE_LISTBOX_VISIBLE: AtomicBool = AtomicBool::new(false);

@@ -5,6 +5,7 @@ mod container;
 mod finish;
 mod samples;
 
+use std::sync::OnceLock;
 use std::{
   collections::VecDeque,
   io::Cursor,
@@ -19,15 +20,16 @@ use std::{
 
 use cidre::{arc, av, cm, ns};
 
+use super::output::FrameClock;
 use super::{
   media::{
     audio_sample_from_origin, audio_sample_with_pts, microphone_audio_settings,
     microphone_buffer_from_origin, microphone_format_description, microphone_sample_buffer, nanos,
-    system_audio_settings, time_to_ns, video_settings,
+    system_audio_settings, time_to_ns, video_settings, VideoEncoder,
   },
-  AudioSample, CaptureStats, Command, Frame, MICROPHONE_PREROLL_LIMIT, NANOS_PER_MS,
-  POSTER_MAX_EDGE, REJECTION_STREAK_LIMIT, SYSTEM_AUDIO_PREROLL_LIMIT, TAIL_APPEND_ATTEMPTS,
-  TAIL_APPEND_WAIT,
+  AudioSample, CaptureStats, Command, Frame, CAMERA_ENCODER_POLL, CAMERA_ENCODER_WAIT,
+  MICROPHONE_PREROLL_LIMIT, NANOS_PER_MS, POSTER_MAX_EDGE, REJECTION_STREAK_LIMIT,
+  SYSTEM_AUDIO_PREROLL_LIMIT, TAIL_APPEND_ATTEMPTS, TAIL_APPEND_WAIT,
 };
 pub(super) use container::Container;
 use finish::writer_error;
@@ -64,13 +66,16 @@ pub(super) struct Writer {
   pub(super) path: PathBuf,
   pending_microphone: VecDeque<MicrophoneBuffer>,
   pending_system_audio: VecDeque<AudioSample>,
+  primary_video: bool,
   rejection_streak: u64,
+  source: VideoSource,
   pub(super) stats: Arc<CaptureStats>,
   /// The last frame seen, appended once more at the true stop time. Without
   /// it a recording of a screen that stopped changing ends at its last change
   /// rather than when the user stopped it.
   tail: Option<Frame>,
   timeline: Timeline,
+  timeline_origin: Arc<OnceLock<Instant>>,
   pub(super) width: u32,
   writer: arc::R<av::AssetWriter>,
 }
@@ -80,6 +85,7 @@ pub(super) struct WriterConfig {
   pub(super) width: u32,
   pub(super) height: u32,
   pub(super) fps: u32,
+  pub(super) encoder: VideoEncoder,
   pub(super) system_audio: bool,
   pub(super) microphone_format: Option<MicrophoneFormat>,
   pub(super) stats: Arc<CaptureStats>,
@@ -88,6 +94,15 @@ pub(super) struct WriterConfig {
   /// rather than a constant so the encoder tests can drive a real writer at
   /// the containers that were rejected and keep proving why.
   pub(super) container: Container,
+  pub(super) primary_video: bool,
+  pub(super) source: VideoSource,
+  pub(super) timeline_origin: Arc<OnceLock<Instant>>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum VideoSource {
+  Camera,
+  Screen,
 }
 
 impl Writer {
@@ -97,11 +112,15 @@ impl Writer {
       width,
       height,
       fps,
+      encoder,
       system_audio,
       microphone_format,
       stats,
       on_failure,
       container,
+      primary_video,
+      source,
+      timeline_origin,
     } = config;
     let location = path
       .to_str()
@@ -116,7 +135,7 @@ impl Writer {
       writer.set_movie_fragment_interval(interval);
     }
 
-    let settings = video_settings(width, height, fps);
+    let settings = video_settings(width, height, fps, encoder);
     let mut input = av::AssetWriterInput::with_media_type_and_output_settings(
       av::MediaType::video(),
       Some(&settings),
@@ -193,12 +212,15 @@ impl Writer {
       path,
       pending_microphone: VecDeque::new(),
       pending_system_audio: VecDeque::new(),
+      primary_video,
       rejection_streak: 0,
+      source,
       stats,
       system_audio_end_ns: None,
       system_audio_input,
       tail: None,
       timeline: Timeline::default(),
+      timeline_origin,
       width,
       writer,
     })
@@ -226,15 +248,49 @@ impl Writer {
             continue;
           }
 
+          let source_ns = match frame.clock {
+            FrameClock::Source(source_ns) => source_ns,
+            FrameClock::Wall => self.elapsed_ns(frame.wall),
+          };
           let is_first_frame = !self.timeline.has_started();
-          let origin_source_ns = frame.source_ns;
+          if is_first_frame && !self.primary_video {
+            let Some(origin) = self.timeline_origin.get().copied() else {
+              self.tail = Some(frame);
+              continue;
+            };
+            let origin_ns = self.elapsed_ns(origin);
+            // The camera sample clock is smooth but has its own epoch. Anchor
+            // it to the shared screen wall origin once, then retain its source
+            // cadence instead of recording callback-delivery jitter.
+            let source_origin_ns = match frame.clock {
+              FrameClock::Source(_) => source_ns
+                .saturating_sub(self.elapsed_ns(frame.wall).saturating_sub(origin_ns).max(0)),
+              FrameClock::Wall => origin_ns,
+            };
+            self.timeline.start_at(source_origin_ns, origin_ns);
+            self.origin_wall = Some(origin);
+            // Camera capture is opened before screen capture, so the last
+            // warm frame from before the screen's first frame is the honest
+            // picture at shared time zero. Writing it there prevents a black
+            // lead-in without inventing a frame from the future.
+            if let Some(pre_origin) = self.tail.take() {
+              let appended = self.append(&pre_origin, 0);
+              self.tail = Some(pre_origin);
+              if !announced && appended {
+                announced = true;
+                let _ = first_frame.send(Ok(()));
+              }
+            }
+          }
+          let is_first_frame = !self.timeline.has_started();
           if is_first_frame {
-            self.origin_source_ns = Some(origin_source_ns);
+            self.origin_source_ns = Some(source_ns);
             self.origin_wall = Some(frame.wall);
+            let _ = self.timeline_origin.set(frame.wall);
           }
           let pts = self
             .timeline
-            .frame_pts_ns(frame.source_ns, self.elapsed_ns(frame.wall));
+            .frame_pts_ns(source_ns, self.elapsed_ns(frame.wall));
           let appended = self.append(&frame, pts);
           self.tail = Some(frame);
 

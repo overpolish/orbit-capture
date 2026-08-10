@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::{
-  recovery::{orphaned_recordings, sweep_preview_files, OrphanPlan},
+  recovery::{
+    camera_for_recording, orphaned_recordings, sweep_preview_files, sweep_unclaimed_cameras,
+    OrphanPlan,
+  },
   save::{save_recording, save_selected_recording},
   *,
 };
@@ -145,6 +148,46 @@ fn describes_a_recording_by_the_file_the_user_will_actually_get() {
     delivered_extension(Path::new("/tmp/recording-1.mp4"), false),
     "mp4"
   );
+}
+
+#[test]
+fn accepts_only_the_camera_resolution_choices_the_window_offers() {
+  for scale in [50, 75, 100] {
+    assert!(validate_camera_resolution_scale(scale).is_ok());
+  }
+  for scale in [0, 49, 76, 101] {
+    assert!(validate_camera_resolution_scale(scale).is_err());
+  }
+}
+
+#[test]
+fn accepts_only_camera_overlay_values_the_window_can_produce() {
+  let valid = CameraOverlaySettings {
+    camera_x_percent: 50.0,
+    camera_y_percent: 50.0,
+    camera_width_percent: 60.0,
+    frame_height_percent: 40.0,
+    frame_width_percent: 60.0,
+    frame_x_percent: 40.0,
+    frame_y_percent: 30.0,
+    radius_percent: 50.0,
+  };
+  assert!(validate_camera_overlay(valid).is_ok());
+  assert!(validate_camera_overlay(CameraOverlaySettings {
+    camera_width_percent: 2.0,
+    ..valid
+  })
+  .is_err());
+  assert!(validate_camera_overlay(CameraOverlaySettings {
+    frame_width_percent: 61.0,
+    ..valid
+  })
+  .is_err());
+  assert!(validate_camera_overlay(CameraOverlaySettings {
+    camera_x_percent: f64::NAN,
+    ..valid
+  })
+  .is_err());
 }
 
 /// Stands in for a stream copy that works, without needing FFmpeg to be on
@@ -437,6 +480,51 @@ fn keeps_a_recording_stamped_in_the_future() {
 #[test]
 fn does_nothing_with_an_empty_directory() {
   assert_eq!(orphan_plan(Vec::new(), NOW), OrphanPlan::default());
+}
+
+#[test]
+fn pairs_a_camera_sidecar_with_its_recording() {
+  let directory = std::env::temp_dir()
+    .join("orbit-capture-tests")
+    .join("camera-pair");
+  let _ = std::fs::remove_dir_all(&directory);
+  std::fs::create_dir_all(&directory).unwrap();
+
+  let recording = directory.join("recording-20260809-060151.000.mov");
+  let camera = directory.join("camera-20260809-060151.000.mov");
+  std::fs::write(&recording, b"screen").unwrap();
+  std::fs::write(&camera, b"camera").unwrap();
+
+  assert_eq!(
+    camera_for_recording(&recording).as_deref(),
+    Some(camera.as_path())
+  );
+
+  std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn sweeps_only_unclaimed_camera_sidecars() {
+  let directory = std::env::temp_dir()
+    .join("orbit-capture-tests")
+    .join("camera-sweep");
+  let _ = std::fs::remove_dir_all(&directory);
+  std::fs::create_dir_all(&directory).unwrap();
+
+  let kept = directory.join("camera-kept.mov");
+  let abandoned = directory.join("camera-abandoned.mov");
+  let unrelated = directory.join("notes.txt");
+  for path in [&kept, &abandoned, &unrelated] {
+    std::fs::write(path, b"data").unwrap();
+  }
+
+  sweep_unclaimed_cameras(&directory, Some(&kept));
+
+  assert!(kept.exists());
+  assert!(!abandoned.exists());
+  assert!(unrelated.exists());
+
+  std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

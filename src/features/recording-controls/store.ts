@@ -26,9 +26,3 @@ export const useRecordingStore = create<RecordingStore>()((set) => ({
 export const selectSnapshot = (state: RecordingStore) => state.snapshot;
 
 export const selectStatus = (state: RecordingStore) => state.snapshot.status;
-
-export const selectIsIdle = (state: RecordingStore) =>
-  state.snapshot.status === "idle";
-
-export const selectIsBusy = (state: RecordingStore) =>
-  state.snapshot.status === "starting" || state.snapshot.status === "stopping";

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { extname } from "node:path";
 import process from "node:process";
 
@@ -34,7 +34,11 @@ const trackedFiles = execFileSync(
   .filter(Boolean);
 
 const missingHeaders = trackedFiles.filter((file) => {
-  if (EXCLUDED_FILES.has(file) || !CHECKED_EXTENSIONS.has(extname(file))) {
+  if (
+    !existsSync(file) ||
+    EXCLUDED_FILES.has(file) ||
+    !CHECKED_EXTENSIONS.has(extname(file))
+  ) {
     return false;
   }
 
