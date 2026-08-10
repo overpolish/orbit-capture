@@ -61,9 +61,13 @@ pub use session::CaptureSession;
 use session::StreamObjects;
 use writer::{Container, Writer, WriterConfig};
 
-pub fn begin_blocking(
-  config: CaptureStartupConfig,
-) -> Result<(CaptureSession, Receiver<Result<(), String>>), String> {
+pub struct CaptureStart {
+  pub first_frame: Receiver<Result<(), String>>,
+  pub session: CaptureSession,
+  pub source_scale_factor: f32,
+}
+
+pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, String> {
   tokio::runtime::Builder::new_current_thread()
     .enable_all()
     .build()

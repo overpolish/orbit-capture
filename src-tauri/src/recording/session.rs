@@ -135,7 +135,7 @@ pub(super) fn begin_capture(
 ) -> Result<(CaptureHandles, Receiver<Result<(), String>>), String> {
   if !matches!(
     options.mode,
-    RecordingMode::Screen | RecordingMode::Region | RecordingMode::Camera
+    RecordingMode::Screen | RecordingMode::Region | RecordingMode::Window | RecordingMode::Camera
   ) {
     return Err("That kind of recording is not available yet".to_owned());
   }
@@ -150,21 +150,6 @@ pub(super) fn begin_capture(
       height: options.camera_height.expect("validated above"),
       width: options.camera_width.expect("validated above"),
     });
-  let source_scale_factor = if camera_primary {
-    1.0
-  } else {
-    let monitor_id = options
-      .monitor_id
-      .ok_or_else(|| "No monitor is selected to record".to_owned())?;
-    xcap::Monitor::all()
-      .map_err(|error| error.to_string())?
-      .into_iter()
-      .find(|monitor| monitor.id().ok() == Some(monitor_id))
-      .ok_or_else(|| "The selected monitor is no longer available".to_owned())?
-      .scale_factor()
-      .map_err(|error| error.to_string())?
-  };
-
   let directory = recordings_directory(app)?;
   std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
   let started_at = Local::now().naive_local();
@@ -195,10 +180,19 @@ pub(super) fn begin_capture(
       region: options.region.expect("validated above"),
       show_cursor: options.show_cursor,
     },
-    RecordingMode::Camera => PrimaryCaptureSource::Camera { fps: options.fps },
-    RecordingMode::Window | RecordingMode::Audio => unreachable!("rejected above"),
+    RecordingMode::Window => PrimaryCaptureSource::Window {
+      fps: options.fps,
+      show_cursor: options.show_cursor,
+      window_id: options.window_id.expect("validated above"),
+    },
+    RecordingMode::Camera => PrimaryCaptureSource::Camera,
+    RecordingMode::Audio => unreachable!("rejected above"),
   };
-  let (session, first_frame) = capture::begin_blocking(CaptureStartupConfig {
+  let capture::CaptureStart {
+    first_frame,
+    session,
+    source_scale_factor,
+  } = capture::begin_blocking(CaptureStartupConfig {
     camera,
     camera_path: camera_path.clone(),
     microphone_id: options.microphone_id.clone(),

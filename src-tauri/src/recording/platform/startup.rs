@@ -2,18 +2,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
-use super::{camera::CameraSpec, session::CameraObjects, writer::VideoSource};
-use crate::capture_geometry::{physical_capture_rect, video_capture_rect};
+use super::{camera::CameraSpec, writer::VideoSource};
 
+mod audio_stream;
+mod camera_writer;
 mod screen_stream;
+mod video_source;
 mod writer_thread;
 
-use screen_stream::ScreenStreamRequest;
+use audio_stream::SystemAudioStreams;
+use camera_writer::CameraWriterSetup;
+use screen_stream::VideoStreamRequest;
 use writer_thread::{both_first_frames, spawn_writer, WriterThread};
 
-pub(super) async fn begin(
-  config: CaptureStartupConfig,
-) -> Result<(CaptureSession, Receiver<Result<(), String>>), String> {
+pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, String> {
   let CaptureStartupConfig {
     camera,
     camera_path,
@@ -23,20 +25,7 @@ pub(super) async fn begin(
     primary,
     system_audio,
   } = config;
-  let (monitor_id, region, show_cursor, fps, camera_primary) = match primary {
-    PrimaryCaptureSource::Screen {
-      fps,
-      monitor_id,
-      show_cursor,
-    } => (Some(monitor_id), None, show_cursor, fps, false),
-    PrimaryCaptureSource::Region {
-      fps,
-      monitor_id,
-      region,
-      show_cursor,
-    } => (Some(monitor_id), Some(region), show_cursor, fps, false),
-    PrimaryCaptureSource::Camera { fps } => (None, None, false, fps, true),
-  };
+  let camera_primary = matches!(primary, PrimaryCaptureSource::Camera);
   let camera_flipped = camera.as_ref().is_some_and(|camera| camera.flipped);
   let camera_spec = camera.map(CameraSpec::resolve).transpose()?;
   if camera_primary && camera_spec.is_none() {
@@ -53,33 +42,22 @@ pub(super) async fn begin(
   } else {
     None
   };
-  let displays = content.as_ref().map(|content| content.displays());
-  let display = displays.as_ref().and_then(|displays| {
-    monitor_id
-      .and_then(|id| displays.iter().find(|display| display.display_id().0 == id))
-      .or_else(|| displays.first())
-  });
-  if needs_content && display.is_none() {
-    return Err("No monitor is available for recording".to_owned());
-  }
-
-  let (width, height, primary_fps, source_rect, display_scale) = if camera_primary {
+  let primary_video = content
+    .as_deref()
+    .map(|content| video_source::resolve(content, &primary))
+    .transpose()?
+    .flatten();
+  let source_scale_factor = primary_video
+    .as_ref()
+    .map_or(1.0, |video| video.source_scale_factor);
+  let (width, height, primary_fps) = if camera_primary {
     let camera = camera_spec.as_ref().expect("checked above");
-    (camera.width, camera.height, camera.fps, None, 1.0)
+    (camera.width, camera.height, camera.fps)
   } else {
-    let monitor_id = monitor_id.ok_or_else(|| "No monitor is selected to record".to_owned())?;
-    let (scale, monitor_width, monitor_height) = monitor_geometry(monitor_id)?;
-    let source_rect = region
-      .map(|region| {
-        physical_capture_rect(region, scale, monitor_width, monitor_height)
-          .and_then(video_capture_rect)
-          .ok_or_else(|| "The selected region is too small or outside the monitor".to_owned())
-      })
-      .transpose()?;
-    let (width, height) = source_rect
-      .map(|rect| (rect.width, rect.height))
-      .unwrap_or_else(|| (even(monitor_width), even(monitor_height)));
-    (width, height, fps, source_rect, scale)
+    let video = primary_video
+      .as_ref()
+      .ok_or_else(|| "No video source is available for recording".to_owned())?;
+    (video.width, video.height, video.fps)
   };
   if width == 0 || height == 0 {
     return Err("The selected video source has no usable size".to_owned());
@@ -127,53 +105,20 @@ pub(super) async fn begin(
     "orbit-recording-writer",
   )?;
 
-  let mut secondary_camera = None;
+  let CameraWriterSetup {
+    first_frame: camera_first_frame,
+    primary_spec: primary_camera_spec,
+    secondary: secondary_camera,
+  } = camera_writer::prepare(
+    camera_spec,
+    camera_primary,
+    camera_flipped,
+    camera_path,
+    &timeline_origin,
+    &on_failure,
+  )?;
   let mut primary_camera = None;
-  let mut primary_camera_spec = None;
-  let mut camera_first_frame = None;
-  if let Some(spec) = camera_spec {
-    if camera_primary {
-      primary_camera_spec = Some(spec);
-    } else {
-      let camera_path = camera_path.ok_or_else(|| "The camera has nowhere to record".to_owned())?;
-      let camera_stats = Arc::new(CaptureStats::default());
-      let WriterThread {
-        commands: camera_commands,
-        first_frame: first_camera,
-        worker: camera_worker,
-      } = spawn_writer(
-        WriterConfig {
-          path: camera_path.clone(),
-          width: spec.width,
-          height: spec.height,
-          fps: spec.fps,
-          // Both concurrent video writers use HEVC so VideoToolbox can keep
-          // independent hardware-backed sessions, matching Orbit Cursor's
-          // multi-video capture path on macOS.
-          encoder: VideoEncoder::Hevc,
-          system_audio: false,
-          microphone_format: None,
-          stats: Arc::clone(&camera_stats),
-          on_failure: Arc::clone(&on_failure),
-          container: Container::quicktime_fragmented(),
-          primary_video: false,
-          source: VideoSource::Camera,
-          timeline_origin: Arc::clone(&timeline_origin),
-        },
-        "orbit-camera-writer",
-      )?;
-      let stream = camera::start(spec, camera_flipped, camera_commands.clone(), camera_stats)?;
-      camera_first_frame = Some(first_camera);
-      secondary_camera = Some(CameraObjects {
-        commands: camera_commands,
-        path: camera_path,
-        stream: Some(stream),
-        worker: Some(camera_worker),
-      });
-    }
-  }
 
-  let captures_selected_audio = system_audio.enabled && !system_audio.application_ids.is_empty();
   let output = content.as_ref().map(|_| {
     ScreenOutput::with(ScreenOutputInner {
       commands: commands.clone(),
@@ -182,44 +127,28 @@ pub(super) async fn begin(
   });
   let queue = dispatch::Queue::serial_with_ar_pool();
   let mut streams = Vec::new();
-
-  let screen_stream = screen_stream::create(ScreenStreamRequest {
-    camera_primary,
-    captures_selected_audio,
-    content: content.as_deref(),
-    display,
-    display_scale,
-    fps,
-    height,
-    output: output.as_ref(),
-    queue: &queue,
-    show_cursor,
-    source_rect,
-    system_audio: system_audio.enabled,
-    width,
-  })?;
-
-  let selected_audio_stream = if captures_selected_audio {
-    let content = content.as_ref().expect("required above");
-    let display = display.expect("required above");
-    let filter = application_audio_filter(content, display, &system_audio.application_ids)?;
-    let mut cfg = sc::StreamCfg::new();
-    cfg.set_captures_audio(true);
-    cfg.set_excludes_current_process_audio(true);
-    cfg.set_sample_rate(SYSTEM_AUDIO_SAMPLE_RATE);
-    cfg.set_channel_count(SYSTEM_AUDIO_CHANNELS);
-    let stream = sc::Stream::new(&filter, &cfg);
-    stream
-      .add_stream_output(
-        output.as_ref().expect("content has output").as_ref(),
-        sc::OutputType::Audio,
-        Some(&queue),
-      )
-      .map_err(|error| error.to_string())?;
-    Some(stream)
-  } else {
-    None
-  };
+  let SystemAudioStreams {
+    all: all_audio_stream,
+    selected: selected_audio_stream,
+    video_captures_all: video_captures_all_audio,
+  } = audio_stream::create(
+    &system_audio,
+    content.as_deref(),
+    output.as_ref(),
+    &queue,
+    primary_video.as_ref(),
+  )?;
+  let video_stream = primary_video
+    .as_ref()
+    .map(|video| {
+      screen_stream::create_video(VideoStreamRequest {
+        captures_audio: video_captures_all_audio,
+        output: output.as_ref().expect("content has output"),
+        queue: &queue,
+        video,
+      })
+    })
+    .transpose()?;
 
   let microphone = if let Some(source) = microphone_source {
     let sample_commands = commands.clone();
@@ -243,9 +172,20 @@ pub(super) async fn begin(
   if let Some(stream) = &selected_audio_stream {
     stream.start().await.map_err(|error| error.to_string())?;
   }
-  if let Some(stream) = &screen_stream {
+  if let Some(stream) = &all_audio_stream {
     if let Err(error) = stream.start().await {
       if let Some(stream) = &selected_audio_stream {
+        stream.stop_with_ch(|_| {});
+      }
+      return Err(error.to_string());
+    }
+  }
+  if let Some(stream) = &video_stream {
+    if let Err(error) = stream.start().await {
+      if let Some(stream) = &selected_audio_stream {
+        stream.stop_with_ch(|_| {});
+      }
+      if let Some(stream) = &all_audio_stream {
         stream.stop_with_ch(|_| {});
       }
       return Err(error.to_string());
@@ -262,7 +202,10 @@ pub(super) async fn begin(
       Arc::clone(&stats),
     )?);
   }
-  if let Some(stream) = screen_stream {
+  if let Some(stream) = video_stream {
+    streams.push(stream);
+  }
+  if let Some(stream) = all_audio_stream {
     streams.push(stream);
   }
   if let Some(stream) = selected_audio_stream {
@@ -273,8 +216,8 @@ pub(super) async fn begin(
     Some(camera) => both_first_frames(first_frame, camera),
     None => first_frame,
   };
-  Ok((
-    CaptureSession {
+  Ok(CaptureStart {
+    session: CaptureSession {
       camera: secondary_camera,
       commands,
       microphone,
@@ -287,5 +230,6 @@ pub(super) async fn begin(
       worker: Some(worker),
     },
     first_frame,
-  ))
+    source_scale_factor,
+  })
 }

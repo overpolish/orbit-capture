@@ -16,6 +16,12 @@ use super::CaptureStartupConfig;
 
 pub enum CaptureSession {}
 
+pub struct CaptureStart {
+  pub first_frame: Receiver<Result<(), String>>,
+  pub session: CaptureSession,
+  pub source_scale_factor: f32,
+}
+
 impl CaptureSession {
   pub fn pause(&self) {
     match *self {}
@@ -34,9 +40,7 @@ impl CaptureSession {
   }
 }
 
-pub fn begin_blocking(
-  config: CaptureStartupConfig,
-) -> Result<(CaptureSession, Receiver<Result<(), String>>), String> {
+pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, String> {
   let _ = config;
 
   Err("Screen recording is not yet implemented on Windows".to_owned())

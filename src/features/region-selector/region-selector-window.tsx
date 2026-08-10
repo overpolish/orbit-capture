@@ -3,8 +3,8 @@
 
 import { Channel } from "@tauri-apps/api/core";
 import { Check, SquareDot } from "lucide-react";
-import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
-import { HandleClasses, HandleStyles, Rnd } from "react-rnd";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Rnd } from "react-rnd";
 
 import { Button } from "../../components/base/button/button";
 import { AspectRatio } from "../../components/shared/aspect-ratio/aspect-ratio";
@@ -19,100 +19,11 @@ import {
   takeMonitorScreenshot,
 } from "../recording-sources/api";
 import { useRecordingSourceStore } from "../recording-sources/store";
-import { Region } from "../recording-sources/types";
 
 import { Magnifier } from "./magnifier";
+import { fitRegion, wholePixel, wholePixelSize } from "./region-geometry";
+import { HANDLE_CLASSES, HANDLE_STYLES } from "./resize-handles";
 import { ResizeDirection } from "./types";
-
-const HANDLE_STYLE: CSSProperties = {
-  background: "var(--color-content)",
-  border: "solid 1px white",
-  borderRadius: "100%",
-  height: 12,
-  width: 12,
-};
-
-const HANDLE_STYLES: HandleStyles = {
-  bottom: {
-    ...HANDLE_STYLE,
-    cursor: "ns-resize",
-    left: "50%",
-    transform: "translateY(2px) translateX(-50%)",
-  },
-  bottomLeft: {
-    ...HANDLE_STYLE,
-    cursor: "nesw-resize",
-    transform: "translateX(3px) translateY(-3px)",
-  },
-  bottomRight: {
-    ...HANDLE_STYLE,
-    cursor: "nwse-resize",
-    transform: "translateX(-3px) translateY(-3px)",
-  },
-  left: {
-    ...HANDLE_STYLE,
-    cursor: "ew-resize",
-    top: "50%",
-    transform: "translateX(-2px) translateY(-50%)",
-  },
-  right: {
-    ...HANDLE_STYLE,
-    cursor: "ew-resize",
-    top: "50%",
-    transform: "translateX(2px) translateY(-50%)",
-  },
-  top: {
-    ...HANDLE_STYLE,
-    cursor: "ns-resize",
-    left: "50%",
-    transform: "translateY(-2px) translateX(-50%)",
-  },
-  topLeft: {
-    ...HANDLE_STYLE,
-    cursor: "nwse-resize",
-    transform: "translateX(3px) translateY(3px)",
-  },
-  topRight: {
-    ...HANDLE_STYLE,
-    cursor: "nesw-resize",
-    transform: "translateX(-3px) translateY(3px)",
-  },
-};
-
-const HANDLE_CLASSES: HandleClasses = {
-  bottom: "region-handle-bottom",
-  bottomLeft: "region-handle-bottom-left",
-  bottomRight: "region-handle-bottom-right",
-  left: "region-handle-left",
-  right: "region-handle-right",
-  top: "region-handle-top",
-  topLeft: "region-handle-top-left",
-  topRight: "region-handle-top-right",
-};
-
-const wholePixel = (value: number) => Math.round(value);
-const wholePixelSize = (value: number) => Math.max(1, wholePixel(value));
-
-const fitRegion = (region: Region, width: number, height: number): Region => {
-  const margin = 20;
-  const fittedWidth = wholePixelSize(
-    Math.min(region.size.width, width - margin),
-  );
-  const fittedHeight = wholePixelSize(
-    Math.min(region.size.height, height - margin),
-  );
-  return {
-    position: {
-      x: wholePixel(
-        Math.max(0, Math.min(region.position.x, width - fittedWidth)),
-      ),
-      y: wholePixel(
-        Math.max(0, Math.min(region.position.y, height - fittedHeight)),
-      ),
-    },
-    size: { height: fittedHeight, width: fittedWidth },
-  };
-};
 
 export function RegionSelectorWindow() {
   const {

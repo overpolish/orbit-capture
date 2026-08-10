@@ -223,3 +223,23 @@ fn rejects_a_region_without_geometry() {
     Err("No region is selected to record".to_owned())
   );
 }
+
+#[test]
+fn accepts_a_window_with_a_capture_identifier() {
+  let options: StartRecordingOptions =
+    serde_json::from_str(r#"{"mode":"window","windowId":42,"fps":30}"#).unwrap();
+
+  assert!(validate_options(&options).is_ok());
+  assert_eq!(options.window_id, Some(42));
+  assert_eq!(options.fps, 30);
+}
+
+#[test]
+fn rejects_a_window_without_a_capture_identifier() {
+  let options: StartRecordingOptions = serde_json::from_str(r#"{"mode":"window"}"#).unwrap();
+
+  assert_eq!(
+    validate_options(&options),
+    Err("No window is selected to record".to_owned())
+  );
+}

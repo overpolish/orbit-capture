@@ -2,93 +2,85 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::super::*;
-use crate::capture_geometry::CaptureRect;
+use super::video_source::PrimaryVideo;
 
-pub(super) struct ScreenStreamRequest<'a> {
-  pub camera_primary: bool,
-  pub captures_selected_audio: bool,
-  pub content: Option<&'a sc::ShareableContent>,
-  pub display: Option<&'a sc::Display>,
-  pub display_scale: f64,
-  pub fps: u32,
-  pub height: u32,
-  pub output: Option<&'a arc::R<ScreenOutput>>,
+pub(super) struct VideoStreamRequest<'a> {
+  pub captures_audio: bool,
+  pub output: &'a arc::R<ScreenOutput>,
   pub queue: &'a dispatch::Queue,
-  pub show_cursor: bool,
-  pub source_rect: Option<CaptureRect>,
-  pub system_audio: bool,
-  pub width: u32,
+  pub video: &'a PrimaryVideo,
 }
 
-pub(super) fn create(
-  request: ScreenStreamRequest<'_>,
-) -> Result<Option<arc::R<sc::Stream>>, String> {
-  let ScreenStreamRequest {
-    camera_primary,
-    captures_selected_audio,
-    content,
-    display,
-    display_scale,
-    fps,
-    height,
+pub(super) fn create_video(request: VideoStreamRequest<'_>) -> Result<arc::R<sc::Stream>, String> {
+  let VideoStreamRequest {
+    captures_audio,
     output,
     queue,
-    show_cursor,
-    source_rect,
-    system_audio,
-    width,
+    video,
   } = request;
-  if camera_primary && (!system_audio || captures_selected_audio) {
-    return Ok(None);
-  }
-  let content = content.expect("required for display capture");
-  let display = display.expect("required for display capture");
-
   let mut cfg = sc::StreamCfg::new();
-  cfg.set_width(width as usize);
-  cfg.set_height(height as usize);
-  if let Some(rect) = source_rect {
-    // ScreenCaptureKit's source rectangle is expressed in display points,
-    // while the shared source contract is physical pixels.
-    cfg.set_src_rect(cg::Rect::new(
-      f64::from(rect.x) / display_scale,
-      f64::from(rect.y) / display_scale,
-      f64::from(rect.width) / display_scale,
-      f64::from(rect.height) / display_scale,
-    ));
+  cfg.set_width(video.width as usize);
+  cfg.set_height(video.height as usize);
+  cfg.set_scales_to_fit(true);
+  if video.is_window {
+    // A desktop-independent filter follows the window between displays. This
+    // keeps pixels outside the current display edge instead of clipping them.
+    cfg.set_ignore_global_clip_single_window(true);
+  }
+  if let Some(rect) = video.source_rect {
+    cfg.set_src_rect(rect);
   }
   cfg.set_pixel_format(cv::PixelFormat::_420V);
-  cfg.set_minimum_frame_interval(cm::Time::new(1, fps as cm::TimeScale));
+  cfg.set_minimum_frame_interval(cm::Time::new(1, video.fps as cm::TimeScale));
   cfg.set_queue_depth(STREAM_QUEUE_DEPTH);
-  cfg.set_shows_cursor(show_cursor && !camera_primary);
-  cfg.set_captures_audio(system_audio && !captures_selected_audio);
-  if system_audio {
-    cfg.set_excludes_current_process_audio(true);
-    cfg.set_sample_rate(SYSTEM_AUDIO_SAMPLE_RATE);
-    cfg.set_channel_count(SYSTEM_AUDIO_CHANNELS);
+  cfg.set_shows_cursor(video.show_cursor);
+  cfg.set_captures_audio(captures_audio);
+  if captures_audio {
+    configure_audio(&mut cfg);
   }
   cfg.set_color_space_name(cg::color_space::names::srgb());
 
-  let filter = sc::ContentFilter::with_display_excluding_windows(display, &our_windows(content));
-  let stream = sc::Stream::new(&filter, &cfg);
-  if !camera_primary {
+  let stream = sc::Stream::new(&video.filter, &cfg);
+  stream
+    .add_stream_output(output.as_ref(), sc::OutputType::Screen, Some(queue))
+    .map_err(|error| error.to_string())?;
+  if captures_audio {
     stream
-      .add_stream_output(
-        output.expect("content has output").as_ref(),
-        sc::OutputType::Screen,
-        Some(queue),
-      )
+      .add_stream_output(output.as_ref(), sc::OutputType::Audio, Some(queue))
       .map_err(|error| error.to_string())?;
   }
-  if system_audio && !captures_selected_audio {
-    stream
-      .add_stream_output(
-        output.expect("content has output").as_ref(),
-        sc::OutputType::Audio,
-        Some(queue),
-      )
-      .map_err(|error| error.to_string())?;
-  }
+  Ok(stream)
+}
 
-  Ok(Some(stream))
+pub(super) struct AllAudioStreamRequest<'a> {
+  pub content: &'a sc::ShareableContent,
+  pub display: &'a sc::Display,
+  pub output: &'a arc::R<ScreenOutput>,
+  pub queue: &'a dispatch::Queue,
+}
+
+pub(super) fn create_all_audio(
+  request: AllAudioStreamRequest<'_>,
+) -> Result<arc::R<sc::Stream>, String> {
+  let AllAudioStreamRequest {
+    content,
+    display,
+    output,
+    queue,
+  } = request;
+  let filter = sc::ContentFilter::with_display_excluding_windows(display, &our_windows(content));
+  let mut cfg = sc::StreamCfg::new();
+  cfg.set_captures_audio(true);
+  configure_audio(&mut cfg);
+  let stream = sc::Stream::new(&filter, &cfg);
+  stream
+    .add_stream_output(output.as_ref(), sc::OutputType::Audio, Some(queue))
+    .map_err(|error| error.to_string())?;
+  Ok(stream)
+}
+
+pub(super) fn configure_audio(cfg: &mut sc::StreamCfg) {
+  cfg.set_excludes_current_process_audio(true);
+  cfg.set_sample_rate(SYSTEM_AUDIO_SAMPLE_RATE);
+  cfg.set_channel_count(SYSTEM_AUDIO_CHANNELS);
 }

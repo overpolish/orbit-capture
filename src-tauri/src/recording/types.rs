@@ -110,9 +110,12 @@ pub(crate) enum PrimaryCaptureSource {
     region: Region,
     show_cursor: bool,
   },
-  Camera {
+  Window {
     fps: u32,
+    show_cursor: bool,
+    window_id: u32,
   },
+  Camera,
 }
 
 /// Everything a native capture adapter needs to open one recording. Keeping
