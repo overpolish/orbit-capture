@@ -23,6 +23,7 @@ import { sourceScalePercent } from "./resolution";
 import { selectArtifact, selectDirectory, useExportStore } from "./store";
 import {
   AudioTrackVolume,
+  CursorEffectSettings,
   recordingAudioStreamIndex,
   recordingAudioTrackId,
   RecordingTrackId,
@@ -35,11 +36,21 @@ import { useRecordingExportPreview } from "./use-recording-export-preview";
 
 const DEFAULT_COMPRESSION = 2;
 const EMPTY_AUDIO_TRACK_VOLUMES: AudioTrackVolume[] = [];
+const DEFAULT_CURSOR_EFFECTS: CursorEffectSettings = {
+  bake: true,
+  clickAnimation: true,
+  motionBlur: true,
+  sizePercent: 100,
+  smoothMovement: true,
+};
 export function ExportWindow() {
   const artifact = useExportStore(selectArtifact);
   const directory = useExportStore(selectDirectory);
   const persistedScreenshotRadius = useExportStore(
     (state) => state.snapshot.screenshotRadiusPercent,
+  );
+  const persistedCursorEffects = useExportStore(
+    (state) => state.snapshot.cursorEffects,
   );
   const [fileStem, setFileStem] = useState("");
   const [collapseAudio, setCollapseAudio] = useState(false);
@@ -48,6 +59,7 @@ export function ExportWindow() {
     useState(DEFAULT_COMPRESSION);
   const [bakeCamera, setBakeCamera] = useState(false);
   const [cameraOverlay, setCameraOverlay] = useState(defaultCameraOverlay);
+  const [cursorEffects, setCursorEffects] = useState(DEFAULT_CURSOR_EFFECTS);
   const [cameraResolutionScalePercent, setCameraResolutionScalePercent] =
     useState(100);
   const [resolutionScalePercent, setResolutionScalePercent] = useState(100);
@@ -79,9 +91,11 @@ export function ExportWindow() {
   // the previous capture's pixels.
   const artifactId = artifact?.id;
   const saveProgress = useExportProgress(artifactId);
+  const screenshotArtifactId =
+    artifact?.kind === "screenshot" ? artifact.id : undefined;
   const { loadFullPreview, previewUrl } = useExportPreviewImage(
-    artifactId,
-    artifact?.kind === "screenshot",
+    screenshotArtifactId,
+    true,
   );
   const canCompress = artifact?.kind === "recording" && artifact.canCompress;
   const originalResolutionScale =
@@ -155,20 +169,20 @@ export function ExportWindow() {
               : null
       : null;
   const selectedStreamIndex = recordingAudioStreamIndex(selectedTrackId);
-  const { estimatedSizeBytes, isEstimatingSize, isPending } =
-    useRecordingExportEstimate({
-      artifact,
-      audioTrackVolumes: currentAudioTrackVolumes,
-      bakeCamera: effectiveBakeCamera,
-      camera: cameraExport,
-      cameraOverlay,
-      collapseAudio: effectiveCollapseAudio,
-      compression,
-      enabledStreamIndices,
-      includeCamera,
-      includePrimaryVideo,
-      resolutionScalePercent,
-    });
+  const { estimatedSizeBytes, isEstimatingSize } = useRecordingExportEstimate({
+    artifact,
+    audioTrackVolumes: currentAudioTrackVolumes,
+    bakeCamera: effectiveBakeCamera,
+    camera: cameraExport,
+    cameraOverlay,
+    collapseAudio: effectiveCollapseAudio,
+    compression,
+    cursorEffects,
+    enabledStreamIndices,
+    includeCamera,
+    includePrimaryVideo,
+    resolutionScalePercent,
+  });
 
   const onEnabledTracksChange = useCallback(
     (streamIndices: number[]) => {
@@ -186,6 +200,7 @@ export function ExportWindow() {
     setAudioTrackVolumes(null);
     setBakeCamera(false);
     setCameraOverlay(defaultCameraOverlay(artifact));
+    setCursorEffects(persistedCursorEffects);
     setCollapseAudio(false);
     setCompression(canCompress ? DEFAULT_COMPRESSION : 0);
     setCameraCompression(canCompress ? DEFAULT_COMPRESSION : 0);
@@ -194,13 +209,11 @@ export function ExportWindow() {
     screenshotRadiusRef.current = persistedScreenshotRadius;
     setScreenshotRadiusPercent(persistedScreenshotRadius);
     /* eslint-enable @eslint-react/set-state-in-effect */
-  }, [
-    artifact,
-    artifactId,
-    canCompress,
-    originalResolutionScale,
-    persistedScreenshotRadius,
-  ]);
+    // A cancelled or failed save restores the same artifact through a fresh
+    // snapshot. Its controls are still the user's current editing session and
+    // must not be reset merely because the object was deserialized again.
+    // eslint-disable-next-line @eslint-react/exhaustive-deps
+  }, [artifactId]);
 
   // A capture taken while the window is open replaces the pending one, so the
   // name follows the new suggestion rather than keeping the old capture's.
@@ -229,6 +242,7 @@ export function ExportWindow() {
       cameraResolutionScalePercent={cameraResolutionScalePercent}
       collapseAudio={collapseAudio}
       compression={compression}
+      cursorEffects={cursorEffects}
       directory={directory}
       enabledAudioTrackCount={enabledStreamIndices?.length ?? 0}
       enabledStreamIndices={enabledStreamIndices ?? undefined}
@@ -238,9 +252,7 @@ export function ExportWindow() {
       fileStem={fileStem}
       isCancelingSave={isCancelingSave}
       isEstimatingSize={isEstimatingSize}
-      isExportPreparationPending={
-        isPending || isPreparingRecordingPreview || isEstimatingSize
-      }
+      isExportPreparationPending={isPreparingRecordingPreview}
       isPreparingRecordingAudio={isPreparingRecordingPreview}
       isPreparingRecordingPreview={isPreparingRecordingPreview}
       isSaving={isSaving}
@@ -291,6 +303,7 @@ export function ExportWindow() {
       onCopy={() => {
         copyExportToClipboard(screenshotRadiusPercent).catch(report("copy"));
       }}
+      onCursorEffectsChange={setCursorEffects}
       onEnabledTracksChange={onEnabledTracksChange}
       onEnabledVideoTracksChange={(tracks) => {
         if (artifactId === undefined) return;
@@ -324,6 +337,7 @@ export function ExportWindow() {
           cameraOverlay,
           collapseAudio,
           compression,
+          cursorEffects,
           enabledStreamIndices,
           includeCamera,
           includePrimaryVideo,
@@ -347,8 +361,13 @@ export function ExportWindow() {
               return;
             }
             saveProgress.complete();
-            setIsCancelingSave(false);
-            setIsSaving(false);
+            // Let the determinate ring visibly reach its completed state.
+            // Closing it in the same React batch left the animated stroke at
+            // whatever fraction it had reached during the final mux.
+            window.setTimeout(() => {
+              setIsCancelingSave(false);
+              setIsSaving(false);
+            }, 200);
           })
           .catch(report("save"));
       }}

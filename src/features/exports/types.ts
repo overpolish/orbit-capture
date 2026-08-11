@@ -65,6 +65,14 @@ export type RecordingTimelineThumbnails = Record<
   RecordingTimelineThumbnail[]
 >;
 
+export type CursorEffectSettings = {
+  bake: boolean;
+  clickAnimation: boolean;
+  motionBlur: boolean;
+  sizePercent: number;
+  smoothMovement: boolean;
+};
+
 export const recordingAudioTrackId = (streamIndex: number): RecordingTrackId =>
   `audio:${String(streamIndex)}` as RecordingTrackId;
 
@@ -106,8 +114,10 @@ export type ExportArtifact =
       audioTracks: RecordingAudioTrack[];
       camera: RecordingCamera | null;
       canCompress: boolean;
+      cursorDataVersion: number | null;
       /** Zero for a recording recovered from an earlier run, whose length is unknown. */
       durationMs: number;
+      hasCursorData: boolean;
       kind: "recording";
       originalSizeBytes: number;
       /** The working recording consumed by the native preview and export paths. */
@@ -120,12 +130,20 @@ export type ExportArtifact =
 
 export type ExportSnapshot = {
   artifact: ExportArtifact | null;
+  cursorEffects: CursorEffectSettings;
   directory: string | null;
   screenshotRadiusPercent: number;
 };
 
 export const initialExportSnapshot: ExportSnapshot = {
   artifact: null,
+  cursorEffects: {
+    bake: true,
+    clickAnimation: true,
+    motionBlur: true,
+    sizePercent: 100,
+    smoothMovement: true,
+  },
   directory: null,
   screenshotRadiusPercent: 0,
 };

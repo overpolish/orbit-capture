@@ -23,6 +23,13 @@ pub fn show_region_selector(
   position: PhysicalPosition<i32>,
   size: PhysicalSize<u32>,
 ) -> tauri::Result<()> {
+  if !region_selector_may_show(
+    crate::recording::is_idle(&app),
+    RECORDING_CONTROLS_VISIBLE.load(Ordering::Relaxed),
+  ) {
+    return Ok(());
+  }
+
   let region = app
     .get_webview_window(WindowLabel::RegionSelector.as_str())
     .ok_or_else(|| tauri::Error::WindowNotFound)?;
@@ -84,6 +91,14 @@ fn raise_recording_controls(app: &AppHandle) -> tauri::Result<()> {
 /// has to let clicks through to whatever is underneath.
 const fn region_selector_is_interactive(is_editing: bool, is_recording_idle: bool) -> bool {
   is_editing && is_recording_idle
+}
+
+/// The region boundary belongs to the recording UI while idle. Once an export
+/// takes over and hides that UI, a delayed frontend synchronization must not
+/// bring the overlay back by itself. An active recording may keep its existing
+/// boundary visible after the controls have gone.
+const fn region_selector_may_show(is_recording_idle: bool, controls_visible: bool) -> bool {
+  !is_recording_idle || controls_visible
 }
 
 /// Re-asserts that invariant against the window.
@@ -162,7 +177,7 @@ pub fn set_recording_controls_opacity(app: AppHandle, opacity: f64) -> tauri::Re
 
 #[cfg(test)]
 mod tests {
-  use super::region_selector_is_interactive;
+  use super::{region_selector_is_interactive, region_selector_may_show};
 
   #[test]
   fn the_region_overlay_takes_clicks_only_while_editing_outside_a_recording() {
@@ -170,5 +185,12 @@ mod tests {
     assert!(!region_selector_is_interactive(false, true));
     assert!(!region_selector_is_interactive(true, false));
     assert!(!region_selector_is_interactive(false, false));
+  }
+
+  #[test]
+  fn a_hidden_recording_ui_cannot_resurrect_only_its_region_overlay() {
+    assert!(region_selector_may_show(true, true));
+    assert!(region_selector_may_show(false, false));
+    assert!(!region_selector_may_show(true, false));
   }
 }

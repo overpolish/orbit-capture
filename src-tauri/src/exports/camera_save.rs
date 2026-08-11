@@ -70,6 +70,7 @@ pub(super) fn save_baked_recording(
   screen_size: (u32, u32),
   overlay: CameraOverlaySettings,
   video_settings: (u8, u16, u16),
+  cursor: Option<(&Path, cursor_effects::CursorEffectSettings)>,
   progress_app: &AppHandle,
   cancelled: &AtomicBool,
 ) -> Result<Option<PathBuf>, String> {
@@ -84,32 +85,52 @@ pub(super) fn save_baked_recording(
       99.0,
     );
   };
-  let exporter = media_preview::baked_recording_exporter()
-    .ok_or_else(|| "FFmpeg is required to bake in the camera recording".to_owned())?;
   let path = unique_path(directory, stem, RECORDING_EXTENSION, &|candidate| {
     candidate.exists()
   });
-  match exporter(
-    screen,
-    &camera.path,
-    &path,
-    selection,
-    layout,
-    media_preview::BakedVideoExportOptions {
-      camera_height: camera.height,
-      camera_width: camera.width,
-      overlay,
-      screen_height: screen_size.1,
-      screen_width: screen_size.0,
-      video: media_preview::VideoExportOptions {
-        compression: video_settings.0,
-        resolution_scale_percent: video_settings.1,
-        source_scale_percent: video_settings.2,
-      },
+  let baked = media_preview::BakedVideoExportOptions {
+    camera_height: camera.height,
+    camera_width: camera.width,
+    overlay,
+    screen_height: screen_size.1,
+    screen_width: screen_size.0,
+    video: media_preview::VideoExportOptions {
+      compression: video_settings.0,
+      resolution_scale_percent: video_settings.1,
+      source_scale_percent: video_settings.2,
     },
-    cancelled,
-    &mut on_progress,
-  )? {
+  };
+  let result = if let Some((cursor, cursor_effects)) = cursor {
+    cursor_export::export(cursor_export::CursorExportRequest {
+      audio_layout: layout,
+      camera: Some((&camera.path, baked)),
+      cancelled,
+      cursor,
+      cursor_effects,
+      destination: &path,
+      duration_ms,
+      height: screen_size.1,
+      on_progress: &mut on_progress,
+      screen,
+      selection,
+      video: baked.video,
+      width: screen_size.0,
+    })?
+  } else {
+    let exporter = media_preview::baked_recording_exporter()
+      .ok_or_else(|| "FFmpeg is required to bake in the camera recording".to_owned())?;
+    exporter(
+      screen,
+      &camera.path,
+      &path,
+      selection,
+      layout,
+      baked,
+      cancelled,
+      &mut on_progress,
+    )?
+  };
+  match result {
     media_preview::ExportRunResult::Completed => {
       emit_progress(
         progress_app,
@@ -124,8 +145,6 @@ pub(super) fn save_baked_recording(
         let _ = std::fs::remove_file(&path);
         return Err("The exported recording did not finish publishing".to_owned());
       }
-      let _ = std::fs::remove_file(screen);
-      let _ = std::fs::remove_file(&camera.path);
       Ok(Some(path))
     }
     media_preview::ExportRunResult::Cancelled => Ok(None),

@@ -59,13 +59,17 @@ pub(super) async fn begin(
   )?;
   let microphone = microphone_stream::start(microphone_source, &commands, &stats)?;
   system_audio_streams.start().await?;
+  let timeline_origin = Arc::new(OnceLock::new());
+  let begin_at = Instant::now();
+  let _ = timeline_origin.set(begin_at);
   commands
-    .send(Command::Begin { at: Instant::now() })
+    .send(Command::Begin { at: begin_at })
     .map_err(|_| "The audio recording writer stopped during startup".to_owned())?;
 
   let mut streams = Vec::new();
   system_audio_streams.append_to(&mut streams);
   Ok(CaptureStart {
+    cursor_source: None,
     first_frame: first_framed,
     session: CaptureSession {
       camera: None,
@@ -80,5 +84,6 @@ pub(super) async fn begin(
       worker: Some(worker),
     },
     source_scale_factor: 1.0,
+    timeline_origin,
   })
 }

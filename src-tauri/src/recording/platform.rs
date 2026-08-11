@@ -63,9 +63,11 @@ use session::StreamObjects;
 use writer::{Container, Writer, WriterConfig};
 
 pub struct CaptureStart {
+  pub cursor_source: Option<super::cursor::CursorSource>,
   pub first_frame: Receiver<Result<(), String>>,
   pub session: CaptureSession,
   pub source_scale_factor: f32,
+  pub timeline_origin: Arc<OnceLock<Instant>>,
 }
 
 pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, String> {

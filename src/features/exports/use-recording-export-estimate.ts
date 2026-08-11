@@ -9,6 +9,7 @@ import { mixSignature, VideoExportSettings } from "./recording-export-settings";
 import {
   AudioTrackVolume,
   CameraOverlaySettings,
+  CursorEffectSettings,
   ExportArtifact,
 } from "./types";
 
@@ -22,6 +23,7 @@ export function useRecordingExportEstimate({
   cameraOverlay,
   collapseAudio,
   compression,
+  cursorEffects,
   enabledStreamIndices,
   includeCamera,
   includePrimaryVideo,
@@ -34,6 +36,7 @@ export function useRecordingExportEstimate({
   cameraOverlay: CameraOverlaySettings;
   collapseAudio: boolean;
   compression: number;
+  cursorEffects: CursorEffectSettings;
   enabledStreamIndices: number[] | null;
   includeCamera: boolean;
   includePrimaryVideo: boolean;
@@ -63,6 +66,7 @@ export function useRecordingExportEstimate({
           includeCamera ? "camera" : "no-camera",
           bakeCamera ? "baked" : "separate",
           compression,
+          cursorEffects.bake ? "cursor" : "no-cursor",
           resolutionScalePercent,
           camera.compression,
           camera.resolutionScalePercent,
@@ -125,6 +129,7 @@ export function useRecordingExportEstimate({
         cameraResolutionScalePercent: camera.resolutionScalePercent,
         collapseAudio,
         compression,
+        cursorEffects,
         enabledStreamIndices: streamIndices,
         includeCamera,
         includePrimaryVideo,
@@ -159,6 +164,7 @@ export function useRecordingExportEstimate({
     cameraOverlay,
     collapseAudio,
     compression,
+    cursorEffects,
     enabledSignature,
     includeCamera,
     includePrimaryVideo,

@@ -5,6 +5,8 @@ mod artifact;
 mod audio_save;
 mod camera_save;
 pub(crate) mod commands;
+mod cursor_effects;
+mod cursor_export;
 mod directory;
 mod media_preview;
 mod naming;
@@ -23,7 +25,9 @@ use camera_save::validate_camera_overlay;
 use commands::set_export_directory;
 use directory::{current_directory, load_directory, store_directory};
 use naming::sanitize_file_stem;
-use preferences::{load_screenshot_radius, remember_screenshot_radius};
+use preferences::{
+  load_cursor_effects, load_screenshot_radius, remember_cursor_effects, remember_screenshot_radius,
+};
 pub use recovery::initialize;
 #[cfg(test)]
 use recovery::orphan_plan;
@@ -47,6 +51,10 @@ use crate::recording::{FinalizeInfo, PrimaryRecordingKind};
 use crate::screenshots::{
   encode_png, rounded_corners, screenshot_directory, unique_path, CapturedImage,
 };
+
+pub(crate) fn initialize_cursor_artwork() {
+  cursor_effects::initialize_artwork();
+}
 
 const EXPORT_CHANGED_EVENT: &str = "export://artifact";
 const EXPORT_PROGRESS_EVENT: &str = "export://progress";
@@ -92,6 +100,7 @@ pub enum ExportArtifact {
   Recording {
     audio_tracks: Vec<RecordingAudioTrack>,
     camera: Option<RecordingCamera>,
+    cursor: Option<RecordingCursor>,
     id: u64,
     duration_ms: u64,
     height: u32,
@@ -125,6 +134,8 @@ pub enum ExportArtifactSnapshot {
     audio_tracks: Vec<RecordingAudioTrack>,
     camera: Option<RecordingCamera>,
     can_compress: bool,
+    cursor_data_version: Option<u16>,
+    has_cursor_data: bool,
     id: u64,
     suggested_file_stem: String,
     extension: String,
@@ -167,6 +178,11 @@ pub struct RecordingCamera {
   pub width: u32,
 }
 
+pub struct RecordingCursor {
+  pub format_version: u16,
+  pub path: PathBuf,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CameraOverlaySettings {
@@ -190,6 +206,7 @@ pub struct RecordingExportOptions {
   pub camera_resolution_scale_percent: u16,
   pub collapse_audio: bool,
   pub compression: u8,
+  pub cursor_effects: cursor_effects::CursorEffectSettings,
   pub enabled_stream_indices: Vec<usize>,
   pub include_camera: bool,
   pub include_primary_video: bool,
@@ -230,6 +247,7 @@ fn recording_audio_tracks(
 #[serde(rename_all = "camelCase")]
 pub struct ExportSnapshot {
   pub artifact: Option<ExportArtifactSnapshot>,
+  pub cursor_effects: cursor_effects::CursorEffectSettings,
   pub directory: Option<PathBuf>,
   pub screenshot_radius_percent: f64,
 }
@@ -257,6 +275,7 @@ pub struct ExportState {
   /// Built only if the user zooms in, because it is the whole capture.
   full_preview: Mutex<Option<Vec<u8>>>,
   directory: Mutex<Option<PathBuf>>,
+  cursor_effects: Mutex<cursor_effects::CursorEffectSettings>,
   screenshot_radius_percent: Mutex<f64>,
   recording_preview: Mutex<Option<media_preview::RecordingPreview>>,
   recording_preview_preparation: Mutex<()>,

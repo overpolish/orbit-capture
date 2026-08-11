@@ -10,12 +10,12 @@ pub async fn start_recording_preview_player(
   app: AppHandle,
   state: tauri::State<'_, RecordingPreviewPlayerState>,
   artifact_id: u64,
-  audio: PreviewAudioSettings,
+  settings: PreviewPlayerSettings,
   frame_channel: Channel,
   event_channel: Channel<RecordingPreviewPlayerEvent>,
   session_id: u64,
 ) -> Result<RecordingPreviewPlayerInfo, String> {
-  let sources = sources(&app, artifact_id)?;
+  let sources = sources(&app, artifact_id, settings.cursor_effects)?;
   let info = RecordingPreviewPlayerInfo {
     duration_ms: sources.duration_ms,
     layout: sources.layout.clone(),
@@ -30,8 +30,8 @@ pub async fn start_recording_preview_player(
   manager.stop();
   manager.latest_session_id = session_id;
   manager.artifact_id = Some(artifact_id);
-  manager.audio_indices = audio.enabled_stream_indices;
-  manager.audio_volumes = audio.audio_track_volumes;
+  manager.audio_indices = settings.audio.enabled_stream_indices;
+  manager.audio_volumes = settings.audio.audio_track_volumes;
   manager.event_channel = Some(event_channel);
   manager.frame_channel = Some(frame_channel);
   manager.latest_seek_request = 0;
@@ -40,6 +40,32 @@ pub async fn start_recording_preview_player(
   manager.session_id = Some(session_id);
   manager.restart(PlaybackMode::Still)?;
   Ok(info)
+}
+
+#[tauri::command]
+pub fn set_recording_preview_cursor_effects(
+  state: tauri::State<'_, RecordingPreviewPlayerState>,
+  cursor_effects: CursorEffectSettings,
+  session_id: u64,
+) -> Result<(), String> {
+  let mut manager = state
+    .0
+    .lock()
+    .map_err(|_| "The recording preview player is unavailable".to_owned())?;
+  manager.require_session(session_id)?;
+  let settings = manager
+    .sources
+    .as_ref()
+    .ok_or_else(|| "The recording preview player is not open".to_owned())?
+    .cursor_settings
+    .clone();
+  *settings
+    .write()
+    .map_err(|_| "The cursor preview settings are unavailable".to_owned())? = cursor_effects;
+  if !manager.is_playing {
+    manager.restart(PlaybackMode::Still)?;
+  }
+  Ok(())
 }
 
 #[tauri::command]

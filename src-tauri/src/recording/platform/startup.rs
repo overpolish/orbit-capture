@@ -51,6 +51,9 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
     .map(|content| video_source::resolve(content, &primary))
     .transpose()?
     .flatten();
+  let cursor_source = primary_video
+    .as_ref()
+    .map(|video| video.cursor_source.clone());
   let source_scale_factor = primary_video
     .as_ref()
     .map_or(1.0, |video| video.source_scale_factor);
@@ -180,6 +183,7 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
     None => first_frame,
   };
   Ok(CaptureStart {
+    cursor_source,
     session: CaptureSession {
       camera: secondary_camera,
       commands,
@@ -194,5 +198,6 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
     },
     first_frame,
     source_scale_factor,
+    timeline_origin,
   })
 }

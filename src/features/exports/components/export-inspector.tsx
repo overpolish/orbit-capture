@@ -23,6 +23,7 @@ import {
 } from "../resolution";
 import {
   ExportArtifact,
+  CursorEffectSettings,
   recordingAudioStreamIndex,
   recordingAudioTrackId,
   RecordingTrackId,
@@ -80,6 +81,7 @@ export function ExportInspector({
   cameraResolutionScalePercent,
   collapseAudio,
   compression,
+  cursorEffects,
   enabledAudioTrackCount = 0,
   enabledVideoTracks = [],
   error,
@@ -91,6 +93,7 @@ export function ExportInspector({
   onCameraResolutionScaleChange,
   onCollapseAudioChange,
   onCompressionChange,
+  onCursorEffectsChange,
   onResolutionScaleChange,
   onSelectedTrackChange,
   onSelectedTrackVolumeChange,
@@ -103,6 +106,7 @@ export function ExportInspector({
   cameraCompression: number;
   cameraResolutionScalePercent: number;
   compression: number;
+  cursorEffects: CursorEffectSettings;
   selectedTrack: RecordingTrackId | null;
   collapseAudio?: boolean;
   enabledAudioTrackCount?: number;
@@ -116,6 +120,7 @@ export function ExportInspector({
   onCameraResolutionScaleChange?: (scale: number) => void;
   onCollapseAudioChange?: (collapse: boolean) => void;
   onCompressionChange?: (compression: number) => void;
+  onCursorEffectsChange?: (settings: CursorEffectSettings) => void;
   onResolutionScaleChange?: (scale: number) => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
   onSelectedTrackVolumeChange?: (decibels: number) => void;
@@ -135,6 +140,9 @@ export function ExportInspector({
     videoSelection.has("primary") && videoSelection.has("camera");
   const tabs = trackTabs(artifact);
   const effectiveSelectedTrack = selectedTrack ?? tabs[0].id;
+  const cursorSizePercent = Number.isFinite(cursorEffects.sizePercent)
+    ? cursorEffects.sizePercent
+    : 100;
 
   return (
     <aside className="flex min-h-0 min-w-0 flex-col border-r border-muted/15 bg-content/35">
@@ -188,6 +196,89 @@ export function ExportInspector({
                 originalSizeBytes={artifact.originalSizeBytes}
               />
             </>
+          ) : null}
+
+          {inspectorTab === "cursor" && artifact.hasCursorData ? (
+            <div className="flex flex-col gap-4">
+              <Checkbox
+                isDisabled={isSaving}
+                isSelected={cursorEffects.bake}
+                onChange={(bake) => {
+                  onCursorEffectsChange?.({ ...cursorEffects, bake });
+                }}
+                size="sm"
+              >
+                <span className="flex flex-col">
+                  <span className="text-xs">Bake cursor into recording</span>
+                  <span className="text-xxs text-muted">
+                    Dynamic Orbit Capture cursor
+                  </span>
+                </span>
+              </Checkbox>
+
+              <Checkbox
+                isDisabled={isSaving || !cursorEffects.bake}
+                isSelected={cursorEffects.smoothMovement}
+                onChange={(smoothMovement) => {
+                  onCursorEffectsChange?.({
+                    ...cursorEffects,
+                    smoothMovement,
+                  });
+                }}
+                size="sm"
+              >
+                <span className="flex flex-col">
+                  <span className="text-xs">Smooth movement</span>
+                  <span className="text-xxs text-muted">
+                    Adds natural smoothing and momentum.
+                  </span>
+                </span>
+              </Checkbox>
+
+              <Slider
+                isDisabled={isSaving || !cursorEffects.bake}
+                label="Cursor size"
+                maxValue={500}
+                minValue={50}
+                onChange={(sizePercent) => {
+                  onCursorEffectsChange?.({
+                    ...cursorEffects,
+                    sizePercent,
+                  });
+                }}
+                renderValue={(value) => `${value.toString()}%`}
+                step={5}
+                value={cursorSizePercent}
+              />
+
+              <Checkbox
+                isDisabled={isSaving || !cursorEffects.bake}
+                isSelected={cursorEffects.motionBlur}
+                onChange={(motionBlur) => {
+                  onCursorEffectsChange?.({
+                    ...cursorEffects,
+                    motionBlur,
+                  });
+                }}
+                size="sm"
+              >
+                <span className="text-xs">Motion blur</span>
+              </Checkbox>
+
+              <Checkbox
+                isDisabled={isSaving || !cursorEffects.bake}
+                isSelected={cursorEffects.clickAnimation}
+                onChange={(clickAnimation) => {
+                  onCursorEffectsChange?.({
+                    ...cursorEffects,
+                    clickAnimation,
+                  });
+                }}
+                size="sm"
+              >
+                <span className="text-xs">Click animation</span>
+              </Checkbox>
+            </div>
           ) : null}
 
           {tabs.length > 0 ? (

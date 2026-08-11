@@ -27,6 +27,8 @@ fn decodes_tracks_into_independent_pcm_channels() {
     ],
     camera_duration_ms: None,
     camera_path: None,
+    cursor: None,
+    cursor_settings: Default::default(),
     duration_ms: 1_000,
     layout: layout.clone(),
     playback_layout: layout,

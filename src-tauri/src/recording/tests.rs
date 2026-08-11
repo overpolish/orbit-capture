@@ -196,6 +196,19 @@ fn takes_the_frame_rate_the_bar_sends() {
 }
 
 #[test]
+fn cursor_metadata_does_not_depend_on_the_native_cursor_pixels() {
+  for mode in [
+    RecordingMode::Screen,
+    RecordingMode::Region,
+    RecordingMode::Window,
+  ] {
+    assert!(session::records_cursor(mode));
+  }
+  assert!(!session::records_cursor(RecordingMode::Camera));
+  assert!(!session::records_cursor(RecordingMode::Audio));
+}
+
+#[test]
 fn accepts_a_region_with_monitor_local_geometry() {
   let options: StartRecordingOptions = serde_json::from_str(
     r#"{

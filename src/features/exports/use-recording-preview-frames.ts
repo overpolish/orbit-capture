@@ -15,6 +15,11 @@ export function useRecordingPreviewFrames({
   onError: (message: string) => void;
   screenCanvasRef: RefObject<HTMLCanvasElement | null>;
 }) {
+  const clearCanvases = useCallback(() => {
+    for (const canvas of [screenCanvasRef.current, cameraCanvasRef.current]) {
+      canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }, [cameraCanvasRef, screenCanvasRef]);
   const layoutRef = useRef<RecordingPreviewLayout | null>(null);
   const latestFrameRef = useRef<ArrayBuffer | null>(null);
   const displayedFrameRef = useRef<ArrayBuffer | null>(null);
@@ -83,8 +88,12 @@ export function useRecordingPreviewFrames({
 
   const begin = useCallback(() => {
     displayedFrameRequestRef.current = 0;
+    latestFrameRef.current = null;
+    displayedFrameRef.current = null;
+    displayedTargetsRef.current = { camera: null, screen: null };
+    clearCanvases();
     setIsPreparing(true);
-  }, []);
+  }, [clearCanvases]);
   const receive = useCallback((frame: ArrayBuffer) => {
     latestFrameRef.current = frame;
   }, []);
@@ -92,7 +101,8 @@ export function useRecordingPreviewFrames({
     latestFrameRef.current = null;
     displayedFrameRef.current = null;
     displayedTargetsRef.current = { camera: null, screen: null };
-  }, []);
+    clearCanvases();
+  }, [clearCanvases]);
   const setLayout = useCallback((next: RecordingPreviewLayout) => {
     layoutRef.current = next;
     setPreviewLayout(next);

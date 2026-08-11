@@ -109,8 +109,11 @@ export function RecordingBarWindow() {
   );
 
   useEffect(() => {
+    // Returning to idle does not mean the controls should return: a completed
+    // capture hands ownership to the export window. Explicitly showing the
+    // recording UI emits the event below and synchronizes it at that point.
     void synchronizeRecordingUi();
-  }, [recordingMode, selectedMonitor, status]);
+  }, [recordingMode, selectedMonitor]);
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;

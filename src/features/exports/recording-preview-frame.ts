@@ -33,20 +33,19 @@ const drawRegion = (
 const drawPane = ({
   bitmap,
   canvas,
-  height,
-  width,
 }: {
   bitmap: ImageBitmap;
   canvas: HTMLCanvasElement | null;
-  height: number;
-  width: number;
 }) => {
   if (!canvas) return;
-  if (canvas.width !== width) canvas.width = width;
-  if (canvas.height !== height) canvas.height = height;
+  // The pane's CSS size describes its place in the preview layout. Keep the
+  // canvas backing store at the resolution supplied by the native decoder so
+  // a source-resolution still is not immediately reduced back to 720p.
+  if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
+  if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
   canvas
     .getContext("2d", { alpha: false })
-    ?.drawImage(bitmap, 0, 0, width, height);
+    ?.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height);
 };
 
 const drawNativeFrame = async ({
@@ -89,20 +88,15 @@ const drawNativeFrame = async ({
     cameraBitmap?.close();
     return false;
   }
-  const screenPane = layout.panes[0];
   drawPane({
     bitmap: screenBitmap,
     canvas: screen,
-    height: screenPane.height,
-    width: screenPane.width,
   });
   const cameraPane = layout.panes.find((pane) => pane.kind === "camera");
   if (cameraBitmap && cameraPane)
     drawPane({
       bitmap: cameraBitmap,
       canvas: camera,
-      height: cameraPane.height,
-      width: cameraPane.width,
     });
   screenBitmap.close();
   cameraBitmap?.close();

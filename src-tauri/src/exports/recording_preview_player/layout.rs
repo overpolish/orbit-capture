@@ -4,6 +4,7 @@
 use serde::Serialize;
 
 pub(super) const PREVIEW_HEIGHT: u32 = 720;
+pub(super) const SIDE_BY_SIDE_PREVIEW_HEIGHT: u32 = PREVIEW_HEIGHT * 2;
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]

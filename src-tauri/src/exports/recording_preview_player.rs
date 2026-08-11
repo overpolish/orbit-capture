@@ -6,7 +6,10 @@
 //! Rust owns decode, audio output, seeking and the playback clock, and sends
 //! the UI individual JPEG frames to draw on canvases.
 
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+  path::PathBuf,
+  sync::{Arc, Mutex, RwLock},
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::{ipc::Channel, AppHandle, Manager};
@@ -22,11 +25,16 @@ mod video;
 mod video_macos;
 mod worker;
 
-use self::layout::{preview_layout, RecordingPreviewLayout, PREVIEW_HEIGHT};
+use self::layout::{
+  preview_layout, RecordingPreviewLayout, PREVIEW_HEIGHT, SIDE_BY_SIDE_PREVIEW_HEIGHT,
+};
 #[cfg(target_os = "macos")]
 use self::still_macos::NativeStillDecoder;
 use self::worker::{PlaybackMode, PreviewPlayerWorker};
-use super::{AudioTrackVolume, ExportArtifact, ExportState, RecordingAudioTrack};
+use super::{
+  cursor_effects::{CursorCompositor, CursorEffectSettings},
+  AudioTrackVolume, ExportArtifact, ExportState, RecordingAudioTrack,
+};
 use crate::recording::PrimaryRecordingKind;
 pub use commands::stop_all;
 
@@ -35,6 +43,8 @@ pub(super) struct PlayerSources {
   audio_tracks: Vec<RecordingAudioTrack>,
   camera_duration_ms: Option<u64>,
   camera_path: Option<PathBuf>,
+  cursor: Option<Arc<CursorCompositor>>,
+  cursor_settings: Arc<RwLock<CursorEffectSettings>>,
   duration_ms: u64,
   layout: RecordingPreviewLayout,
   playback_layout: RecordingPreviewLayout,
@@ -46,6 +56,13 @@ pub(super) struct PlayerSources {
 pub(crate) struct PreviewAudioSettings {
   pub audio_track_volumes: Vec<AudioTrackVolume>,
   pub enabled_stream_indices: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreviewPlayerSettings {
+  pub audio: PreviewAudioSettings,
+  pub cursor_effects: CursorEffectSettings,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -164,7 +181,11 @@ impl PreviewPlayerManager {
 #[derive(Default)]
 pub struct RecordingPreviewPlayerState(Mutex<PreviewPlayerManager>);
 
-fn sources(app: &AppHandle, artifact_id: u64) -> Result<PlayerSources, String> {
+fn sources(
+  app: &AppHandle,
+  artifact_id: u64,
+  cursor_settings: CursorEffectSettings,
+) -> Result<PlayerSources, String> {
   let state = app.state::<ExportState>();
   let artifact = state
     .artifact
@@ -173,6 +194,7 @@ fn sources(app: &AppHandle, artifact_id: u64) -> Result<PlayerSources, String> {
   let Some(ExportArtifact::Recording {
     audio_tracks,
     camera,
+    cursor,
     duration_ms,
     height,
     id,
@@ -193,13 +215,27 @@ fn sources(app: &AppHandle, artifact_id: u64) -> Result<PlayerSources, String> {
     PrimaryRecordingKind::Camera => Some((*width, *height, layout::PreviewPaneKind::Camera)),
     PrimaryRecordingKind::Audio => None,
   };
+  // Two panes are fitted across the preview rather than down its height. On a
+  // Retina display a 720p backing frame is then visibly enlarged, so retain a
+  // 2x working frame for side-by-side playback and scrubbing. Single-pane
+  // previews keep the lighter 720p path.
+  let playback_height = if camera_size.is_some() {
+    SIDE_BY_SIDE_PREVIEW_HEIGHT
+  } else {
+    PREVIEW_HEIGHT
+  };
   Ok(PlayerSources {
     audio_tracks: audio_tracks.clone(),
     camera_duration_ms: camera.as_ref().map(|value| value.duration_ms),
     camera_path: camera.as_ref().map(|value| value.path.clone()),
+    cursor: cursor
+      .as_ref()
+      .map(|value| CursorCompositor::open(&value.path).map(Arc::new))
+      .transpose()?,
+    cursor_settings: Arc::new(RwLock::new(cursor_settings)),
     duration_ms: *duration_ms,
     layout: preview_layout(primary_pane, camera_size, *height),
-    playback_layout: preview_layout(primary_pane, camera_size, PREVIEW_HEIGHT),
+    playback_layout: preview_layout(primary_pane, camera_size, playback_height),
     screen_path: path.clone(),
   })
 }

@@ -38,6 +38,13 @@ export function NativeRecordingPreview({
   audioTracks = EMPTY_AUDIO_TRACKS,
   bakeCamera = false,
   cameraOverlay = defaultCameraOverlay(),
+  cursorEffects = {
+    bake: true,
+    clickAnimation: true,
+    motionBlur: true,
+    sizePercent: 100,
+    smoothMovement: true,
+  },
   durationMs,
   enabledStreamIndices,
   enabledVideoTracks = [],
@@ -76,6 +83,7 @@ export function NativeRecordingPreview({
     artifactId,
     audioTrackVolumes,
     cameraCanvasRef,
+    cursorEffects,
     enabledStreamIndices: selectedStreamIndices,
     isEnabled: previewLayout === undefined,
     onPosition: (positionMs) => {

@@ -81,6 +81,12 @@ pub(super) fn camera_for_recording(recording: &Path) -> Option<PathBuf> {
   camera.is_file().then_some(camera)
 }
 
+pub(super) fn cursor_for_recording(recording: &Path) -> Option<PathBuf> {
+  let stem = recording.file_stem()?.to_str()?;
+  let cursor = recording.with_file_name(format!("{stem}.cursor.jsonl"));
+  (cursor.is_file() && crate::recording::cursor::read(&cursor).is_ok()).then_some(cursor)
+}
+
 pub(super) fn sweep_unclaimed_cameras(directory: &Path, keep: Option<&Path>) {
   let Ok(entries) = std::fs::read_dir(directory) else {
     return;
@@ -92,6 +98,22 @@ pub(super) fn sweep_unclaimed_cameras(directory: &Path, keep: Option<&Path>) {
       .and_then(|name| name.to_str())
       .is_some_and(|name| name.starts_with("camera-"));
     if is_camera && keep != Some(path.as_path()) {
+      let _ = std::fs::remove_file(path);
+    }
+  }
+}
+
+pub(super) fn sweep_unclaimed_cursors(directory: &Path, keep: Option<&Path>) {
+  let Ok(entries) = std::fs::read_dir(directory) else {
+    return;
+  };
+  for entry in entries.flatten() {
+    let path = entry.path();
+    let is_cursor = path
+      .file_name()
+      .and_then(|name| name.to_str())
+      .is_some_and(|name| name.starts_with("recording-") && name.ends_with(".cursor.jsonl"));
+    if is_cursor && keep != Some(path.as_path()) {
       let _ = std::fs::remove_file(path);
     }
   }
@@ -138,10 +160,13 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
   }
   let Some(path) = plan.present else {
     sweep_unclaimed_cameras(&directory, None);
+    sweep_unclaimed_cursors(&directory, None);
     return;
   };
   let camera_path = camera_for_recording(&path);
+  let cursor_path = cursor_for_recording(&path);
   sweep_unclaimed_cameras(&directory, camera_path.as_deref());
+  sweep_unclaimed_cursors(&directory, cursor_path.as_deref());
 
   let recorded_at = std::fs::metadata(&path)
     .and_then(|metadata| metadata.modified())
@@ -168,6 +193,7 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
         path,
         width: 0,
       }),
+      cursor_path,
       has_microphone: false,
       has_system_audio: false,
       duration_ms: 0,
@@ -198,6 +224,11 @@ pub fn initialize(app: &AppHandle) {
     .screenshot_radius_percent
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_screenshot_radius(app);
+  *app
+    .state::<ExportState>()
+    .cursor_effects
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_cursor_effects(app);
 
   sweep_orphaned_recordings(app);
 }

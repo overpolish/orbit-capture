@@ -13,25 +13,27 @@ fn even_scaled(value: u32, numerator: u16, denominator: u16) -> u32 {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct BakeGeometry {
-  crop_height: u32,
-  crop_width: u32,
-  crop_x: u32,
-  crop_y: u32,
-  frame_height: u32,
-  frame_width: u32,
-  frame_x: u32,
-  frame_y: u32,
-  output_height: u32,
-  output_width: u32,
-  radius: u32,
+pub(in crate::exports) struct BakeGeometry {
+  pub crop_height: u32,
+  pub crop_width: u32,
+  pub crop_x: u32,
+  pub crop_y: u32,
+  pub frame_height: u32,
+  pub frame_width: u32,
+  pub frame_x: u32,
+  pub frame_y: u32,
+  pub output_height: u32,
+  pub output_width: u32,
+  pub radius: u32,
 }
 
 fn even(value: f64) -> u32 {
   ((value.round().max(2.0) as u32) & !1).max(2)
 }
 
-fn bake_geometry(options: BakedVideoExportOptions) -> Result<BakeGeometry, String> {
+pub(in crate::exports) fn bake_geometry(
+  options: BakedVideoExportOptions,
+) -> Result<BakeGeometry, String> {
   let output_width = even_scaled(
     options.screen_width,
     options.video.resolution_scale_percent,
@@ -106,14 +108,11 @@ fn rounded_alpha(radius: u32) -> String {
   )
 }
 
-pub(super) fn baked_export_args(
-  screen: &Path,
-  camera: &Path,
-  destination: &Path,
-  selection: &TrackSelection,
-  layout: AudioLayout,
+pub(in crate::exports) fn baked_video_filter(
+  screen: &str,
+  camera: &str,
   options: BakedVideoExportOptions,
-) -> Result<Vec<OsString>, String> {
+) -> Result<String, String> {
   let geometry = bake_geometry(options)?;
   let alpha = rounded_alpha(geometry.radius);
   let BakeGeometry {
@@ -129,13 +128,25 @@ pub(super) fn baked_export_args(
     output_width,
     ..
   } = geometry;
-  let video_filter = format!(
-    "[0:v:0]setpts=PTS-STARTPTS,scale={output_width}:{output_height}:flags=lanczos,setsar=1[screen];\
-     [1:v:0]setpts=PTS-STARTPTS,crop={crop_width}:{crop_height}:{crop_x}:{crop_y},\
+
+  Ok(format!(
+    "{screen}setpts=PTS-STARTPTS,scale={output_width}:{output_height}:flags=lanczos,setsar=1[screen];\
+     {camera}setpts=PTS-STARTPTS,crop={crop_width}:{crop_height}:{crop_x}:{crop_y},\
      scale={frame_width}:{frame_height}:flags=lanczos,format=rgba,\
      geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'[camera];\
      [screen][camera]overlay={frame_x}:{frame_y}:shortest=0:eof_action=repeat:format=auto[video]"
-  );
+  ))
+}
+
+pub(super) fn baked_export_args(
+  screen: &Path,
+  camera: &Path,
+  destination: &Path,
+  selection: &TrackSelection,
+  layout: AudioLayout,
+  options: BakedVideoExportOptions,
+) -> Result<Vec<OsString>, String> {
+  let video_filter = baked_video_filter("[0:v:0]", "[1:v:0]", options)?;
   let mut audio_args = selection.audio_args(layout);
   let filter = if audio_args
     .first()

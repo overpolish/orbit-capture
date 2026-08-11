@@ -7,6 +7,7 @@ import { Overlay } from "../../../components/base/overlay/overlay";
 import {
   AudioTrackVolume,
   CameraOverlaySettings,
+  CursorEffectSettings,
   ExportArtifact,
   PreparedAudioTrack,
   RecordingPreviewLayout,
@@ -29,6 +30,7 @@ type ExportPanelProps = {
   cameraResolutionScalePercent?: number;
   collapseAudio?: boolean;
   compression?: number;
+  cursorEffects?: CursorEffectSettings;
   enabledAudioTrackCount?: number;
   enabledStreamIndices?: number[];
   enabledVideoTracks?: RecordingVideoTrackId[];
@@ -50,6 +52,7 @@ type ExportPanelProps = {
   onCollapseAudioChange?: (collapse: boolean) => void;
   onCompressionChange?: (compression: number) => void;
   onCopy?: () => void;
+  onCursorEffectsChange?: (settings: CursorEffectSettings) => void;
   onEnabledTracksChange?: (streamIndices: number[]) => void;
   onEnabledVideoTracksChange?: (tracks: RecordingVideoTrackId[]) => void;
   onFileStemChange?: (fileStem: string) => void;
@@ -81,6 +84,13 @@ export function ExportPanel({
   cameraResolutionScalePercent = 100,
   collapseAudio,
   compression = 0,
+  cursorEffects = {
+    bake: true,
+    clickAnimation: true,
+    motionBlur: true,
+    sizePercent: 100,
+    smoothMovement: true,
+  },
   directory,
   enabledAudioTrackCount,
   enabledStreamIndices,
@@ -104,6 +114,7 @@ export function ExportPanel({
   onCollapseAudioChange,
   onCompressionChange,
   onCopy,
+  onCursorEffectsChange,
   onEnabledTracksChange,
   onEnabledVideoTracksChange,
   onFileStemChange,
@@ -141,6 +152,7 @@ export function ExportPanel({
         cameraResolutionScalePercent={cameraResolutionScalePercent}
         collapseAudio={collapseAudio}
         compression={compression}
+        cursorEffects={cursorEffects}
         enabledAudioTrackCount={enabledAudioTrackCount}
         enabledVideoTracks={enabledVideoTracks}
         error={error}
@@ -152,6 +164,7 @@ export function ExportPanel({
         onCameraResolutionScaleChange={onCameraResolutionScaleChange}
         onCollapseAudioChange={onCollapseAudioChange}
         onCompressionChange={onCompressionChange}
+        onCursorEffectsChange={onCursorEffectsChange}
         onResolutionScaleChange={onResolutionScaleChange}
         onSelectedTrackChange={onSelectedTrackChange}
         onSelectedTrackVolumeChange={onSelectedTrackVolumeChange}
@@ -229,8 +242,10 @@ export function ExportPanel({
           bakeCamera={bakeCamera}
           cameraOverlay={cameraOverlay}
           cameraResolutionScalePercent={cameraResolutionScalePercent}
+          cursorEffects={cursorEffects}
           enabledStreamIndices={enabledStreamIndices}
           enabledVideoTracks={enabledVideoTracks}
+          hasCursorData={artifact.hasCursorData}
           inspector={inspector}
           isPreparingRecordingAudio={isPreparingRecordingAudio}
           isPreparingRecordingPreview={isPreparingRecordingPreview}

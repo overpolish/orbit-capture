@@ -25,6 +25,7 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
       ExportArtifact::Recording {
         audio_tracks,
         camera,
+        cursor,
         duration_ms,
         height,
         id,
@@ -38,6 +39,8 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
         camera: camera.clone(),
         can_compress: *primary_kind != PrimaryRecordingKind::Audio
           && media_preview::supports_compression(),
+        cursor_data_version: cursor.as_ref().map(|cursor| cursor.format_version),
+        has_cursor_data: cursor.is_some(),
         id: *id,
         suggested_file_stem: suggested_file_stem.clone(),
         extension: if *primary_kind == PrimaryRecordingKind::Audio {
@@ -52,6 +55,10 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
           + camera
             .as_ref()
             .and_then(|camera| std::fs::metadata(&camera.path).ok())
+            .map_or(0, |metadata| metadata.len())
+          + cursor
+            .as_ref()
+            .and_then(|cursor| std::fs::metadata(&cursor.path).ok())
             .map_or(0, |metadata| metadata.len()),
         path: path.clone(),
         primary_kind: *primary_kind,
@@ -63,9 +70,14 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
     .screenshot_radius_percent
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner());
+  let cursor_effects = *state
+    .cursor_effects
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner());
 
   ExportSnapshot {
     artifact,
+    cursor_effects,
     directory: current_directory(app),
     screenshot_radius_percent,
   }
@@ -123,10 +135,19 @@ pub(super) fn full_preview_png(image: &CapturedImage) -> Result<Vec<u8>, String>
 /// A screenshot lives in memory and needs nothing; a recording is a file, and
 /// every path that lets go of one without saving it comes through here.
 pub(super) fn delete_working_file(artifact: &ExportArtifact) {
-  if let ExportArtifact::Recording { camera, path, .. } = artifact {
+  if let ExportArtifact::Recording {
+    camera,
+    cursor,
+    path,
+    ..
+  } = artifact
+  {
     let _ = std::fs::remove_file(path);
     if let Some(camera) = camera {
       let _ = std::fs::remove_file(&camera.path);
+    }
+    if let Some(cursor) = cursor {
+      let _ = std::fs::remove_file(&cursor.path);
     }
   }
 }
@@ -149,6 +170,20 @@ pub(super) fn clear_recording_preview(app: &AppHandle) {
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner())
     .clear();
+}
+
+pub(super) fn clear_cached_previews(app: &AppHandle) {
+  let state = app.state::<ExportState>();
+  state
+    .preview
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .take();
+  state
+    .full_preview
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .take();
 }
 
 /// The next artifact identity. Two consecutive captures are otherwise
@@ -232,6 +267,7 @@ pub fn present_recording(
 ) -> Result<(), String> {
   let FinalizeInfo {
     camera,
+    cursor_path,
     has_microphone,
     has_system_audio,
     duration_ms,
@@ -253,12 +289,22 @@ pub fn present_recording(
     ExportArtifact::Recording {
       id: next_id(app),
       audio_tracks,
-      camera: camera.map(|camera| RecordingCamera {
-        duration_ms: camera.duration_ms,
-        height: camera.height,
-        original_size_bytes: std::fs::metadata(&camera.path).map_or(0, |metadata| metadata.len()),
-        path: camera.path,
-        width: camera.width,
+      camera: camera.map(|camera| {
+        let camera_duration_ms = (camera.duration_ms > 0)
+          .then_some(camera.duration_ms)
+          .or_else(|| media_preview::duration_ms(&camera.path))
+          .unwrap_or(duration_ms);
+        RecordingCamera {
+          duration_ms: camera_duration_ms,
+          height: camera.height,
+          original_size_bytes: std::fs::metadata(&camera.path).map_or(0, |metadata| metadata.len()),
+          path: camera.path,
+          width: camera.width,
+        }
+      }),
+      cursor: cursor_path.map(|path| RecordingCursor {
+        format_version: crate::recording::cursor::FORMAT_VERSION,
+        path,
       }),
       duration_ms,
       height,
@@ -273,19 +319,7 @@ pub fn present_recording(
 }
 
 pub(super) fn take_artifact(app: &AppHandle) -> Option<ExportArtifact> {
-  clear_recording_preview(app);
   let state = app.state::<ExportState>();
-  let _ = state
-    .preview
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner())
-    .take();
-  let _ = state
-    .full_preview
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner())
-    .take();
-
   let artifact = state
     .artifact
     .lock()
@@ -298,6 +332,8 @@ pub(super) fn take_artifact(app: &AppHandle) -> Option<ExportArtifact> {
 /// Drops the pending artifact and puts the window away. Cancelling and closing
 /// the window are the same act.
 pub fn discard(app: &AppHandle) {
+  clear_recording_preview(app);
+  clear_cached_previews(app);
   if let Some(artifact) = take_artifact(app) {
     delete_working_file(&artifact);
   }

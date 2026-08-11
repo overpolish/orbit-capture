@@ -9,6 +9,7 @@ import {
   ExportSnapshot,
   RecordingPreview,
   RecordingPreviewLayout,
+  CursorEffectSettings,
 } from "./types";
 
 export type RecordingPreviewPlayerEvent =
@@ -41,6 +42,7 @@ export const getRecordingPreview = (artifactId: number) =>
 export const startRecordingPreviewPlayer = ({
   artifactId,
   audioTrackVolumes,
+  cursorEffects,
   enabledStreamIndices,
   eventChannel,
   frameChannel,
@@ -48,6 +50,7 @@ export const startRecordingPreviewPlayer = ({
 }: {
   artifactId: number;
   audioTrackVolumes: AudioTrackVolume[];
+  cursorEffects: CursorEffectSettings;
   enabledStreamIndices: number[];
   eventChannel: Channel<RecordingPreviewPlayerEvent>;
   frameChannel: Channel<ArrayBuffer>;
@@ -55,10 +58,13 @@ export const startRecordingPreviewPlayer = ({
 }) =>
   invoke<RecordingPreviewPlayerInfo>("start_recording_preview_player", {
     artifactId,
-    audio: { audioTrackVolumes, enabledStreamIndices },
     eventChannel,
     frameChannel,
     sessionId,
+    settings: {
+      audio: { audioTrackVolumes, enabledStreamIndices },
+      cursorEffects,
+    },
   });
 
 export const playRecordingPreview = (sessionId: number) =>
@@ -101,6 +107,15 @@ export const setRecordingPreviewAudioVolumes = (
     sessionId,
   });
 
+export const setRecordingPreviewCursorEffects = (
+  cursorEffects: CursorEffectSettings,
+  sessionId: number,
+) =>
+  invoke<null>("set_recording_preview_cursor_effects", {
+    cursorEffects,
+    sessionId,
+  });
+
 export const stopRecordingPreviewPlayer = (sessionId: number) =>
   invoke<null>("stop_recording_preview_player", { sessionId });
 
@@ -123,6 +138,7 @@ type RecordingProcessingOptions = {
   cameraResolutionScalePercent: number;
   collapseAudio: boolean;
   compression: number;
+  cursorEffects: CursorEffectSettings;
   enabledStreamIndices: number[];
   includeCamera: boolean;
   includePrimaryVideo: boolean;
@@ -139,6 +155,7 @@ export const estimateRecordingExport = ({
   cameraResolutionScalePercent,
   collapseAudio,
   compression,
+  cursorEffects,
   enabledStreamIndices,
   includeCamera,
   includePrimaryVideo,
@@ -155,6 +172,7 @@ export const estimateRecordingExport = ({
       cameraResolutionScalePercent,
       collapseAudio,
       compression,
+      cursorEffects,
       enabledStreamIndices,
       includeCamera,
       includePrimaryVideo,
@@ -175,6 +193,7 @@ export const saveExport = ({
   cameraResolutionScalePercent,
   collapseAudio,
   compression,
+  cursorEffects,
   enabledStreamIndices,
   fileStem,
   includeCamera,
@@ -192,6 +211,7 @@ export const saveExport = ({
       cameraResolutionScalePercent,
       collapseAudio,
       compression,
+      cursorEffects,
       enabledStreamIndices,
       includeCamera,
       includePrimaryVideo,

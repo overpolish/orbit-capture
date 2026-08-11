@@ -1,16 +1,20 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{path::PathBuf, sync::mpsc::Receiver, time::Duration};
+use std::{
+  path::PathBuf,
+  sync::mpsc::Receiver,
+  time::{Duration, Instant},
+};
 
 use chrono::{Local, NaiveDateTime};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::{
-  capture, encoding, snapshot, state, CameraCaptureMode, CaptureStartupConfig, FinalizeInfo,
-  PrimaryCaptureSource, RecordingMode, RecordingStatus, StartRecordingOptions,
-  SystemAudioSelection,
+  capture, cursor::CursorRecorder, encoding, snapshot, state, CameraCaptureMode,
+  CaptureStartupConfig, FinalizeInfo, PrimaryCaptureSource, RecordingMode, RecordingStatus,
+  StartRecordingOptions, SystemAudioSelection,
 };
 
 const RECORDING_ERROR_EVENT: &str = "recording://error";
@@ -24,6 +28,7 @@ pub(super) const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 /// Everything a running recording is, from the state machine's side: a live
 /// capture session and the file it is filling.
 pub(super) struct CaptureHandles {
+  cursor: Option<CursorRecorder>,
   output_path: PathBuf,
   session: capture::CaptureSession,
   source_scale_factor: f32,
@@ -96,6 +101,13 @@ pub fn recordings_directory(app: &AppHandle) -> Result<PathBuf, String> {
     .map_err(|error| error.to_string())
 }
 
+pub(super) fn records_cursor(mode: RecordingMode) -> bool {
+  matches!(
+    mode,
+    RecordingMode::Screen | RecordingMode::Region | RecordingMode::Window
+  )
+}
+
 /// Defence in depth, run before anything is hidden or transitioned. The Record
 /// button is already gated on a selected source, but a mode without one could
 /// never produce a file.
@@ -157,6 +169,11 @@ pub(super) fn begin_capture(
     .as_ref()
     .filter(|_| !camera_primary)
     .map(|_| directory.join(encoding::camera_temp_file_name(started_at)));
+  // `show_cursor` controls only the pixels ScreenCaptureKit burns into the
+  // movie. The independent cursor track is always useful: hiding the native
+  // pointer is how a clean recording gets Orbit Capture's dynamic cursor.
+  let cursor_path = records_cursor(options.mode)
+    .then(|| directory.join(encoding::cursor_temp_file_name(started_at)));
 
   // Reported at most once per recording, from the writer thread, however many
   // frames the failure goes on to affect.
@@ -187,9 +204,11 @@ pub(super) fn begin_capture(
     RecordingMode::Audio => PrimaryCaptureSource::Audio,
   };
   let capture::CaptureStart {
+    cursor_source,
     first_frame,
     session,
     source_scale_factor,
+    timeline_origin,
   } = capture::begin_blocking(CaptureStartupConfig {
     camera,
     camera_path: camera_path.clone(),
@@ -211,8 +230,32 @@ pub(super) fn begin_capture(
     }
   })?;
 
+  let cursor = match (cursor_path, cursor_source) {
+    (Some(path), Some(source)) => match CursorRecorder::start(path, timeline_origin, source) {
+      Ok(cursor) => Some(cursor),
+      Err(error) => {
+        session.cancel();
+        let _ = std::fs::remove_file(&output_path);
+        if let Some(camera_path) = &camera_path {
+          let _ = std::fs::remove_file(camera_path);
+        }
+        return Err(error);
+      }
+    },
+    (None, _) => None,
+    (Some(_), None) => {
+      session.cancel();
+      let _ = std::fs::remove_file(&output_path);
+      if let Some(camera_path) = &camera_path {
+        let _ = std::fs::remove_file(camera_path);
+      }
+      return Err("The capture source has no cursor coordinate space".to_owned());
+    }
+  };
+
   Ok((
     CaptureHandles {
+      cursor,
       output_path,
       session,
       source_scale_factor,
@@ -223,26 +266,55 @@ pub(super) fn begin_capture(
 }
 
 pub(super) fn pause_capture(handles: &CaptureHandles) {
-  handles.session.pause();
+  let at = Instant::now();
+  handles.session.pause_at(at);
+  if let Some(cursor) = &handles.cursor {
+    cursor.pause(at);
+  }
 }
 
 pub(super) fn resume_capture(handles: &CaptureHandles) -> Result<(), String> {
-  handles.session.resume()
+  let at = Instant::now();
+  handles.session.resume_at(at)?;
+  if let Some(cursor) = &handles.cursor {
+    cursor.resume(at);
+  }
+  Ok(())
 }
 
 /// Finishes the movie, returning it alongside the name to suggest for it.
 pub(super) fn finalize_capture(handles: CaptureHandles) -> Result<(FinalizeInfo, String), String> {
   let CaptureHandles {
+    cursor,
     output_path,
     session,
     source_scale_factor,
     started_at,
   } = handles;
 
-  let mut info = session.stop().inspect_err(|_| {
-    // Nothing playable came out, so nothing is left lying around either.
-    let _ = std::fs::remove_file(&output_path);
-  })?;
+  let at = Instant::now();
+  let cursor_path = cursor.map(CursorRecorder::stop).transpose();
+  let mut info = match session.stop_at(at) {
+    Ok(info) => info,
+    Err(error) => {
+      // Nothing playable came out, so nothing is left lying around either.
+      let _ = std::fs::remove_file(&output_path);
+      if let Ok(Some(path)) = &cursor_path {
+        let _ = std::fs::remove_file(path);
+      }
+      return Err(error);
+    }
+  };
+  info.cursor_path = match cursor_path {
+    Ok(path) => path,
+    Err(error) => {
+      let _ = std::fs::remove_file(&info.path);
+      if let Some(camera) = &info.camera {
+        let _ = std::fs::remove_file(&camera.path);
+      }
+      return Err(error);
+    }
+  };
   info.source_scale_factor = source_scale_factor;
 
   Ok((info, crate::screenshots::capture_file_stem(started_at)))
@@ -250,6 +322,7 @@ pub(super) fn finalize_capture(handles: CaptureHandles) -> Result<(FinalizeInfo,
 
 pub(super) fn discard_capture(handles: Option<CaptureHandles>) {
   let Some(CaptureHandles {
+    cursor,
     output_path,
     session,
     ..
@@ -259,5 +332,8 @@ pub(super) fn discard_capture(handles: Option<CaptureHandles>) {
   };
 
   session.cancel();
+  if let Some(cursor) = cursor {
+    cursor.cancel();
+  }
   let _ = std::fs::remove_file(output_path);
 }

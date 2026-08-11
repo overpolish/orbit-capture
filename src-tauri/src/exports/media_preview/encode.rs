@@ -21,7 +21,7 @@ static REMUX_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 /// A sibling of the destination rather than a temp directory, so the rename
 /// cannot cross a volume - the destination is wherever the user chose to save,
 /// which is routinely an external disk.
-pub(super) fn remux_temp_path(destination: &Path) -> PathBuf {
+pub(in crate::exports) fn remux_temp_path(destination: &Path) -> PathBuf {
   let attempt = REMUX_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
   let name = destination.file_name().map_or_else(
     || "recording".to_owned(),
@@ -31,7 +31,7 @@ pub(super) fn remux_temp_path(destination: &Path) -> PathBuf {
   destination.with_file_name(format!(".{name}.{}.{attempt}.part", std::process::id()))
 }
 
-pub(super) fn remux_error(stderr: &[u8]) -> String {
+pub(in crate::exports) fn remux_error(stderr: &[u8]) -> String {
   const MESSAGE: &str = "FFmpeg could not put the recording into an MP4";
   let detail = String::from_utf8_lossy(stderr);
   let detail = detail.trim();
@@ -151,7 +151,7 @@ pub fn export_selected_audio(
   run_export(args, &temporary, destination, cancelled, on_progress)
 }
 
-pub(super) fn run_export(
+pub(in crate::exports) fn run_export(
   args: Vec<OsString>,
   temporary: &Path,
   destination: &Path,

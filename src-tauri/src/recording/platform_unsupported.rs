@@ -10,6 +10,8 @@
 //! exist and the lifecycle code below it needs no platform branches at all.
 
 use std::sync::mpsc::Receiver;
+use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
 use super::encoding::FinalizeInfo;
 use super::CaptureStartupConfig;
@@ -17,21 +19,23 @@ use super::CaptureStartupConfig;
 pub enum CaptureSession {}
 
 pub struct CaptureStart {
+  pub cursor_source: Option<super::cursor::CursorSource>,
   pub first_frame: Receiver<Result<(), String>>,
   pub session: CaptureSession,
   pub source_scale_factor: f32,
+  pub timeline_origin: Arc<OnceLock<Instant>>,
 }
 
 impl CaptureSession {
-  pub fn pause(&self) {
+  pub fn pause_at(&self, _at: Instant) {
     match *self {}
   }
 
-  pub fn resume(&self) -> Result<(), String> {
+  pub fn resume_at(&self, _at: Instant) -> Result<(), String> {
     match *self {}
   }
 
-  pub fn stop(self) -> Result<FinalizeInfo, String> {
+  pub fn stop_at(self, _at: Instant) -> Result<FinalizeInfo, String> {
     match self {}
   }
 

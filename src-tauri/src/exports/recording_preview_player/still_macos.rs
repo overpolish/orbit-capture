@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{path::Path, sync::mpsc, thread::JoinHandle};
+use std::{ffi::c_void, path::Path, sync::mpsc, thread::JoinHandle};
 
 use cidre::{av, cf, cg, cm, ns, ut};
 use tauri::ipc::{Channel, InvokeResponseBody};
 
 use super::{layout::PreviewPane, PlayerSources, RecordingPreviewPlayerEvent};
+use crate::exports::cursor_effects::{CursorCompositor, CursorEffectSettings};
 
 const NATIVE_FRAME_MARKER: u32 = u32::from_le_bytes(*b"OCPF");
 const STILL_BACKWARD_TOLERANCE_MS: i64 = 100;
@@ -72,11 +73,63 @@ pub(super) fn jpeg(image: &cg::Image) -> Result<Vec<u8>, String> {
   Ok(data.as_slice().to_vec())
 }
 
+pub(super) fn jpeg_with_cursor(
+  image: &cg::Image,
+  cursor: Option<&CursorCompositor>,
+  position_ms: u64,
+  settings: CursorEffectSettings,
+) -> Result<Vec<u8>, String> {
+  let Some(cursor) = cursor.filter(|_| settings.bake) else {
+    return jpeg(image);
+  };
+  let width = image.width();
+  let height = image.height();
+  let stride = width * 4;
+  let mut pixels = vec![0_u8; stride * height];
+  let color_space = unsafe { CGColorSpaceCreateDeviceRGB() };
+  if color_space.is_null() {
+    return Err("Core Graphics could not create a preview color space".to_owned());
+  }
+  let context = unsafe {
+    CGBitmapContextCreate(
+      pixels.as_mut_ptr().cast(),
+      width,
+      height,
+      8,
+      stride,
+      color_space,
+      0x2002,
+    )
+  };
+  unsafe { CGColorSpaceRelease(color_space) };
+  if context.is_null() {
+    return Err("Core Graphics could not create a cursor preview bitmap".to_owned());
+  }
+  unsafe {
+    CGContextDrawImage(
+      context,
+      cg::Rect::new(0.0, 0.0, width as f64, height as f64),
+      image,
+    );
+  }
+  cursor.composite_bgra(&mut pixels, width, height, stride, position_ms, settings);
+  let composited = unsafe { CGBitmapContextCreateImage(context) };
+  unsafe { CGContextRelease(context) };
+  if composited.is_null() {
+    return Err("Core Graphics could not finish the cursor preview".to_owned());
+  }
+  let result = jpeg(unsafe { &*composited });
+  unsafe { CGImageRelease(composited) };
+  result
+}
+
 pub(super) fn images_at(
   screen: &av::AssetImageGenerator,
   camera: Option<&av::AssetImageGenerator>,
   screen_position_ms: u64,
   camera_position_ms: Option<u64>,
+  cursor: Option<&CursorCompositor>,
+  cursor_settings: CursorEffectSettings,
 ) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
   let screen_time = cm::Time::new(screen_position_ms as i64, 1_000);
   if let (Some(camera), Some(camera_position_ms)) = (camera, camera_position_ms) {
@@ -89,11 +142,17 @@ pub(super) fn images_at(
     });
     let (screen, _) = screen.map_err(|error| error.to_string())?;
     let (camera, _) = camera.map_err(|error| error.to_string())?;
-    Ok((jpeg(&screen)?, Some(jpeg(&camera)?)))
+    Ok((
+      jpeg_with_cursor(&screen, cursor, screen_position_ms, cursor_settings)?,
+      Some(jpeg(&camera)?),
+    ))
   } else {
     let (screen, _) = tauri::async_runtime::block_on(screen.cg_image_for_time(screen_time))
       .map_err(|error| error.to_string())?;
-    Ok((jpeg(&screen)?, None))
+    Ok((
+      jpeg_with_cursor(&screen, cursor, screen_position_ms, cursor_settings)?,
+      None,
+    ))
   }
 }
 
@@ -173,6 +232,12 @@ fn run(
       camera.as_deref(),
       screen_position_ms,
       camera_position_ms,
+      sources.cursor.as_deref(),
+      sources
+        .cursor_settings
+        .read()
+        .map(|settings| *settings)
+        .unwrap_or_default(),
     ) {
       Ok((screen, camera)) => {
         if send_frame(&frame_channel, request_id, &screen, camera.as_deref()) {
@@ -187,6 +252,25 @@ fn run(
       }
     }
   }
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+  fn CGBitmapContextCreate(
+    data: *mut c_void,
+    width: usize,
+    height: usize,
+    bits_per_component: usize,
+    bytes_per_row: usize,
+    color_space: *const c_void,
+    bitmap_info: u32,
+  ) -> *mut c_void;
+  fn CGBitmapContextCreateImage(context: *mut c_void) -> *const cg::Image;
+  fn CGColorSpaceCreateDeviceRGB() -> *const c_void;
+  fn CGColorSpaceRelease(color_space: *const c_void);
+  fn CGContextDrawImage(context: *mut c_void, rect: cg::Rect, image: &cg::Image);
+  fn CGContextRelease(context: *mut c_void);
+  fn CGImageRelease(image: *const cg::Image);
 }
 
 impl NativeStillDecoder {

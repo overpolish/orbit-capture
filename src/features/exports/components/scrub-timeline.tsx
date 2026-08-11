@@ -246,19 +246,29 @@ export function TimelineRuler({
       role="slider"
       tabIndex={0}
     >
-      {ticks.map((seconds) => (
-        <div
-          className="pointer-events-none absolute inset-y-0 border-l border-muted/35"
-          key={seconds}
-          style={{
-            left: `${((seconds / Math.max(1, durationSeconds)) * 100).toString()}%`,
-          }}
-        >
-          <span className="absolute top-0 left-1 whitespace-nowrap text-xxs font-medium text-muted tabular-nums">
-            {formatDuration(seconds * 1_000)}
-          </span>
-        </div>
-      ))}
+      {ticks.map((seconds) => {
+        const label = formatDuration(seconds * 1_000);
+        const x = (seconds / Math.max(1, durationSeconds)) * width;
+        // Match the native timeline: labels always sit after their tick and
+        // disappear when they would not fit, rather than flipping to the
+        // other side at the trailing edge.
+        const showLabel = width - x >= label.length * 6 + 4;
+        return (
+          <div
+            className="pointer-events-none absolute inset-y-0 border-l border-muted/35"
+            key={seconds}
+            style={{
+              left: `${((seconds / Math.max(1, durationSeconds)) * 100).toString()}%`,
+            }}
+          >
+            {showLabel ? (
+              <span className="absolute left-1 top-0 whitespace-nowrap text-xxs font-medium text-muted tabular-nums">
+                {label}
+              </span>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }

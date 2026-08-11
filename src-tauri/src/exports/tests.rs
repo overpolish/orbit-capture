@@ -3,12 +3,36 @@
 
 use super::{
   recovery::{
-    camera_for_recording, orphaned_recordings, sweep_preview_files, sweep_unclaimed_cameras,
-    OrphanPlan,
+    camera_for_recording, cursor_for_recording, orphaned_recordings, sweep_preview_files,
+    sweep_unclaimed_cameras, sweep_unclaimed_cursors, OrphanPlan,
   },
   save::{save_recording, save_selected_recording},
   *,
 };
+
+fn valid_cursor_sidecar(path: &Path) {
+  let header = crate::recording::cursor::CursorRecord::Header {
+    coordinate_space: "global-logical-points".to_owned(),
+    platform: "test".to_owned(),
+    source: crate::recording::cursor::CursorSource {
+      height: 100.0,
+      kind: crate::recording::cursor::CursorSourceKind::Screen,
+      platform_id: "1".to_owned(),
+      video_height: 200,
+      video_width: 200,
+      width: 100.0,
+      x: 0.0,
+      y: 0.0,
+    },
+    timebase: "recording-microseconds".to_owned(),
+    version: crate::recording::cursor::FORMAT_VERSION,
+  };
+  std::fs::write(
+    path,
+    format!("{}\n", serde_json::to_string(&header).unwrap()),
+  )
+  .unwrap();
+}
 
 #[test]
 fn keeps_a_reasonable_name_untouched() {
@@ -525,6 +549,42 @@ fn sweeps_only_unclaimed_camera_sidecars() {
   assert!(!abandoned.exists());
   assert!(unrelated.exists());
 
+  std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn pairs_only_a_valid_cursor_sidecar_with_its_recording() {
+  let directory = test_directory("cursor-pair");
+  let recording = directory.join("recording-20260809-060151.000.mov");
+  let cursor = directory.join("recording-20260809-060151.000.cursor.jsonl");
+  std::fs::write(&recording, b"screen").unwrap();
+  valid_cursor_sidecar(&cursor);
+
+  assert_eq!(
+    cursor_for_recording(&recording).as_deref(),
+    Some(cursor.as_path())
+  );
+
+  std::fs::write(&cursor, b"not a cursor stream").unwrap();
+  assert_eq!(cursor_for_recording(&recording), None);
+  std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn sweeps_only_unclaimed_cursor_sidecars() {
+  let directory = test_directory("cursor-sweep");
+  let kept = directory.join("recording-kept.cursor.jsonl");
+  let abandoned = directory.join("recording-abandoned.cursor.jsonl");
+  let unrelated = directory.join("notes.jsonl");
+  for path in [&kept, &abandoned, &unrelated] {
+    std::fs::write(path, b"data").unwrap();
+  }
+
+  sweep_unclaimed_cursors(&directory, Some(&kept));
+
+  assert!(kept.exists());
+  assert!(!abandoned.exists());
+  assert!(unrelated.exists());
   std::fs::remove_dir_all(directory).unwrap();
 }
 

@@ -80,6 +80,8 @@ fn generate(sources: PlayerSources, count: u32, channel: Channel) {
       camera.as_deref(),
       frame_position(position_ms, sources.duration_ms),
       camera_position_ms,
+      None,
+      Default::default(),
     ) else {
       continue;
     };
@@ -215,7 +217,7 @@ pub async fn stream_recording_timeline_thumbnails(
   count: u32,
   channel: Channel,
 ) -> Result<(), String> {
-  let sources = sources(&app, artifact_id)?;
+  let sources = sources(&app, artifact_id, Default::default())?;
   let count = count.clamp(MIN_THUMBNAILS, MAX_THUMBNAILS);
   thread::Builder::new()
     .name("recording-timeline-thumbnails".to_owned())
@@ -255,9 +257,15 @@ mod tests {
     let mut encoded_bytes = 0;
     for index in 0..24 {
       let position_ms = 1_800_000_u64.saturating_sub(1) * index / 23;
-      let (primary_jpeg, camera_jpeg) =
-        images_at(&primary, Some(&camera), position_ms, Some(position_ms))
-          .expect("every benchmark thumbnail should decode");
+      let (primary_jpeg, camera_jpeg) = images_at(
+        &primary,
+        Some(&camera),
+        position_ms,
+        Some(position_ms),
+        None,
+        Default::default(),
+      )
+      .expect("every benchmark thumbnail should decode");
       encoded_bytes += primary_jpeg.len();
       encoded_bytes += camera_jpeg
         .expect("the camera thumbnail should decode")

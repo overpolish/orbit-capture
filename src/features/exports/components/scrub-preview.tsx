@@ -6,6 +6,7 @@ import { ReactNode } from "react";
 import {
   AudioTrackVolume,
   CameraOverlaySettings,
+  CursorEffectSettings,
   PreparedAudioTrack,
   RecordingPreviewLayout,
   RecordingTrackId,
@@ -22,8 +23,10 @@ export type ScrubPreviewProps = {
   audioTracks?: PreparedAudioTrack[];
   bakeCamera?: boolean;
   cameraOverlay?: CameraOverlaySettings;
+  cursorEffects?: CursorEffectSettings;
   enabledStreamIndices?: number[];
   enabledVideoTracks?: RecordingVideoTrackId[];
+  hasCursorData?: boolean;
   inspector?: ReactNode;
   isPreparingAudio?: boolean;
   isPreparingPreview?: boolean;

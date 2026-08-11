@@ -76,6 +76,7 @@ pub async fn estimate_recording_export(
     camera_resolution_scale_percent,
     collapse_audio,
     compression,
+    cursor_effects,
     enabled_stream_indices,
     include_camera,
     include_primary_video,
@@ -96,8 +97,11 @@ pub async fn estimate_recording_export(
       original_size,
       camera,
       has_video,
+      width,
+      height,
       primary_kind,
       source_scale_percent,
+      has_cursor,
     ) = {
       let artifact = state
         .artifact
@@ -106,6 +110,7 @@ pub async fn estimate_recording_export(
       let Some(ExportArtifact::Recording {
         audio_tracks,
         camera,
+        cursor,
         duration_ms,
         height,
         id,
@@ -128,13 +133,17 @@ pub async fn estimate_recording_export(
         std::fs::metadata(path).map_or(0, |metadata| metadata.len()),
         camera.clone(),
         *width > 0 && *height > 0,
+        *width,
+        *height,
         *primary_kind,
         *source_scale_percent,
+        cursor.is_some(),
       )
     };
     if bake_camera && (!include_primary_video || !include_camera || camera.is_none()) {
       return Err("There is no camera recording to bake in".to_owned());
     }
+    let bake_cursor = cursor_effects.bake && include_primary_video && has_cursor;
     if !include_primary_video && !include_camera && enabled_stream_indices.is_empty() {
       return Err("Select at least one track to export".to_owned());
     }
@@ -172,17 +181,17 @@ pub async fn estimate_recording_export(
       .compression_estimate_preparation
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let estimate_compression = if bake_camera && compression == 0 {
+    let estimate_compression = if (bake_camera || bake_cursor) && compression == 0 {
       // Original means no intentional quality reduction. Composition still
-      // requires an encode, whose lossless-looking step is the same CRF as
-      // High rather than a stream copy.
+      // requires an encode, so it uses the same high-quality step as High
+      // rather than pretending the source can be stream-copied.
       1
     } else {
       compression
     };
     let key = (
       artifact_id,
-      if bake_camera { 2 } else { 0 },
+      u8::from(bake_camera) * 2 + u8::from(bake_cursor) * 4,
       estimate_compression,
       resolution_scale_percent,
     );
@@ -196,8 +205,21 @@ pub async fn estimate_recording_export(
       _ if !include_primary_video => 0,
       Some(bytes) => bytes,
       None if !has_video => 0,
+      None if bake_cursor && !bake_camera => cursor_export::estimated_video_bytes(
+        width,
+        height,
+        duration_ms,
+        media_preview::VideoExportOptions {
+          compression: estimate_compression,
+          resolution_scale_percent,
+          source_scale_percent,
+        },
+      ),
       None
-        if !bake_camera && compression == 0 && resolution_scale_percent == source_scale_percent =>
+        if !bake_camera
+          && !bake_cursor
+          && compression == 0
+          && resolution_scale_percent == source_scale_percent =>
       {
         original_size.saturating_sub(original_audio)
       }

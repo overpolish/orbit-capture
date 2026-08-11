@@ -29,15 +29,19 @@ mod output;
 mod tools;
 
 pub use audio::prepare;
+pub(in crate::exports) use bake::bake_geometry;
 pub use bake::baked_recording_exporter;
 pub use encode::{
   camera_recording_exporter, remuxer, selected_audio_exporter, selected_recording_exporter, Remux,
   SelectedRecordingExport,
 };
+pub(in crate::exports) use encode::{remux_error, remux_temp_path, run_export};
 pub use estimate::{estimate_compressed_video_bytes, supports_compression};
+pub use output::duration_ms;
 pub use tools::inspect_audio_tracks;
 
-use estimate::{export_crf, resolution_filter};
+pub(in crate::exports) use estimate::export_crf;
+use estimate::resolution_filter;
 use output::{holds_bytes, plays_from_start_to_end, EXPORT_MP4_OUTPUT, OUTPUT_ERROR_DETAIL};
 pub(in crate::exports) use tools::ffmpeg_path;
 use tools::ffprobe_path;

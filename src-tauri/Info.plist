@@ -4,6 +4,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <plist version="1.0">
 <dict>
+  <key>LSUIElement</key>
+  <true/>
   <key>NSCameraUsageDescription</key>
   <string>Orbit Capture uses your camera when you include it in a recording.</string>
   <key>NSMicrophoneUsageDescription</key>

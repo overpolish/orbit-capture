@@ -9,9 +9,8 @@ pub(super) const EXPORT_MP4_OUTPUT: [&str; 4] = ["-f", "mp4", "-movflags", "+fas
 /// How much of FFmpeg's final error is useful to surface to the window.
 pub(super) const OUTPUT_ERROR_DETAIL: usize = 400;
 
-/// Whether a finished encode is a file a player can actually open.
-pub(super) fn plays_from_start_to_end(path: &Path) -> bool {
-  let Ok(output) = Command::new(ffprobe_path())
+pub fn duration_ms(path: &Path) -> Option<u64> {
+  let output = Command::new(ffprobe_path())
     .args([
       "-v",
       "error",
@@ -22,15 +21,18 @@ pub(super) fn plays_from_start_to_end(path: &Path) -> bool {
     ])
     .arg(path)
     .output()
-  else {
-    return true;
-  };
+    .ok()?;
+  let seconds = String::from_utf8_lossy(&output.stdout)
+    .trim()
+    .parse::<f64>()
+    .ok()?;
+  (output.status.success() && seconds.is_finite() && seconds > 0.0)
+    .then(|| (seconds * 1_000.0).round() as u64)
+}
 
-  output.status.success()
-    && String::from_utf8_lossy(&output.stdout)
-      .trim()
-      .parse::<f64>()
-      .is_ok_and(|duration| duration > 0.0)
+/// Whether a finished encode is a file a player can actually open.
+pub(in crate::exports) fn plays_from_start_to_end(path: &Path) -> bool {
+  duration_ms(path).is_some()
 }
 
 pub(super) fn holds_bytes(path: &Path) -> bool {

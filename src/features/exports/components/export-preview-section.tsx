@@ -11,6 +11,7 @@ import {
 import {
   AudioTrackVolume,
   CameraOverlaySettings,
+  CursorEffectSettings,
   ExportArtifact,
   PreparedAudioTrack,
   RecordingPreviewLayout,
@@ -86,8 +87,10 @@ export function RecordingSection({
   bakeCamera,
   cameraOverlay,
   cameraResolutionScalePercent,
+  cursorEffects,
   enabledStreamIndices,
   enabledVideoTracks,
+  hasCursorData,
   inspector,
   isPreparingRecordingAudio,
   isPreparingRecordingPreview,
@@ -106,8 +109,10 @@ export function RecordingSection({
   bakeCamera?: boolean;
   cameraOverlay?: CameraOverlaySettings;
   cameraResolutionScalePercent?: number;
+  cursorEffects?: CursorEffectSettings;
   enabledStreamIndices?: number[];
   enabledVideoTracks?: RecordingVideoTrackId[];
+  hasCursorData?: boolean;
   inspector?: ReactNode;
   isPreparingRecordingAudio?: boolean;
   isPreparingRecordingPreview?: boolean;
@@ -143,9 +148,11 @@ export function RecordingSection({
         audioTrackVolumes={audioTrackVolumes}
         bakeCamera={bakeCamera}
         cameraOverlay={cameraOverlay}
+        cursorEffects={cursorEffects}
         durationMs={artifact.durationMs}
         enabledStreamIndices={enabledStreamIndices}
         enabledVideoTracks={enabledVideoTracks}
+        hasCursorData={hasCursorData}
         inspector={inspector}
         isPreparingAudio={isPreparingRecordingAudio}
         isPreparingPreview={isPreparingRecordingPreview}

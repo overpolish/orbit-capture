@@ -3,11 +3,14 @@
 
 use super::*;
 
+mod cursor;
 mod recording_file;
 
 pub(super) use recording_file::{
-  delivered_extension, save_recording_copy, save_selected_recording_copy, scale_percent,
+  delivered_extension, save_primary_recording, save_recording_copy, save_selected_recording_copy,
+  scale_percent, PrimaryRecordingSaveRequest,
 };
+
 #[cfg(test)]
 pub(super) use recording_file::{save_recording, save_selected_recording};
 
@@ -25,6 +28,7 @@ pub async fn save_export(
     camera_resolution_scale_percent,
     collapse_audio,
     compression,
+    cursor_effects,
     enabled_stream_indices,
     include_camera,
     include_primary_video,
@@ -87,6 +91,7 @@ pub async fn save_export(
         ExportArtifact::Recording {
           audio_tracks,
           camera,
+          cursor,
           duration_ms,
           height,
           id,
@@ -113,6 +118,10 @@ pub async fn save_export(
           } else {
             track_selection::AudioLayout::SeparateTracks
           };
+          let baked_cursor = cursor
+            .as_ref()
+            .filter(|_| cursor_effects.bake)
+            .map(|cursor| cursor.path.as_path());
 
           if !include_primary_video && !include_camera && enabled_stream_indices.is_empty() {
             return Err("Select at least one track to export".to_owned());
@@ -157,6 +166,7 @@ pub async fn save_export(
               if saved.is_some() {
                 let _ = std::fs::remove_file(working);
                 let _ = std::fs::remove_file(&camera.path);
+                cursor::remove_working_file(cursor.as_ref());
               }
               return Ok(saved);
             }
@@ -177,6 +187,7 @@ pub async fn save_export(
               if let Some(camera) = camera {
                 let _ = std::fs::remove_file(&camera.path);
               }
+              cursor::remove_working_file(cursor.as_ref());
             }
             return Ok(saved);
           }
@@ -188,7 +199,7 @@ pub async fn save_export(
             let camera = camera
               .as_ref()
               .ok_or_else(|| "There is no camera recording to bake in".to_owned())?;
-            return camera_save::save_baked_recording(
+            let saved = camera_save::save_baked_recording(
               working,
               camera,
               &writing,
@@ -200,9 +211,16 @@ pub async fn save_export(
               (*width, *height),
               camera_overlay,
               (compression, resolution_scale_percent, *source_scale_percent),
+              baked_cursor.map(|cursor| (cursor, cursor_effects)),
               &progress_app,
               &job_cancellation,
-            );
+            )?;
+            if saved.is_some() {
+              let _ = std::fs::remove_file(working);
+              let _ = std::fs::remove_file(&camera.path);
+              cursor::remove_working_file(cursor.as_ref());
+            }
+            return Ok(saved);
           }
 
           let screen_progress_share = if include_camera && camera.is_some() {
@@ -210,46 +228,26 @@ pub async fn save_export(
           } else {
             99.0
           };
-          let saved = if compression > 0
-            || resolution_scale_percent < *source_scale_percent
-            || selection.needs_processing(audio_tracks, layout)
-          {
-            let mut on_progress = |processed_ms| {
-              camera_save::emit_progress(
-                &progress_app,
-                *id,
-                "recording",
-                processed_ms,
-                *duration_ms,
-                0.0,
-                screen_progress_share,
-              );
-            };
-            save_selected_recording_copy(
-              working,
-              &writing,
-              &stem,
-              &selection,
-              layout,
-              media_preview::ExportRunOptions {
-                cancelled: &job_cancellation,
-                on_progress: &mut on_progress,
-                video: media_preview::VideoExportOptions {
-                  compression,
-                  resolution_scale_percent,
-                  source_scale_percent: *source_scale_percent,
-                },
-              },
-              media_preview::selected_recording_exporter(),
-            )?
-          } else {
-            Some(save_recording_copy(
-              working,
-              &writing,
-              &stem,
-              media_preview::remuxer(),
-            )?)
-          };
+          let saved = save_primary_recording(PrimaryRecordingSaveRequest {
+            app: &progress_app,
+            artifact_id: *id,
+            audio_tracks,
+            cancelled: &job_cancellation,
+            compression,
+            cursor: baked_cursor,
+            cursor_effects,
+            directory: &writing,
+            duration_ms: *duration_ms,
+            height: *height,
+            layout,
+            progress_share: screen_progress_share,
+            resolution_scale_percent,
+            screen: working,
+            selection: &selection,
+            source_scale_percent: *source_scale_percent,
+            stem: &stem,
+            width: *width,
+          })?;
           let Some(saved) = saved else {
             return Ok(None);
           };
@@ -317,6 +315,7 @@ pub async fn save_export(
               let _ = std::fs::remove_file(&camera.path);
             }
           }
+          cursor::remove_working_file(cursor.as_ref());
           Ok(Some(saved))
         }
       }
@@ -364,6 +363,14 @@ pub async fn save_export(
   };
 
   set_export_directory(app.clone(), directory)?;
+  if let Err(error) = remember_cursor_effects(&app, cursor_effects) {
+    eprintln!("Could not remember cursor export settings: {error}");
+  }
+  // Saving is transactional: keep the native player alive while the artifact
+  // may still be restored by Cancel or an export error, then retire it only
+  // once the finished files have been published.
+  artifact::clear_recording_preview(&app);
+  artifact::clear_cached_previews(&app);
   let _ = window::hide(&app);
   emit_snapshot(&app);
 

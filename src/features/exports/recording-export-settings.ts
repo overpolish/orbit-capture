@@ -4,6 +4,7 @@
 import {
   AudioTrackVolume,
   CameraOverlaySettings,
+  CursorEffectSettings,
   ExportArtifact,
 } from "./types";
 
@@ -56,6 +57,7 @@ type RecordingSavePlanOptions = {
   cameraResolutionScalePercent: number;
   collapseAudio: boolean;
   compression: number;
+  cursorEffects: CursorEffectSettings;
   enabledStreamIndices: number[];
   includeCamera: boolean;
   includePrimaryVideo: boolean;
@@ -91,6 +93,7 @@ export const recordingSavePlan = ({
   cameraOverlay,
   collapseAudio,
   compression,
+  cursorEffects,
   enabledStreamIndices,
   includeCamera,
   includePrimaryVideo,
@@ -104,6 +107,7 @@ export const recordingSavePlan = ({
   cameraOverlay: CameraOverlaySettings;
   collapseAudio: boolean;
   compression: number;
+  cursorEffects: CursorEffectSettings;
   enabledStreamIndices: number[] | null;
   includeCamera: boolean;
   includePrimaryVideo: boolean;
@@ -124,6 +128,7 @@ export const recordingSavePlan = ({
     (!includePrimaryVideo ||
       artifact.primaryKind === "audio" ||
       compression > 0 ||
+      (artifact.hasCursorData && cursorEffects.bake) ||
       resolutionScalePercent < originalResolutionScale ||
       (hasCamera &&
         (bakeCamera ||
@@ -140,6 +145,7 @@ export const recordingSavePlan = ({
       cameraResolutionScalePercent: camera.resolutionScalePercent,
       collapseAudio: collapseAudio && selectedIndices.length > 1,
       compression,
+      cursorEffects,
       enabledStreamIndices: selectedIndices,
       includeCamera: hasCamera,
       includePrimaryVideo,

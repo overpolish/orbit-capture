@@ -36,19 +36,11 @@ pub struct CaptureSession {
 }
 
 impl CaptureSession {
-  pub fn pause(&self) {
-    self.pause_at(Instant::now());
-  }
-
   pub fn pause_at(&self, at: Instant) {
     let _ = self.commands.send(Command::Pause { at });
     if let Some(camera) = &self.camera {
       let _ = camera.commands.send(Command::Pause { at });
     }
-  }
-
-  pub fn resume(&self) -> Result<(), String> {
-    self.resume_at(Instant::now())
   }
 
   pub fn resume_at(&self, at: Instant) -> Result<(), String> {
@@ -72,10 +64,6 @@ impl CaptureSession {
   /// followed by a barrier on the serial output queue; only then is the writer
   /// finalized. That ordering guarantees the final audio buffers are written
   /// instead of being stranded behind `Stop`.
-  pub fn stop(self) -> Result<FinalizeInfo, String> {
-    self.stop_at(Instant::now())
-  }
-
   pub fn stop_at(mut self, at: Instant) -> Result<FinalizeInfo, String> {
     self.microphone.take();
     if let Some(camera) = self.primary_camera.take() {

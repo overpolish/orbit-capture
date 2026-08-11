@@ -20,6 +20,7 @@ pub type FailureReport = Arc<dyn Fn(String) + Send + Sync>;
 /// about how the file was made.
 pub struct FinalizeInfo {
   pub camera: Option<CameraFinalizeInfo>,
+  pub cursor_path: Option<PathBuf>,
   pub has_microphone: bool,
   pub has_system_audio: bool,
   pub duration_ms: u64,
@@ -93,6 +94,12 @@ pub fn temp_file_name(started_at: NaiveDateTime) -> String {
 pub fn camera_temp_file_name(started_at: NaiveDateTime) -> String {
   started_at
     .format("camera-%Y%m%d-%H%M%S%.3f.mov")
+    .to_string()
+}
+
+pub fn cursor_temp_file_name(started_at: NaiveDateTime) -> String {
+  started_at
+    .format("recording-%Y%m%d-%H%M%S%.3f.cursor.jsonl")
     .to_string()
 }
 

@@ -71,6 +71,7 @@ pub fn run() {
       exports::recording_preview_player::commands::seek_recording_preview,
       exports::recording_preview_player::commands::select_recording_preview_audio,
       exports::recording_preview_player::commands::set_recording_preview_audio_volumes,
+      exports::recording_preview_player::commands::set_recording_preview_cursor_effects,
       exports::recording_preview_player::commands::start_recording_preview_player,
       exports::recording_preview_player::commands::stop_recording_preview_player,
       exports::recording_preview_player::timeline_thumbnails::stream_recording_timeline_thumbnails,
@@ -116,6 +117,11 @@ pub fn run() {
       windows::options::toggle_recording_options,
     ])
     .setup(|app| {
+      #[cfg(target_os = "macos")]
+      {
+        exports::initialize_cursor_artwork();
+      }
+
       #[cfg(desktop)]
       tray::initialize(app)?;
 

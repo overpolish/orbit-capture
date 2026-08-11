@@ -3,6 +3,94 @@
 
 use super::*;
 
+pub(in crate::exports) struct PrimaryRecordingSaveRequest<'a> {
+  pub app: &'a AppHandle,
+  pub artifact_id: u64,
+  pub audio_tracks: &'a [RecordingAudioTrack],
+  pub cancelled: &'a AtomicBool,
+  pub compression: u8,
+  pub cursor: Option<&'a Path>,
+  pub cursor_effects: cursor_effects::CursorEffectSettings,
+  pub directory: &'a Path,
+  pub duration_ms: u64,
+  pub height: u32,
+  pub layout: track_selection::AudioLayout,
+  pub progress_share: f64,
+  pub resolution_scale_percent: u16,
+  pub screen: &'a Path,
+  pub selection: &'a track_selection::TrackSelection,
+  pub source_scale_percent: u16,
+  pub stem: &'a str,
+  pub width: u32,
+}
+
+pub(in crate::exports) fn save_primary_recording(
+  request: PrimaryRecordingSaveRequest<'_>,
+) -> Result<Option<PathBuf>, String> {
+  let video = media_preview::VideoExportOptions {
+    compression: request.compression,
+    resolution_scale_percent: request.resolution_scale_percent,
+    source_scale_percent: request.source_scale_percent,
+  };
+  if let Some(cursor) = request.cursor {
+    return cursor::save_baked(cursor::CursorSaveRequest {
+      app: request.app,
+      artifact_id: request.artifact_id,
+      cancelled: request.cancelled,
+      cursor,
+      directory: request.directory,
+      duration_ms: request.duration_ms,
+      effects: request.cursor_effects,
+      height: request.height,
+      layout: request.layout,
+      progress_share: request.progress_share,
+      screen: request.screen,
+      selection: request.selection,
+      stem: request.stem,
+      video,
+      width: request.width,
+    });
+  }
+  if request.compression == 0
+    && request.resolution_scale_percent >= request.source_scale_percent
+    && !request
+      .selection
+      .needs_processing(request.audio_tracks, request.layout)
+  {
+    return save_recording_copy(
+      request.screen,
+      request.directory,
+      request.stem,
+      media_preview::remuxer(),
+    )
+    .map(Some);
+  }
+  let mut on_progress = |processed_ms| {
+    camera_save::emit_progress(
+      request.app,
+      request.artifact_id,
+      "recording",
+      processed_ms,
+      request.duration_ms,
+      0.0,
+      request.progress_share,
+    );
+  };
+  save_selected_recording_copy(
+    request.screen,
+    request.directory,
+    request.stem,
+    request.selection,
+    request.layout,
+    media_preview::ExportRunOptions {
+      cancelled: request.cancelled,
+      on_progress: &mut on_progress,
+      video,
+    },
+    media_preview::selected_recording_exporter(),
+  )
+}
+
 /// The extension the working recording will actually be saved under.
 ///
 /// `.mp4` whenever it can be remuxed into one, because that is the file

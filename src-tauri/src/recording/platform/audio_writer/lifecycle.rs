@@ -37,6 +37,7 @@ impl AudioWriter {
     }
     Ok(FinalizeInfo {
       camera: None,
+      cursor_path: None,
       has_microphone: self.microphone_input.is_some(),
       has_system_audio: self.system_audio_input.is_some(),
       duration_ms: u64::try_from(end_ns / NANOS_PER_MS).unwrap_or_default(),

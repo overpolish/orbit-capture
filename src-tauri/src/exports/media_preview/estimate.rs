@@ -31,7 +31,7 @@ pub(super) fn resolution_filter(
 
 /// Resizing cannot stream-copy. High quality is deliberately used if a caller
 /// requests a smaller resolution with Original compression.
-pub(super) fn export_crf(compression: u8, is_resizing: bool) -> Option<u16> {
+pub(in crate::exports) fn export_crf(compression: u8, is_resizing: bool) -> Option<u16> {
   compression_crf(compression).or(is_resizing.then_some(20))
 }
 

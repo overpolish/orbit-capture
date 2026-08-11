@@ -12,11 +12,12 @@ import {
   seekRecordingPreview,
   selectRecordingPreviewAudio,
   setRecordingPreviewAudioVolumes,
+  setRecordingPreviewCursorEffects,
   startRecordingPreviewPlayer,
   stopRecordingPreviewPlayer,
 } from "./api";
 import { ScrubPhase } from "./components/scrub-timeline";
-import { AudioTrackVolume } from "./types";
+import { AudioTrackVolume, CursorEffectSettings } from "./types";
 import { useRecordingPreviewFrames } from "./use-recording-preview-frames";
 
 let sessionSequence = 0;
@@ -25,6 +26,7 @@ export function useRecordingPreviewPlayer({
   artifactId,
   audioTrackVolumes,
   cameraCanvasRef,
+  cursorEffects,
   enabledStreamIndices,
   isEnabled,
   onPosition,
@@ -33,6 +35,7 @@ export function useRecordingPreviewPlayer({
   artifactId: number;
   audioTrackVolumes: AudioTrackVolume[];
   cameraCanvasRef: RefObject<HTMLCanvasElement | null>;
+  cursorEffects: CursorEffectSettings;
   enabledStreamIndices: number[];
   isEnabled: boolean;
   onPosition: (positionMs: number) => void;
@@ -49,6 +52,9 @@ export function useRecordingPreviewPlayer({
   const resumeAfterSeekRef = useRef(false);
   const scrubFinishedRef = useRef(true);
   const onPositionRef = useRef(onPosition);
+  const audioTrackVolumesRef = useRef(audioTrackVolumes);
+  const cursorEffectsRef = useRef(cursorEffects);
+  const enabledStreamIndicesRef = useRef(enabledStreamIndices);
   const durationRef = useRef(0);
   const positionRef = useRef(0);
   const seekRequestRef = useRef(0);
@@ -72,7 +78,11 @@ export function useRecordingPreviewPlayer({
         `${volume.streamIndex.toString()}:${volume.decibels.toString()}`,
     )
     .join("-");
+  const cursorSignature = Object.values(cursorEffects).join("-");
   onPositionRef.current = onPosition;
+  audioTrackVolumesRef.current = audioTrackVolumes;
+  cursorEffectsRef.current = cursorEffects;
+  enabledStreamIndicesRef.current = enabledStreamIndices;
 
   const updatePlaying = (playing: boolean) => {
     isPlayingRef.current = playing;
@@ -192,6 +202,7 @@ export function useRecordingPreviewPlayer({
     void startRecordingPreviewPlayer({
       artifactId,
       audioTrackVolumes,
+      cursorEffects,
       enabledStreamIndices,
       eventChannel,
       frameChannel,
@@ -203,6 +214,30 @@ export function useRecordingPreviewPlayer({
         durationRef.current = info.durationMs;
         setDurationMs(info.durationMs);
         startedRef.current = true;
+        // The export window resets its controls for a new artifact while the
+        // native player is starting. Those updates can land before the player
+        // exists, so apply the latest values once this session is ready too.
+        void Promise.all([
+          selectRecordingPreviewAudio(
+            enabledStreamIndicesRef.current,
+            sessionId,
+          ),
+          setRecordingPreviewAudioVolumes(
+            audioTrackVolumesRef.current,
+            sessionId,
+          ),
+          setRecordingPreviewCursorEffects(cursorEffectsRef.current, sessionId),
+        ])
+          .then(() => {
+            // The opening still is deliberately small so the window appears
+            // quickly. Replace it once with source-resolution pixels instead
+            // of waiting for the first zoom or pan to make it crisp.
+            if (!disposed && info.layout.panes.length > 0)
+              return requestRecordingPreviewFullResolution(sessionId);
+          })
+          .catch((cause: unknown) => {
+            if (!disposed) setError(String(cause));
+          });
       })
       .catch((cause: unknown) => {
         if (!disposed) {
@@ -247,6 +282,16 @@ export function useRecordingPreviewPlayer({
     // The signature keeps object identity changes from sending duplicate updates.
     // eslint-disable-next-line @eslint-react/exhaustive-deps
   }, [isEnabled, volumeSignature]);
+
+  useEffect(() => {
+    if (!isEnabled || !startedRef.current) return;
+    void setRecordingPreviewCursorEffects(
+      cursorEffects,
+      sessionIdRef.current,
+    ).catch(setError);
+    // The signature avoids duplicate native redraws from object identity changes.
+    // eslint-disable-next-line @eslint-react/exhaustive-deps
+  }, [cursorSignature, isEnabled]);
 
   const play = useCallback(() => {
     if (!isEnabled) return;

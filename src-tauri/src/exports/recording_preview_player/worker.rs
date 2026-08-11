@@ -189,11 +189,15 @@ fn run(context: RunContext) {
     )
   };
 
+  let mut reached_video_end = false;
   while !cancelled.load(Ordering::Acquire) {
     let frame = match frame_rx.recv_timeout(Duration::from_millis(50)) {
       Ok(frame) => frame,
       Err(mpsc::RecvTimeoutError::Timeout) if !video_thread.is_finished() => continue,
-      Err(_) => break,
+      Err(_) => {
+        reached_video_end = !cancelled.load(Ordering::Acquire);
+        break;
+      }
     };
     let frame_time_ms = frame.index * 1_000 / video::PREVIEW_FPS;
     while elapsed_ms() < frame_time_ms && !cancelled.load(Ordering::Acquire) {
@@ -222,7 +226,9 @@ fn run(context: RunContext) {
     drop(audio.stream);
     let _ = audio.thread.join();
   }
-  if position_ms.load(Ordering::Acquire) >= sources.duration_ms.saturating_sub(50) {
+  if reached_video_end
+    || position_ms.load(Ordering::Acquire) >= sources.duration_ms.saturating_sub(50)
+  {
     position_ms.store(sources.duration_ms, Ordering::Release);
     let _ = event_channel.send(RecordingPreviewPlayerEvent::Ended);
   }

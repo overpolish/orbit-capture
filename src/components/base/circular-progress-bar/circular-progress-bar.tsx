@@ -107,17 +107,18 @@ export function CircularProgressBar({
             {percentage !== undefined && !isIndeterminate ? (
               <motion.circle
                 animate={{
-                  strokeDashoffset: circumference * (1 - percentage / 100),
+                  strokeDashoffset: 1 - percentage / 100,
                 }}
                 className={progress()}
                 cx="50"
                 cy="50"
                 initial={false}
+                pathLength={1}
                 r={radius}
-                strokeDasharray={circumference}
+                strokeDasharray="1 1"
                 strokeWidth={strokeWidth}
                 transform="rotate(-90 50 50)"
-                transition={{ duration: 0.5, ease: "easeInOut" }}
+                transition={{ duration: 0.1, ease: "easeOut" }}
               />
             ) : null}
           </svg>

@@ -14,10 +14,11 @@ use cidre::{arc, av, cm, cv, ns, objc::ar_pool, vt};
 
 use super::{
   layout::PreviewPane,
-  still_macos::jpeg,
+  still_macos::jpeg_with_cursor,
   video::{VideoFrame, VideoFramePayload, PREVIEW_FPS},
   PlayerSources,
 };
+use crate::exports::cursor_effects::{CursorCompositor, CursorEffectSettings};
 
 struct NativeVideoReader {
   _reader: arc::R<av::AssetReader>,
@@ -91,7 +92,11 @@ impl NativeVideoReader {
     })
   }
 
-  fn frame_at(&mut self, target_ms: u64) -> Result<Option<Vec<u8>>, String> {
+  fn frame_at(
+    &mut self,
+    target_ms: u64,
+    cursor: Option<(&CursorCompositor, CursorEffectSettings)>,
+  ) -> Result<Option<Vec<u8>>, String> {
     loop {
       if self.pending.is_none() {
         self.pending = self
@@ -114,7 +119,11 @@ impl NativeVideoReader {
           .ok_or_else(|| "AVFoundation returned a video sample without pixels".to_owned())?;
         let image =
           vt::cg_image_from_cv_pixel_buf(pixel_buffer, None).map_err(|error| error.to_string())?;
-        jpeg(&image)
+        let (compositor, settings) = cursor
+          .map_or((None, Default::default()), |(cursor, settings)| {
+            (Some(cursor), settings)
+          });
+        jpeg_with_cursor(&image, compositor, target_ms, settings)
       })?;
       self.last_frame = Some(encoded.clone());
       return Ok(Some(encoded));
@@ -147,6 +156,9 @@ pub(super) fn spawn(
     )?),
     _ => None,
   };
+  let cursor = sources.cursor.clone();
+  let cursor_settings = Arc::clone(&sources.cursor_settings);
+  let duration_ms = sources.duration_ms;
 
   std::thread::Builder::new()
     .name("recording-preview-video-native".to_owned())
@@ -154,12 +166,22 @@ pub(super) fn spawn(
       let mut index = 0;
       while !cancelled.load(Ordering::Acquire) {
         let target_ms = start_ms.saturating_add(index * 1_000 / PREVIEW_FPS);
-        let screen_frame = match screen.frame_at(target_ms) {
+        if target_ms >= duration_ms {
+          break;
+        }
+        let cursor_settings = cursor_settings
+          .read()
+          .map(|settings| *settings)
+          .unwrap_or_default();
+        let screen_frame = match screen.frame_at(
+          target_ms,
+          cursor.as_deref().map(|cursor| (cursor, cursor_settings)),
+        ) {
           Ok(Some(frame)) => frame,
           Ok(None) | Err(_) => break,
         };
         let camera_frame = match camera.as_mut() {
-          Some(reader) => match reader.frame_at(target_ms) {
+          Some(reader) => match reader.frame_at(target_ms, None) {
             Ok(frame) => frame,
             Err(_) => break,
           },
