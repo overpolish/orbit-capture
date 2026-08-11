@@ -3,70 +3,9 @@
 
 use super::*;
 
-pub(super) fn remux_args(source: &Path, destination: &Path) -> Vec<OsString> {
-  let mut args: Vec<OsString> = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i"]
-    .map(OsString::from)
-    .into();
-  args.push(source.into());
-  args.extend(["-map", "0", "-c", "copy"].map(OsString::from));
-  args.extend(EXPORT_MP4_OUTPUT.map(OsString::from));
-  args.push(destination.into());
+mod args;
 
-  args
-}
-
-/// FFmpeg arguments for an export that differs from the source. Video is
-/// stream-copied at Original and quality-encoded at every compression level;
-/// selected audio is decoded only when several tracks must become one.
-pub(super) fn selected_export_args(
-  source: &Path,
-  destination: &Path,
-  selection: &TrackSelection,
-  layout: AudioLayout,
-  video: VideoExportOptions,
-) -> Vec<OsString> {
-  let VideoExportOptions {
-    compression,
-    resolution_scale_percent,
-    source_scale_percent,
-  } = video;
-  let mut args: Vec<OsString> = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i"]
-    .map(OsString::from)
-    .into();
-  args.push(source.into());
-  // Machine-readable progress belongs on the save encode, not on preview
-  // mixes. It is written to stdout while diagnostics continue to use stderr.
-  args.extend(["-progress", "pipe:1", "-nostats"].map(OsString::from));
-  args.extend(["-map", "0:v:0?"].map(OsString::from));
-  let scale_filter = resolution_filter(source_scale_percent, resolution_scale_percent);
-  if let Some(crf) = export_crf(compression, scale_filter.is_some()) {
-    args.extend(
-      [
-        "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        &crf.to_string(),
-        "-pix_fmt",
-        "yuv420p",
-        "-profile:v",
-        "high",
-      ]
-      .map(OsString::from),
-    );
-    if let Some(filter) = scale_filter {
-      args.extend([OsString::from("-vf"), OsString::from(filter)]);
-    }
-  } else {
-    args.extend(["-c:v", "copy"].map(OsString::from));
-  }
-  args.extend(selection.audio_args(layout).into_iter().map(OsString::from));
-  args.extend(EXPORT_MP4_OUTPUT.map(OsString::from));
-  args.push(destination.into());
-
-  args
-}
+pub(super) use args::{audio_export_args, camera_export_args, remux_args, selected_export_args};
 
 /// Counts the remuxes this process has attempted, so the temporary a save
 /// writes through never collides with another save's.
@@ -162,6 +101,53 @@ pub fn export_selected_recording(
   }
   let temporary = remux_temp_path(destination);
   let args = selected_export_args(source, &temporary, selection, layout, video);
+  run_export(args, &temporary, destination, cancelled, on_progress)
+}
+
+pub fn export_camera_recording(
+  audio_source: &Path,
+  camera_source: &Path,
+  destination: &Path,
+  selection: &TrackSelection,
+  layout: AudioLayout,
+  run: ExportRunOptions<'_>,
+) -> Result<ExportRunResult, String> {
+  let ExportRunOptions {
+    cancelled,
+    on_progress,
+    video,
+  } = run;
+  if (video.compression > 0 || video.resolution_scale_percent < video.source_scale_percent)
+    && !supports_compression()
+  {
+    return Err("This FFmpeg build does not include the H.264 encoder".to_owned());
+  }
+  let temporary = remux_temp_path(destination);
+  let args = camera_export_args(
+    audio_source,
+    camera_source,
+    &temporary,
+    selection,
+    layout,
+    video,
+  );
+  run_export(args, &temporary, destination, cancelled, on_progress)
+}
+
+pub fn export_selected_audio(
+  source: &Path,
+  destination: &Path,
+  selection: &TrackSelection,
+  layout: AudioLayout,
+  run: ExportRunOptions<'_>,
+) -> Result<ExportRunResult, String> {
+  let ExportRunOptions {
+    cancelled,
+    on_progress,
+    video: _,
+  } = run;
+  let temporary = remux_temp_path(destination);
+  let args = audio_export_args(source, &temporary, selection, layout);
   run_export(args, &temporary, destination, cancelled, on_progress)
 }
 
@@ -278,6 +264,23 @@ pub type SelectedRecordingExport = for<'a> fn(
   ExportRunOptions<'a>,
 ) -> Result<ExportRunResult, String>;
 
+pub type CameraRecordingExport = for<'a> fn(
+  &Path,
+  &Path,
+  &Path,
+  &TrackSelection,
+  AudioLayout,
+  ExportRunOptions<'a>,
+) -> Result<ExportRunResult, String>;
+
+pub type SelectedAudioExport = for<'a> fn(
+  &Path,
+  &Path,
+  &TrackSelection,
+  AudioLayout,
+  ExportRunOptions<'a>,
+) -> Result<ExportRunResult, String>;
+
 pub(super) fn progress_milliseconds(line: &str) -> Option<u64> {
   line
     .strip_prefix("out_time_us=")?
@@ -289,4 +292,12 @@ pub(super) fn progress_milliseconds(line: &str) -> Option<u64> {
 /// The audio-aware export operation, if FFmpeg is available.
 pub fn selected_recording_exporter() -> Option<SelectedRecordingExport> {
   ffmpeg_runs().then_some(export_selected_recording as SelectedRecordingExport)
+}
+
+pub fn camera_recording_exporter() -> Option<CameraRecordingExport> {
+  ffmpeg_runs().then_some(export_camera_recording as CameraRecordingExport)
+}
+
+pub fn selected_audio_exporter() -> Option<SelectedAudioExport> {
+  ffmpeg_runs().then_some(export_selected_audio as SelectedAudioExport)
 }

@@ -35,7 +35,7 @@ pub(super) fn save_audio(request: AudioSaveRequest<'_>) -> Result<Option<PathBuf
   let path = unique_path(directory, stem, AUDIO_EXTENSION, &|candidate| {
     candidate.exists()
   });
-  let exporter = media_preview::selected_recording_exporter()
+  let exporter = media_preview::selected_audio_exporter()
     .ok_or_else(|| "FFmpeg is required to save an audio recording".to_owned())?;
   let mut on_progress = |processed_ms| {
     camera_save::emit_progress(app, id, "recording", processed_ms, duration_ms, 0.0, 99.0);

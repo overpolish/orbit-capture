@@ -13,6 +13,10 @@ const meta: Meta<typeof AudioMeter> = {
     height: {
       control: { max: 100, min: 5, step: 1, type: "range" },
     },
+    orientation: {
+      control: "inline-radio",
+      options: ["horizontal", "vertical"],
+    },
     peak: {
       control: { max: 2, min: -65, step: 0.01, type: "range" },
     },
@@ -29,6 +33,7 @@ const meta: Meta<typeof AudioMeter> = {
     disabled: false,
     hidePeakTick: false,
     hideTicks: false,
+    orientation: "horizontal",
     radius: 2,
   },
   /* eslint-enable sort-keys */
@@ -48,6 +53,14 @@ export const Disabled: Story = {
   args: { disabled: true },
   parameters: {
     controls: { include: ["disabled"] },
+  },
+};
+
+export const Vertical: Story = {
+  args: {
+    height: 150,
+    orientation: "vertical",
+    width: 10,
   },
 };
 

@@ -18,6 +18,11 @@ type RecordingAudioTrack = {
   streamIndex: number;
 };
 
+export type AudioTrackVolume = {
+  decibels: number;
+  streamIndex: number;
+};
+
 export type PreparedAudioTrack = {
   kind: AudioTrackKind;
   label: string;
@@ -47,6 +52,26 @@ export type RecordingPreviewLayout = {
   height: number;
   panes: RecordingPreviewPane[];
   width: number;
+};
+
+export type RecordingVideoTrackId = "camera" | "primary";
+export type RecordingTrackId = RecordingVideoTrackId | `audio:${number}`;
+export type RecordingTimelineThumbnail = {
+  id: string;
+  url: string | null;
+};
+export type RecordingTimelineThumbnails = Record<
+  RecordingVideoTrackId,
+  RecordingTimelineThumbnail[]
+>;
+
+export const recordingAudioTrackId = (streamIndex: number): RecordingTrackId =>
+  `audio:${String(streamIndex)}` as RecordingTrackId;
+
+export const recordingAudioStreamIndex = (trackId: RecordingTrackId | null) => {
+  if (!trackId?.startsWith("audio:")) return null;
+  const streamIndex = Number(trackId.slice("audio:".length));
+  return Number.isInteger(streamIndex) ? streamIndex : null;
 };
 
 type RecordingCamera = {

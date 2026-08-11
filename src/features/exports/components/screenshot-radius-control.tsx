@@ -54,12 +54,13 @@ export function ScreenshotRadiusControl({
     onChangeEnd?.();
     if (event.currentTarget.hasPointerCapture(event.pointerId))
       event.currentTarget.releasePointerCapture(event.pointerId);
+    event.currentTarget.blur();
   };
 
   return (
     <button
       aria-label={`Screenshot corner radius ${Math.round(radiusPercent).toString()} percent`}
-      className="absolute rounded-full border-0 bg-white p-0"
+      className="absolute rounded-full border-0 bg-white p-0 outline-none"
       onPointerCancel={finish}
       onPointerDown={(event) => {
         event.preventDefault();
@@ -77,6 +78,7 @@ export function ScreenshotRadiusControl({
         transform: "translate(-50%, -50%)",
         width: size,
       }}
+      tabIndex={-1}
       type="button"
     />
   );

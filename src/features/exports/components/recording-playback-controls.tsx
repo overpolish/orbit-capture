@@ -7,14 +7,13 @@ import { ToggleButton } from "../../../components/base/button/toggle-button";
 import { formatDuration } from "../duration";
 
 import { Playhead } from "./scrub-playhead";
-import { ElapsedTime, SeekHandler, Timeline } from "./scrub-timeline";
+import { ElapsedTime } from "./scrub-timeline";
 
 type RecordingPlaybackControlsProps = {
   durationMs: number;
   isPlaying: boolean;
   onPause: () => void;
   onPlay: () => void;
-  onSeek: SeekHandler;
   playhead: Playhead;
 };
 
@@ -23,32 +22,30 @@ export function RecordingPlaybackControls({
   isPlaying,
   onPause,
   onPlay,
-  onSeek,
   playhead,
 }: RecordingPlaybackControlsProps) {
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex w-36 shrink-0 items-center gap-2">
-        <ToggleButton
-          aria-label={isPlaying ? "Pause preview" : "Play preview"}
-          className="size-6 shrink-0"
-          isSelected={isPlaying}
-          off={<Play className="fill-current" size={16} />}
-          onChange={(selected) => {
-            if (selected) onPlay();
-            else onPause();
-          }}
-          showFocus={false}
-          size="sm"
-          variant="ghost"
-        >
-          <Pause className="fill-current" size={16} />
-        </ToggleButton>
-        <span className="min-w-0 text-xxs text-muted tabular-nums">
-          <ElapsedTime playhead={playhead} /> / {formatDuration(durationMs)}
-        </span>
-      </div>
-      <Timeline onSeek={onSeek} playhead={playhead} />
+    <div className="flex h-7 shrink-0 items-center justify-center gap-1.5 border-t border-muted/15 px-3">
+      <ToggleButton
+        aria-keyshortcuts="Space"
+        aria-label={isPlaying ? "Pause preview" : "Play preview"}
+        className="size-6 shrink-0"
+        isSelected={isPlaying}
+        off={<Play className="fill-current" size={14} />}
+        onChange={(selected) => {
+          if (selected) onPlay();
+          else onPause();
+        }}
+        showFocus={false}
+        size="sm"
+        variant="ghost"
+      >
+        <Pause className="fill-current" size={14} />
+      </ToggleButton>
+      <span className="min-w-24 text-xs font-light text-content-fg tabular-nums">
+        <ElapsedTime playhead={playhead} />
+        <span className="text-muted"> / {formatDuration(durationMs)}</span>
+      </span>
     </div>
   );
 }

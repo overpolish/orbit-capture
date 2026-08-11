@@ -41,14 +41,17 @@ const cursorForEdges = (edges: OverlayEdge[]) => {
 export function BakedCameraPreviewViewport({
   cameraCanvasRef,
   cameraPane,
+  controlsVisible = true,
   isBusy,
   onInteractionEnd,
   onInteractionStart,
   onNeedFullResolution,
   onSettingsChange,
+  onZoomChange,
   screenCanvasRef,
   screenPane,
   settings,
+  zoomPercent,
 }: {
   cameraCanvasRef: RefObject<HTMLCanvasElement | null>;
   cameraPane: RecordingPreviewPane;
@@ -56,10 +59,13 @@ export function BakedCameraPreviewViewport({
   screenCanvasRef: RefObject<HTMLCanvasElement | null>;
   screenPane: RecordingPreviewPane;
   settings: CameraOverlaySettings;
+  controlsVisible?: boolean;
   onInteractionEnd?: () => void;
   onInteractionStart?: () => void;
   onNeedFullResolution?: () => void;
   onSettingsChange?: (settings: CameraOverlaySettings) => void;
+  onZoomChange?: (zoomPercent: number) => void;
+  zoomPercent?: number;
 }) {
   const mediaRef = useRef<HTMLDivElement | null>(null);
   const geometry = cameraOverlayGeometry(screenPane, cameraPane, settings);
@@ -89,6 +95,7 @@ export function BakedCameraPreviewViewport({
         width: screenPane.width,
       })}
       onNeedFullResolution={onNeedFullResolution}
+      onZoomChange={onZoomChange}
       renderMedia={({ ref, style }) => (
         <div
           className="relative shrink-0 select-none"
@@ -110,8 +117,9 @@ export function BakedCameraPreviewViewport({
           />
           <div
             aria-label="Camera crop window"
-            className="absolute cursor-move touch-none overflow-hidden"
+            className={`absolute touch-none overflow-hidden ${controlsVisible ? "cursor-move" : ""}`}
             onPointerDown={(event) => {
+              if (!controlsVisible) return;
               const point = naturalPoint(event);
               if (!point) return;
               begin(event, {
@@ -143,140 +151,146 @@ export function BakedCameraPreviewViewport({
               }}
             />
           </div>
-          <div
-            className="pointer-events-none absolute touch-none"
-            style={{
-              height: `${geometry.frame.height.toString()}px`,
-              left: `${geometry.frame.x.toString()}px`,
-              top: `${geometry.frame.y.toString()}px`,
-              width: `${geometry.frame.width.toString()}px`,
-            }}
-          >
-            <svg
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 size-full overflow-visible"
+          {controlsVisible ? (
+            <div
+              className="pointer-events-none absolute touch-none"
+              style={{
+                height: `${geometry.frame.height.toString()}px`,
+                left: `${geometry.frame.x.toString()}px`,
+                top: `${geometry.frame.y.toString()}px`,
+                width: `${geometry.frame.width.toString()}px`,
+              }}
             >
-              <rect
-                fill="none"
-                height="100%"
-                rx={geometry.radius}
-                stroke="white"
-                strokeDasharray={`calc(5px * ${inverseScale})`}
-                strokeWidth={lineWidth}
-                width="100%"
-              />
-            </svg>
-            {HANDLE_DIRECTIONS.map(({ edges, x, y }) => (
+              <svg
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 size-full overflow-visible"
+              >
+                <rect
+                  fill="none"
+                  height="100%"
+                  rx={geometry.radius}
+                  stroke="white"
+                  strokeDasharray={`calc(5px * ${inverseScale})`}
+                  strokeWidth={lineWidth}
+                  width="100%"
+                />
+              </svg>
+              {HANDLE_DIRECTIONS.map(({ edges, x, y }) => (
+                <button
+                  aria-label={`Resize camera crop ${edges.join(" ")}`}
+                  className="pointer-events-auto absolute rounded-full border-0 bg-white p-0 outline-none"
+                  key={edges.join("-")}
+                  onPointerDown={(event) => {
+                    const point = naturalPoint(event);
+                    if (!point) return;
+                    begin(event, {
+                      edges,
+                      kind: "resize",
+                      pointerX: point.x,
+                      pointerY: point.y,
+                    });
+                  }}
+                  style={{
+                    cursor: cursorForEdges(edges),
+                    height: controlSize,
+                    left: `${(x * 100).toString()}%`,
+                    top: `${(y * 100).toString()}%`,
+                    transform: "translate(-50%, -50%)",
+                    width: controlSize,
+                  }}
+                  tabIndex={-1}
+                  type="button"
+                  {...interaction}
+                />
+              ))}
               <button
-                aria-label={`Resize camera crop ${edges.join(" ")}`}
-                className="pointer-events-auto absolute rounded-full border-0 bg-white p-0"
-                key={edges.join("-")}
+                aria-label="Move camera and crop together"
+                className="pointer-events-auto absolute rounded-full border-0 bg-white p-0 outline-none"
                 onPointerDown={(event) => {
                   const point = naturalPoint(event);
                   if (!point) return;
                   begin(event, {
-                    edges,
-                    kind: "resize",
-                    pointerX: point.x,
-                    pointerY: point.y,
+                    kind: "whole",
+                    pointerX: point.x - geometry.frame.x,
+                    pointerY: point.y - geometry.frame.y,
                   });
                 }}
                 style={{
-                  cursor: cursorForEdges(edges),
                   height: controlSize,
-                  left: `${(x * 100).toString()}%`,
-                  top: `${(y * 100).toString()}%`,
+                  left: "50%",
+                  top: "50%",
                   transform: "translate(-50%, -50%)",
                   width: controlSize,
                 }}
+                tabIndex={-1}
                 type="button"
                 {...interaction}
               />
-            ))}
-            <button
-              aria-label="Move camera and crop together"
-              className="pointer-events-auto absolute rounded-full border-0 bg-white p-0"
-              onPointerDown={(event) => {
-                const point = naturalPoint(event);
-                if (!point) return;
-                begin(event, {
-                  kind: "whole",
-                  pointerX: point.x - geometry.frame.x,
-                  pointerY: point.y - geometry.frame.y,
-                });
-              }}
-              style={{
-                height: controlSize,
-                left: "50%",
-                top: "50%",
-                transform: "translate(-50%, -50%)",
-                width: controlSize,
-              }}
-              type="button"
-              {...interaction}
-            />
-            <svg
-              className="pointer-events-none absolute overflow-visible"
-              style={{
-                height: ringDiameter,
-                left: "50%",
-                top: "50%",
-                transform: "translate(-50%, -50%)",
-                width: ringDiameter,
-              }}
-              viewBox={`0 0 ${(ringExtent * 2).toString()} ${(ringExtent * 2).toString()}`}
-            >
-              <circle
-                aria-hidden="true"
-                className="fill-none stroke-white"
-                cx={ringExtent}
-                cy={ringExtent}
-                r={Math.max(1, ringExtent - 1)}
-                style={{ strokeWidth: lineWidth }}
-              />
-              <circle
-                aria-label={`Scale camera ${Math.round(effectiveScale).toString()} percent`}
-                className="pointer-events-auto fill-none stroke-transparent"
-                cx={ringExtent}
-                cy={ringExtent}
-                onPointerDown={(event) => {
-                  begin(event, { kind: "scale" });
-                }}
-                r={Math.max(1, ringExtent - 1)}
-                role="button"
+              <svg
+                className="pointer-events-none absolute overflow-visible"
                 style={{
-                  cursor: "nesw-resize",
-                  pointerEvents: "stroke",
-                  strokeWidth: `calc(10px * ${inverseScale})`,
+                  height: ringDiameter,
+                  left: "50%",
+                  top: "50%",
+                  transform: "translate(-50%, -50%)",
+                  width: ringDiameter,
                 }}
-                tabIndex={0}
+                viewBox={`0 0 ${(ringExtent * 2).toString()} ${(ringExtent * 2).toString()}`}
+              >
+                <circle
+                  aria-hidden="true"
+                  className="fill-none stroke-white"
+                  cx={ringExtent}
+                  cy={ringExtent}
+                  r={Math.max(1, ringExtent - 1)}
+                  style={{ strokeWidth: lineWidth }}
+                />
+                <circle
+                  aria-label={`Scale camera ${Math.round(effectiveScale).toString()} percent`}
+                  className="pointer-events-auto fill-none stroke-transparent"
+                  cx={ringExtent}
+                  cy={ringExtent}
+                  onPointerDown={(event) => {
+                    begin(event, { kind: "scale" });
+                  }}
+                  r={Math.max(1, ringExtent - 1)}
+                  role="button"
+                  style={{
+                    cursor: "nesw-resize",
+                    pointerEvents: "stroke",
+                    strokeWidth: `calc(10px * ${inverseScale})`,
+                  }}
+                  tabIndex={-1}
+                  {...interaction}
+                />
+              </svg>
+              <button
+                aria-label={`Camera corner radius ${Math.round(settings.radiusPercent).toString()} percent`}
+                className="pointer-events-auto absolute rounded-full border-0 bg-white p-0 outline-none"
+                onPointerDown={(event) => {
+                  begin(event, { kind: "radius" });
+                }}
+                style={{
+                  cursor: "nwse-resize",
+                  height: controlSize,
+                  left: radiusHandleOffset,
+                  top: radiusHandleOffset,
+                  transform: "translate(-50%, -50%)",
+                  width: controlSize,
+                }}
+                tabIndex={-1}
+                type="button"
                 {...interaction}
               />
-            </svg>
-            <button
-              aria-label={`Camera corner radius ${Math.round(settings.radiusPercent).toString()} percent`}
-              className="pointer-events-auto absolute rounded-full border-0 bg-white p-0"
-              onPointerDown={(event) => {
-                begin(event, { kind: "radius" });
-              }}
-              style={{
-                cursor: "nwse-resize",
-                height: controlSize,
-                left: radiusHandleOffset,
-                top: radiusHandleOffset,
-                transform: "translate(-50%, -50%)",
-                width: controlSize,
-              }}
-              type="button"
-              {...interaction}
-            />
-          </div>
+            </div>
+          ) : null}
           {isBusy ? (
             <div className="pointer-events-none absolute inset-0 bg-content/20 backdrop-blur-sm" />
           ) : null}
         </div>
       )}
       resetKey={`baked:${screenPane.width.toString()}x${screenPane.height.toString()}`}
+      zoomPercent={zoomPercent}
     />
   );
 }

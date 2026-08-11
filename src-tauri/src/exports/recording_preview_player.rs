@@ -8,7 +8,7 @@
 
 use std::{path::PathBuf, sync::Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{ipc::Channel, AppHandle, Manager};
 
 mod audio;
@@ -16,6 +16,7 @@ pub(crate) mod commands;
 mod layout;
 #[cfg(target_os = "macos")]
 mod still_macos;
+pub(crate) mod timeline_thumbnails;
 mod video;
 #[cfg(target_os = "macos")]
 mod video_macos;
@@ -25,7 +26,7 @@ use self::layout::{preview_layout, RecordingPreviewLayout, PREVIEW_HEIGHT};
 #[cfg(target_os = "macos")]
 use self::still_macos::NativeStillDecoder;
 use self::worker::{PlaybackMode, PreviewPlayerWorker};
-use super::{ExportArtifact, ExportState, RecordingAudioTrack};
+use super::{AudioTrackVolume, ExportArtifact, ExportState, RecordingAudioTrack};
 use crate::recording::PrimaryRecordingKind;
 pub use commands::stop_all;
 
@@ -38,6 +39,13 @@ pub(super) struct PlayerSources {
   layout: RecordingPreviewLayout,
   playback_layout: RecordingPreviewLayout,
   screen_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreviewAudioSettings {
+  pub audio_track_volumes: Vec<AudioTrackVolume>,
+  pub enabled_stream_indices: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -67,6 +75,7 @@ pub enum RecordingPreviewPlayerEvent {
 struct PreviewPlayerManager {
   artifact_id: Option<u64>,
   audio_indices: Vec<usize>,
+  audio_volumes: Vec<AudioTrackVolume>,
   event_channel: Option<Channel<RecordingPreviewPlayerEvent>>,
   frame_channel: Option<Channel>,
   is_playing: bool,
@@ -118,7 +127,10 @@ impl PreviewPlayerManager {
     }
     self.worker = Some(PreviewPlayerWorker::spawn(
       sources,
-      self.audio_indices.clone(),
+      PreviewAudioSettings {
+        audio_track_volumes: self.audio_volumes.clone(),
+        enabled_stream_indices: self.audio_indices.clone(),
+      },
       self.position_ms,
       self.latest_seek_request,
       mode,

@@ -6,24 +6,32 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 
 import { formatDuration } from "../duration";
 import { PreparedAudioTrack } from "../types";
 
+import { decibelGain } from "./audio-level";
 import { clamp, Playhead } from "./scrub-playhead";
 
 export type ScrubPhase = "end" | "move" | "start";
 export type SeekHandler = (ratio: number, phase: ScrubPhase) => void;
 
-const waveformPath = (points: number[]) => {
+const TICK_INTERVALS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+const MINIMUM_TICK_SPACING = 70;
+
+const waveformPath = (points: number[], volumeDecibels: number) => {
   if (points.length === 0) return "";
   const center = 20;
-  const scale = 17;
   return points
     .map((peak, index) => {
       const x = (index / Math.max(1, points.length - 1)) * 1000;
-      const height = Math.max(0.75, peak * scale);
+      const adjustedPeak = Math.min(1, peak * decibelGain(volumeDecibels));
+      const height = Math.max(
+        1.25,
+        Math.pow(Math.max(0, adjustedPeak), 0.55) * 18.5,
+      );
       return `M${x.toFixed(2)} ${(center - height).toFixed(2)}V${(center + height).toFixed(2)}`;
     })
     .join(" ");
@@ -31,50 +39,25 @@ const waveformPath = (points: number[]) => {
 
 export function Waveform({
   enabled,
-  onSeek,
-  playhead,
+  onSelect,
   track,
+  volumeDecibels,
 }: {
   enabled: boolean;
-  onSeek: SeekHandler;
-  playhead: Playhead;
+  onSelect: () => void;
   track: PreparedAudioTrack;
+  volumeDecibels: number;
 }) {
-  const path = useMemo(() => waveformPath(track.waveform), [track.waveform]);
-  const lineRef = useRef<HTMLDivElement>(null);
-
-  useEffect(
-    () =>
-      playhead.subscribe((_seconds, ratio) => {
-        if (lineRef.current)
-          lineRef.current.style.left = `${(ratio * 100).toString()}%`;
-      }),
-    [playhead],
+  const path = useMemo(
+    () => waveformPath(track.waveform, volumeDecibels),
+    [track.waveform, volumeDecibels],
   );
-
-  const seek = (
-    event: ReactPointerEvent<HTMLDivElement>,
-    phase: ScrubPhase,
-  ) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    onSeek(clamp((event.clientX - bounds.left) / bounds.width, 0, 1), phase);
-  };
 
   return (
     <div
-      className="relative h-6 min-w-0 grow cursor-ew-resize overflow-hidden rounded bg-muted/8"
-      onPointerDown={(event) => {
-        event.currentTarget.setPointerCapture(event.pointerId);
-        seek(event, "start");
-      }}
-      onPointerMove={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId))
-          seek(event, "move");
-      }}
-      onPointerUp={(event) => {
-        seek(event, "end");
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }}
+      className="relative h-8 min-w-0 grow cursor-default overflow-hidden rounded bg-muted/8"
+      data-audio-stream-index={track.streamIndex}
+      onClick={onSelect}
     >
       <svg
         aria-hidden="true"
@@ -90,16 +73,11 @@ export function Waveform({
           vectorEffect="non-scaling-stroke"
         />
       </svg>
-      <div
-        className="pointer-events-none absolute inset-y-0 w-px bg-content-fg/80"
-        ref={lineRef}
-        style={{ left: "0%" }}
-      />
     </div>
   );
 }
 
-export function Timeline({
+export function TimelineScrubber({
   onSeek,
   playhead,
 }: {
@@ -107,17 +85,103 @@ export function Timeline({
   playhead: Playhead;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const fillRef = useRef<HTMLDivElement>(null);
-  const knobRef = useRef<HTMLDivElement>(null);
+  const lineRef = useRef<HTMLDivElement>(null);
+
+  useEffect(
+    () =>
+      playhead.subscribe((_seconds, ratio) => {
+        if (lineRef.current)
+          lineRef.current.style.left = `${(ratio * 100).toString()}%`;
+      }),
+    [playhead],
+  );
+
+  const seek = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    phase: ScrubPhase,
+  ) => {
+    const bounds = rootRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    onSeek(clamp((event.clientX - bounds.left) / bounds.width, 0, 1), phase);
+  };
+
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 overflow-hidden"
+      ref={rootRef}
+    >
+      <div
+        className="pointer-events-auto absolute inset-y-0 w-3 -translate-x-1/2 cursor-ew-resize touch-none"
+        onPointerCancel={(event) => {
+          seek(event, "end");
+          if (event.currentTarget.hasPointerCapture(event.pointerId))
+            event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          seek(event, "start");
+        }}
+        onPointerMove={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId))
+            seek(event, "move");
+        }}
+        onPointerUp={(event) => {
+          seek(event, "end");
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        ref={lineRef}
+        style={{ left: "0%" }}
+      >
+        <span className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-content-fg/80" />
+      </div>
+    </div>
+  );
+}
+
+export function TimelineRuler({
+  durationMs,
+  onSeek,
+  playhead,
+}: {
+  durationMs: number;
+  onSeek: SeekHandler;
+  playhead: Playhead;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const ratioRef = useRef(0);
+  const [width, setWidth] = useState(0);
+  const durationSeconds = Math.max(0, durationMs / 1_000);
+  const pixelsPerSecond = width / Math.max(1, durationSeconds);
+  const interval =
+    TICK_INTERVALS.find(
+      (candidate) => candidate * pixelsPerSecond >= MINIMUM_TICK_SPACING,
+    ) ?? TICK_INTERVALS[TICK_INTERVALS.length - 1];
+  const ticks = useMemo(() => {
+    if (durationSeconds <= 0) return [0];
+    return Array.from(
+      { length: Math.floor(durationSeconds / interval) + 1 },
+      (_, index) => index * interval,
+    );
+  }, [durationSeconds, interval]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const observer = new ResizeObserver(() => {
+      setWidth(root.clientWidth);
+    });
+    observer.observe(root);
+    setWidth(root.clientWidth);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   useEffect(
     () =>
       playhead.subscribe((_seconds, ratio) => {
         ratioRef.current = ratio;
-        const percent = `${(ratio * 100).toString()}%`;
-        if (fillRef.current) fillRef.current.style.width = percent;
-        if (knobRef.current) knobRef.current.style.left = percent;
         // Assistive technology needs the position too, and this element is
         // never re-rendered, so React will not overwrite the attribute.
         rootRef.current?.setAttribute(
@@ -142,7 +206,7 @@ export function Timeline({
       aria-valuemax={100}
       aria-valuemin={0}
       aria-valuenow={0}
-      className="relative h-6 min-w-0 grow cursor-ew-resize touch-none"
+      className="relative h-4 min-w-0 grow cursor-ew-resize touch-none overflow-hidden outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-content-fg/75"
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
         event.preventDefault();
@@ -154,7 +218,17 @@ export function Timeline({
         onSeek(ratio, "start");
         onSeek(ratio, "end");
       }}
+      onPointerCancel={(event) => {
+        seek(event, "end");
+        if (event.currentTarget.hasPointerCapture(event.pointerId))
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        event.currentTarget.blur();
+      }}
       onPointerDown={(event) => {
+        // Pointer scrubbing must not leave the ruler as the keyboard target.
+        // Otherwise the next Space press exposes WebKit's focus treatment
+        // instead of reaching the export-window playback shortcut.
+        event.preventDefault();
         event.currentTarget.setPointerCapture(event.pointerId);
         seek(event, "start");
       }}
@@ -164,24 +238,27 @@ export function Timeline({
       }}
       onPointerUp={(event) => {
         seek(event, "end");
-        event.currentTarget.releasePointerCapture(event.pointerId);
+        if (event.currentTarget.hasPointerCapture(event.pointerId))
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        event.currentTarget.blur();
       }}
       ref={rootRef}
       role="slider"
       tabIndex={0}
     >
-      <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-muted/15">
+      {ticks.map((seconds) => (
         <div
-          className="h-full rounded-full bg-info"
-          ref={fillRef}
-          style={{ width: "0%" }}
-        />
-      </div>
-      <div
-        className="pointer-events-none absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-content bg-info shadow-sm"
-        ref={knobRef}
-        style={{ left: "0%" }}
-      />
+          className="pointer-events-none absolute inset-y-0 border-l border-muted/35"
+          key={seconds}
+          style={{
+            left: `${((seconds / Math.max(1, durationSeconds)) * 100).toString()}%`,
+          }}
+        >
+          <span className="absolute top-0 left-1 whitespace-nowrap text-xxs font-medium text-muted tabular-nums">
+            {formatDuration(seconds * 1_000)}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

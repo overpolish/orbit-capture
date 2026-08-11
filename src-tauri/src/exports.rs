@@ -183,6 +183,7 @@ pub struct CameraOverlaySettings {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingExportOptions {
+  pub audio_track_volumes: Vec<AudioTrackVolume>,
   pub bake_camera: bool,
   pub camera_compression: u8,
   pub camera_overlay: CameraOverlaySettings,
@@ -190,8 +191,17 @@ pub struct RecordingExportOptions {
   pub collapse_audio: bool,
   pub compression: u8,
   pub enabled_stream_indices: Vec<usize>,
+  pub include_camera: bool,
+  pub include_primary_video: bool,
   pub resolution_scale_percent: u16,
   pub screenshot_radius_percent: f64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioTrackVolume {
+  pub decibels: i16,
+  pub stream_index: usize,
 }
 
 fn recording_audio_tracks(

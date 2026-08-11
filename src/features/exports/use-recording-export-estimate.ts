@@ -6,27 +6,37 @@ import { useEffect, useRef, useState } from "react";
 
 import { estimateRecordingExport } from "./api";
 import { mixSignature, VideoExportSettings } from "./recording-export-settings";
-import { CameraOverlaySettings, ExportArtifact } from "./types";
+import {
+  AudioTrackVolume,
+  CameraOverlaySettings,
+  ExportArtifact,
+} from "./types";
 
 const ESTIMATE_DEBOUNCE_MS = 450;
 
 export function useRecordingExportEstimate({
   artifact,
+  audioTrackVolumes,
   bakeCamera,
   camera,
   cameraOverlay,
   collapseAudio,
   compression,
   enabledStreamIndices,
+  includeCamera,
+  includePrimaryVideo,
   resolutionScalePercent,
 }: {
   artifact: ExportArtifact | null;
+  audioTrackVolumes: AudioTrackVolume[];
   bakeCamera: boolean;
   camera: VideoExportSettings;
   cameraOverlay: CameraOverlaySettings;
   collapseAudio: boolean;
   compression: number;
   enabledStreamIndices: number[] | null;
+  includeCamera: boolean;
+  includePrimaryVideo: boolean;
   resolutionScalePercent: number;
 }) {
   const cacheRef = useRef(new Map<string, number>());
@@ -39,12 +49,18 @@ export function useRecordingExportEstimate({
   const enabledSignature = enabledStreamIndices
     ? mixSignature(enabledStreamIndices)
     : null;
+  const hasExportableContent =
+    includePrimaryVideo ||
+    includeCamera ||
+    (enabledSignature !== null && enabledSignature !== "silent");
   const signature =
     artifact?.kind === "recording" &&
-    artifact.primaryKind !== "audio" &&
-    enabledSignature !== null
+    enabledSignature !== null &&
+    hasExportableContent
       ? [
           artifact.id,
+          includePrimaryVideo ? "primary" : "no-primary",
+          includeCamera ? "camera" : "no-camera",
           bakeCamera ? "baked" : "separate",
           compression,
           resolutionScalePercent,
@@ -60,6 +76,12 @@ export function useRecordingExportEstimate({
           cameraOverlay.frameYPercent,
           cameraOverlay.radiusPercent,
           collapseAudio ? "mix" : "separate",
+          audioTrackVolumes
+            .map(
+              (volume) =>
+                `${volume.streamIndex.toString()}-${volume.decibels.toString()}`,
+            )
+            .join(","),
         ].join(":")
       : null;
 
@@ -96,6 +118,7 @@ export function useRecordingExportEstimate({
       setActiveJobs((count) => count + 1);
       estimateRecordingExport({
         artifactId: artifact.id,
+        audioTrackVolumes,
         bakeCamera,
         cameraCompression: camera.compression,
         cameraOverlay,
@@ -103,6 +126,8 @@ export function useRecordingExportEstimate({
         collapseAudio,
         compression,
         enabledStreamIndices: streamIndices,
+        includeCamera,
+        includePrimaryVideo,
         resolutionScalePercent,
         screenshotRadiusPercent: 0,
       })
@@ -127,6 +152,7 @@ export function useRecordingExportEstimate({
     };
   }, [
     artifact,
+    audioTrackVolumes,
     bakeCamera,
     camera.compression,
     camera.resolutionScalePercent,
@@ -134,6 +160,8 @@ export function useRecordingExportEstimate({
     collapseAudio,
     compression,
     enabledSignature,
+    includeCamera,
+    includePrimaryVideo,
     resolutionScalePercent,
     signature,
   ]);
@@ -144,7 +172,7 @@ export function useRecordingExportEstimate({
     estimatedSizeBytes: current?.bytes,
     isEstimatingSize:
       artifact?.kind === "recording" &&
-      artifact.primaryKind !== "audio" &&
+      hasExportableContent &&
       (current === null || current.isEstimating),
     isPending: activeJobs > 0,
   };

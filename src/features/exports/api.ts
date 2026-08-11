@@ -5,6 +5,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 
 import {
   CameraOverlaySettings,
+  AudioTrackVolume,
   ExportSnapshot,
   RecordingPreview,
   RecordingPreviewLayout,
@@ -39,12 +40,14 @@ export const getRecordingPreview = (artifactId: number) =>
 
 export const startRecordingPreviewPlayer = ({
   artifactId,
+  audioTrackVolumes,
   enabledStreamIndices,
   eventChannel,
   frameChannel,
   sessionId,
 }: {
   artifactId: number;
+  audioTrackVolumes: AudioTrackVolume[];
   enabledStreamIndices: number[];
   eventChannel: Channel<RecordingPreviewPlayerEvent>;
   frameChannel: Channel<ArrayBuffer>;
@@ -52,7 +55,7 @@ export const startRecordingPreviewPlayer = ({
 }) =>
   invoke<RecordingPreviewPlayerInfo>("start_recording_preview_player", {
     artifactId,
-    enabledStreamIndices,
+    audio: { audioTrackVolumes, enabledStreamIndices },
     eventChannel,
     frameChannel,
     sessionId,
@@ -89,10 +92,31 @@ export const selectRecordingPreviewAudio = (
     sessionId,
   });
 
+export const setRecordingPreviewAudioVolumes = (
+  audioTrackVolumes: AudioTrackVolume[],
+  sessionId: number,
+) =>
+  invoke<null>("set_recording_preview_audio_volumes", {
+    audioTrackVolumes,
+    sessionId,
+  });
+
 export const stopRecordingPreviewPlayer = (sessionId: number) =>
   invoke<null>("stop_recording_preview_player", { sessionId });
 
+export const streamRecordingTimelineThumbnails = (
+  artifactId: number,
+  count: number,
+  channel: Channel<ArrayBuffer>,
+) =>
+  invoke<null>("stream_recording_timeline_thumbnails", {
+    artifactId,
+    channel,
+    count,
+  });
+
 type RecordingProcessingOptions = {
+  audioTrackVolumes: AudioTrackVolume[];
   bakeCamera: boolean;
   cameraCompression: number;
   cameraOverlay: CameraOverlaySettings;
@@ -100,12 +124,15 @@ type RecordingProcessingOptions = {
   collapseAudio: boolean;
   compression: number;
   enabledStreamIndices: number[];
+  includeCamera: boolean;
+  includePrimaryVideo: boolean;
   resolutionScalePercent: number;
   screenshotRadiusPercent: number;
 };
 
 export const estimateRecordingExport = ({
   artifactId,
+  audioTrackVolumes,
   bakeCamera,
   cameraCompression,
   cameraOverlay,
@@ -113,12 +140,15 @@ export const estimateRecordingExport = ({
   collapseAudio,
   compression,
   enabledStreamIndices,
+  includeCamera,
+  includePrimaryVideo,
   resolutionScalePercent,
   screenshotRadiusPercent,
 }: RecordingProcessingOptions & { artifactId: number }) =>
   invoke<number>("estimate_recording_export", {
     artifactId,
     options: {
+      audioTrackVolumes,
       bakeCamera,
       cameraCompression,
       cameraOverlay,
@@ -126,6 +156,8 @@ export const estimateRecordingExport = ({
       collapseAudio,
       compression,
       enabledStreamIndices,
+      includeCamera,
+      includePrimaryVideo,
       resolutionScalePercent,
       screenshotRadiusPercent,
     },
@@ -136,6 +168,7 @@ type SaveExportOptions = RecordingProcessingOptions & {
 };
 
 export const saveExport = ({
+  audioTrackVolumes,
   bakeCamera,
   cameraCompression,
   cameraOverlay,
@@ -144,12 +177,15 @@ export const saveExport = ({
   compression,
   enabledStreamIndices,
   fileStem,
+  includeCamera,
+  includePrimaryVideo,
   resolutionScalePercent,
   screenshotRadiusPercent,
 }: SaveExportOptions) =>
   invoke<string | null>("save_export", {
     fileStem,
     options: {
+      audioTrackVolumes,
       bakeCamera,
       cameraCompression,
       cameraOverlay,
@@ -157,6 +193,8 @@ export const saveExport = ({
       collapseAudio,
       compression,
       enabledStreamIndices,
+      includeCamera,
+      includePrimaryVideo,
       resolutionScalePercent,
       screenshotRadiusPercent,
     },

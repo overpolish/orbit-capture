@@ -10,18 +10,17 @@ import {
   LoaderCircle,
   Trash2,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../../components/base/button/button";
 import { ToggleButton } from "../../../components/base/button/toggle-button";
 import { ContentRotate } from "../../../components/base/content-rotate/content-rotate";
 import { Overlay } from "../../../components/base/overlay/overlay";
+import { ConfirmActionButton } from "../../../components/shared/confirm-action-button/confirm-action-button";
 import { cn } from "../../../lib/styling";
 import { formatElapsedTime } from "../elapsed-time";
 import { RecordingStatus } from "../types";
 
 const ICON_SIZE = 18;
-const DISCARD_CONFIRM_TIMEOUT_MS = 2000;
 
 /**
  * Rotates each digit on its own, so a tick only animates what actually
@@ -51,42 +50,18 @@ type DiscardButtonProps = {
  * swap is the pause button's, so the three controls stay of a piece.
  */
 function DiscardButton({ isDisabled, onDiscard }: DiscardButtonProps) {
-  const [isArmed, setIsArmed] = useState(false);
-  const disarmRef = useRef<number | undefined>(undefined);
-
-  useEffect(
-    () => () => {
-      window.clearTimeout(disarmRef.current);
-    },
-    [],
-  );
-
   return (
-    <ToggleButton
-      aria-label={isArmed ? "Confirm discarding" : "Discard recording"}
+    <ConfirmActionButton
+      armedIcon={
+        <Check className="text-error" size={ICON_SIZE} strokeWidth={3} />
+      }
+      armedLabel="Confirm discarding"
       className="h-9 w-9"
+      idleIcon={<Trash2 size={ICON_SIZE} />}
+      idleLabel="Discard recording"
       isDisabled={isDisabled}
-      isSelected={isArmed}
-      off={<Trash2 size={ICON_SIZE} />}
-      onChange={(selected) => {
-        window.clearTimeout(disarmRef.current);
-
-        if (!selected) {
-          // The bin was already armed, so this press is the confirmation.
-          setIsArmed(false);
-          onDiscard?.();
-          return;
-        }
-
-        setIsArmed(true);
-        disarmRef.current = window.setTimeout(() => {
-          setIsArmed(false);
-        }, DISCARD_CONFIRM_TIMEOUT_MS);
-      }}
-      variant="ghost"
-    >
-      <Check className="text-error" size={ICON_SIZE} strokeWidth={3} />
-    </ToggleButton>
+      onConfirm={onDiscard}
+    />
   );
 }
 

@@ -13,11 +13,14 @@ const sizes: React.ComponentProps<typeof NumberField>["size"][] = [
 const variants: React.ComponentProps<typeof NumberField>["variant"][] = [
   "solid",
   "line",
+  "ghost",
 ] as const;
 
 const meta = {
   argTypes: {
     centered: { control: "boolean" },
+    rightAligned: { control: "boolean" },
+    scrubbable: { control: "boolean" },
     showSteppers: { control: "boolean" },
     size: {
       control: "inline-radio",
@@ -91,6 +94,18 @@ export const WithoutSteppers: Story = {
   args: {
     label: undefined,
     showSteppers: false,
+  },
+  parameters: { controls: { disable: true } },
+};
+
+export const Scrubbable: Story = {
+  args: {
+    label: undefined,
+    rightAligned: true,
+    rightSection: <span className="text-xs">%</span>,
+    scrubbable: true,
+    showSteppers: false,
+    variant: "ghost",
   },
   parameters: { controls: { disable: true } },
 };

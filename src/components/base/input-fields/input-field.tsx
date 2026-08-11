@@ -44,6 +44,7 @@ export const inputFieldVariants = tv({
   variants: {
     centered: { true: { input: "text-center" } },
     isInvalid: { true: "" },
+    rightAligned: { true: { input: "text-right" } },
     size: {
       md: {
         input: "text-sm py-2 placeholder:text-xs",
@@ -57,6 +58,9 @@ export const inputFieldVariants = tv({
       },
     },
     variant: {
+      ghost: {
+        inputWrapper: "px-1",
+      },
       line: {},
       solid: {
         field: ["border border-muted/30 rounded-md", focusStyles, focusWithin],

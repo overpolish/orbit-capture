@@ -14,6 +14,7 @@ use tauri::ipc::Channel;
 
 use super::{audio, send_error, stop_child, PlaybackMode};
 use crate::exports::recording_preview_player::{PlayerSources, RecordingPreviewPlayerEvent};
+use crate::exports::AudioTrackVolume;
 
 pub(super) struct RunContext {
   pub(super) audio_child: Arc<Mutex<Option<Child>>>,
@@ -23,6 +24,7 @@ pub(super) struct RunContext {
   pub(super) position_ms: Arc<AtomicU64>,
   pub(super) request_id: u64,
   pub(super) selected_audio: Arc<RwLock<Vec<usize>>>,
+  pub(super) audio_volumes: Arc<RwLock<Vec<AudioTrackVolume>>>,
   pub(super) sources: PlayerSources,
   pub(super) start_ms: u64,
 }
@@ -36,6 +38,7 @@ pub(super) fn run(context: RunContext) {
     position_ms,
     request_id,
     selected_audio,
+    audio_volumes,
     sources,
     start_ms,
   } = context;
@@ -50,6 +53,7 @@ pub(super) fn run(context: RunContext) {
   let audio = match audio::spawn(
     &sources,
     selected_audio,
+    audio_volumes,
     start_ms,
     Arc::clone(&cancelled),
     Arc::clone(&audio_child),

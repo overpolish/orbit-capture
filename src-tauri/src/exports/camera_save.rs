@@ -193,3 +193,54 @@ pub(super) fn save_camera_copy(
   }
   Ok(saved)
 }
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn save_camera_as_primary(
+  audio_source: &Path,
+  camera: &RecordingCamera,
+  directory: &Path,
+  stem: &str,
+  selection: &track_selection::TrackSelection,
+  layout: track_selection::AudioLayout,
+  artifact_id: u64,
+  progress_app: &AppHandle,
+  cancelled: &AtomicBool,
+  compression: u8,
+  resolution_scale_percent: u16,
+) -> Result<Option<PathBuf>, String> {
+  let exporter = media_preview::camera_recording_exporter()
+    .ok_or_else(|| "FFmpeg is required to export the camera track on its own".to_owned())?;
+  let path = unique_path(directory, stem, RECORDING_EXTENSION, &|candidate| {
+    candidate.exists()
+  });
+  let mut on_progress = |processed_ms| {
+    emit_progress(
+      progress_app,
+      artifact_id,
+      "camera",
+      processed_ms,
+      camera.duration_ms,
+      0.0,
+      99.0,
+    );
+  };
+  match exporter(
+    audio_source,
+    &camera.path,
+    &path,
+    selection,
+    layout,
+    media_preview::ExportRunOptions {
+      cancelled,
+      on_progress: &mut on_progress,
+      video: media_preview::VideoExportOptions {
+        compression,
+        resolution_scale_percent,
+        source_scale_percent: 100,
+      },
+    },
+  )? {
+    media_preview::ExportRunResult::Completed => Ok(Some(path)),
+    media_preview::ExportRunResult::Cancelled => Ok(None),
+  }
+}

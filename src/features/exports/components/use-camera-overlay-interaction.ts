@@ -255,6 +255,11 @@ export const useCameraOverlayInteraction = ({
     onInteractionEnd?.();
     if (event.currentTarget.hasPointerCapture(event.pointerId))
       event.currentTarget.releasePointerCapture(event.pointerId);
+    if (
+      event.currentTarget instanceof HTMLElement ||
+      event.currentTarget instanceof SVGElement
+    )
+      event.currentTarget.blur();
   };
 
   return {

@@ -18,7 +18,7 @@ use cpal::{
 };
 
 use super::PlayerSources;
-use crate::exports::media_preview;
+use crate::exports::{media_preview, AudioTrackVolume};
 
 const MAX_QUEUED_SECONDS: usize = 2;
 const PREBUFFER_MILLISECONDS: usize = 120;
@@ -36,6 +36,7 @@ fn build_output<T>(
   queue: Arc<Mutex<VecDeque<f32>>>,
   played_frames: Arc<AtomicU64>,
   selected_audio: Arc<RwLock<Vec<usize>>>,
+  audio_volumes: Arc<RwLock<Vec<AudioTrackVolume>>>,
   stream_indices: Vec<usize>,
 ) -> Result<Stream, String>
 where
@@ -51,12 +52,21 @@ where
         let selected = selected_audio
           .read()
           .unwrap_or_else(|value| value.into_inner());
+        let volumes = audio_volumes
+          .read()
+          .unwrap_or_else(|value| value.into_inner());
         for frame in output.chunks_mut(output_channels) {
           let mut mixed = 0.0_f32;
           for stream_index in stream_indices.iter().take(track_count) {
             let sample = queue.pop_front().unwrap_or(0.0);
             if selected.contains(stream_index) {
-              mixed += sample;
+              let decibels = volumes
+                .iter()
+                .find_map(|volume| {
+                  (volume.stream_index == *stream_index).then_some(volume.decibels)
+                })
+                .unwrap_or(0);
+              mixed += sample * 10_f32.powf(f32::from(decibels) / 20.0);
             }
           }
           let mixed = mixed.clamp(-1.0, 1.0);
@@ -75,6 +85,7 @@ where
 fn output_stream(
   queue: Arc<Mutex<VecDeque<f32>>>,
   selected_audio: Arc<RwLock<Vec<usize>>>,
+  audio_volumes: Arc<RwLock<Vec<AudioTrackVolume>>>,
   stream_indices: Vec<usize>,
 ) -> Result<(Stream, Arc<AtomicU64>, StreamConfig), String> {
   let device = cpal::default_host()
@@ -92,6 +103,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     SampleFormat::F64 => build_output::<f64>(
@@ -100,6 +112,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     SampleFormat::I8 => build_output::<i8>(
@@ -108,6 +121,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     SampleFormat::I16 => build_output::<i16>(
@@ -116,6 +130,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     SampleFormat::I24 => build_output::<cpal::I24>(
@@ -124,6 +139,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     SampleFormat::I32 => build_output::<i32>(
@@ -132,6 +148,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     SampleFormat::I64 => build_output::<i64>(
@@ -140,6 +157,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     SampleFormat::U8 => build_output::<u8>(
@@ -148,6 +166,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     SampleFormat::U16 => build_output::<u16>(
@@ -156,6 +175,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     SampleFormat::U24 => build_output::<cpal::U24>(
@@ -164,6 +184,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     SampleFormat::U32 => build_output::<u32>(
@@ -172,6 +193,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     SampleFormat::U64 => build_output::<u64>(
@@ -180,6 +202,7 @@ fn output_stream(
       Arc::clone(&queue),
       Arc::clone(&played),
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       stream_indices.clone(),
     ),
     format => Err(format!("Unsupported audio output format: {format}")),
@@ -247,6 +270,7 @@ fn args(sources: &PlayerSources, start_ms: u64, config: &StreamConfig) -> Vec<St
 pub(super) fn spawn(
   sources: &PlayerSources,
   selected_audio: Arc<RwLock<Vec<usize>>>,
+  audio_volumes: Arc<RwLock<Vec<AudioTrackVolume>>>,
   start_ms: u64,
   cancelled: Arc<AtomicBool>,
   child: Arc<Mutex<Option<Child>>>,
@@ -261,6 +285,7 @@ pub(super) fn spawn(
   let (stream, played_frames, config) = output_stream(
     Arc::clone(&queue),
     Arc::clone(&selected_audio),
+    Arc::clone(&audio_volumes),
     stream_indices,
   )?;
   let mut process = Command::new(media_preview::ffmpeg_path());
@@ -331,49 +356,5 @@ pub(super) fn spawn(
 }
 
 #[cfg(test)]
-mod tests {
-  use super::*;
-  use crate::exports::recording_preview_player::layout::PreviewPaneKind;
-  use crate::exports::{AudioTrackKind, RecordingAudioTrack};
-
-  #[test]
-  fn decodes_tracks_into_independent_pcm_channels() {
-    let layout = super::super::preview_layout(
-      Some((1_920, 1_080, PreviewPaneKind::Screen)),
-      None,
-      super::super::PREVIEW_HEIGHT,
-    );
-    let sources = PlayerSources {
-      audio_tracks: vec![
-        RecordingAudioTrack {
-          kind: AudioTrackKind::SystemAudio,
-          label: "System audio".to_owned(),
-          stream_index: 0,
-        },
-        RecordingAudioTrack {
-          kind: AudioTrackKind::Microphone,
-          label: "Microphone".to_owned(),
-          stream_index: 1,
-        },
-      ],
-      camera_duration_ms: None,
-      camera_path: None,
-      duration_ms: 1_000,
-      layout: layout.clone(),
-      playback_layout: layout,
-      screen_path: "/tmp/recording.mov".into(),
-    };
-    let config = StreamConfig {
-      channels: 2,
-      sample_rate: 48_000,
-      buffer_size: cpal::BufferSize::Default,
-    };
-    let rendered = args(&sources, 250, &config).join(" ");
-
-    assert!(rendered.contains("[0:a:0]aresample=48000"));
-    assert!(rendered.contains("[0:a:1]aresample=48000"));
-    assert!(rendered.contains("apad=whole_dur=0.750"));
-    assert!(rendered.contains("amerge=inputs=2[tracks]"));
-    assert!(rendered.contains("-ac 2"));
-  }
-}
+#[path = "audio_tests.rs"]
+mod tests;

@@ -8,7 +8,7 @@ import { Badge } from "./badge";
 
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
-const sizes: ComponentProps<typeof Badge>["size"][] = ["md", "sm"];
+const sizes: ComponentProps<typeof Badge>["size"][] = ["md", "sm", "xs"];
 const colors: ComponentProps<typeof Badge>["color"][] = [
   "neutral",
   "info",

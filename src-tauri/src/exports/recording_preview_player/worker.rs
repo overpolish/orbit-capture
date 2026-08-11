@@ -16,7 +16,9 @@ use tauri::ipc::Channel;
 #[cfg(not(target_os = "macos"))]
 use tauri::ipc::InvokeResponseBody;
 
-use super::{audio, video, PlayerSources, RecordingPreviewPlayerEvent};
+use super::{
+  audio, video, AudioTrackVolume, PlayerSources, PreviewAudioSettings, RecordingPreviewPlayerEvent,
+};
 #[cfg(target_os = "macos")]
 use super::{still_macos, video_macos};
 
@@ -31,6 +33,7 @@ pub(super) struct PreviewPlayerWorker {
   cancelled: Arc<AtomicBool>,
   position_ms: Arc<AtomicU64>,
   selected_audio: Arc<RwLock<Vec<usize>>>,
+  audio_volumes: Arc<RwLock<Vec<AudioTrackVolume>>>,
   thread: Option<std::thread::JoinHandle<()>>,
   video_child: Arc<Mutex<Option<Child>>>,
 }
@@ -73,6 +76,7 @@ fn send_error(channel: &Channel<RecordingPreviewPlayerEvent>, message: String) {
 
 struct RunContext {
   audio_child: Arc<Mutex<Option<Child>>>,
+  audio_volumes: Arc<RwLock<Vec<AudioTrackVolume>>>,
   cancelled: Arc<AtomicBool>,
   event_channel: Channel<RecordingPreviewPlayerEvent>,
   frame_channel: Channel,
@@ -89,6 +93,7 @@ fn run(context: RunContext) {
   let RunContext {
     sources,
     selected_audio,
+    audio_volumes,
     start_ms,
     mode,
     frame_channel,
@@ -108,6 +113,7 @@ fn run(context: RunContext) {
       position_ms,
       request_id,
       selected_audio,
+      audio_volumes,
       sources,
       start_ms,
     });
@@ -155,6 +161,7 @@ fn run(context: RunContext) {
     match audio::spawn(
       &sources,
       Arc::clone(&selected_audio),
+      Arc::clone(&audio_volumes),
       start_ms,
       Arc::clone(&cancelled),
       Arc::clone(&audio_child),
@@ -224,7 +231,7 @@ fn run(context: RunContext) {
 impl PreviewPlayerWorker {
   pub(super) fn spawn(
     sources: PlayerSources,
-    enabled_stream_indices: Vec<usize>,
+    audio: PreviewAudioSettings,
     start_ms: u64,
     request_id: u64,
     mode: PlaybackMode,
@@ -235,7 +242,8 @@ impl PreviewPlayerWorker {
     let position_ms = Arc::new(AtomicU64::new(start_ms));
     let video_child = Arc::new(Mutex::new(None));
     let audio_child = Arc::new(Mutex::new(None));
-    let selected_audio = Arc::new(RwLock::new(enabled_stream_indices));
+    let selected_audio = Arc::new(RwLock::new(audio.enabled_stream_indices));
+    let audio_volumes = Arc::new(RwLock::new(audio.audio_track_volumes));
     let thread = std::thread::Builder::new()
       .name("recording-preview-player".to_owned())
       .spawn({
@@ -244,6 +252,7 @@ impl PreviewPlayerWorker {
         let video_child = Arc::clone(&video_child);
         let audio_child = Arc::clone(&audio_child);
         let selected_audio = Arc::clone(&selected_audio);
+        let audio_volumes = Arc::clone(&audio_volumes);
         move || {
           run(RunContext {
             audio_child,
@@ -254,6 +263,7 @@ impl PreviewPlayerWorker {
             position_ms,
             request_id,
             selected_audio,
+            audio_volumes,
             sources,
             start_ms,
             video_child,
@@ -266,6 +276,7 @@ impl PreviewPlayerWorker {
       cancelled,
       position_ms,
       selected_audio,
+      audio_volumes,
       thread: Some(thread),
       video_child,
     })
@@ -277,6 +288,17 @@ impl PreviewPlayerWorker {
       .write()
       .map_err(|_| "The preview audio selection is unavailable".to_owned())? =
       enabled_stream_indices;
+    Ok(())
+  }
+
+  pub(super) fn set_audio_volumes(
+    &self,
+    audio_track_volumes: Vec<AudioTrackVolume>,
+  ) -> Result<(), String> {
+    *self
+      .audio_volumes
+      .write()
+      .map_err(|_| "The preview audio volumes are unavailable".to_owned())? = audio_track_volumes;
     Ok(())
   }
 

@@ -56,6 +56,7 @@ windows = { version = "0.62.2", features = [
 wasapi = "0.23.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.25.0"
 nokhwa = { version = "0.10.11", default-features = false, features = ["decoding", "input-avfoundation", "output-threaded"] }
 tauri-plugin-macos-permissions = "2.3.0"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }

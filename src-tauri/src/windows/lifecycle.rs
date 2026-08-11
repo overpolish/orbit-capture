@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow, WindowEvent};
@@ -12,7 +12,7 @@ use super::{
   platform, WindowLabel,
 };
 
-const EXPORT_WINDOW_SETTLE_TIME: Duration = Duration::from_millis(150);
+static EXPORT_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 pub fn get_or_create<F>(
   app: &AppHandle,
@@ -110,31 +110,56 @@ pub fn initialize_export(window: &WebviewWindow) -> tauri::Result<()> {
   // Export only becomes visible when an artifact is presented.
   window.hide()?;
 
-  let (movement, movements) = mpsc::channel();
-  window.on_window_event(move |event| {
-    if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
-      let _ = movement.send(());
-    }
-  });
-
   let app = window.app_handle().clone();
   let export = window.clone();
-  std::thread::spawn(move || {
-    while movements.recv().is_ok() {
-      loop {
-        match movements.recv_timeout(EXPORT_WINDOW_SETTLE_TIME) {
-          Ok(()) => {}
-          Err(RecvTimeoutError::Timeout) => {
-            let _ = contain_window_in_work_area(&app, &export);
-            break;
-          }
-          Err(RecvTimeoutError::Disconnected) => return,
-        }
-      }
+  window.on_window_event(move |event| {
+    if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+      watch_for_export_mouse_up(app.clone(), export.clone());
     }
   });
 
   Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn watch_for_export_mouse_up(app: AppHandle, export: WebviewWindow) {
+  use cidre::cg::{EventSrcState, MouseButton};
+
+  if EXPORT_DRAG_ACTIVE.swap(true, Ordering::Relaxed) {
+    return;
+  }
+  tauri::async_runtime::spawn_blocking(move || {
+    while EventSrcState::CombinedSession.button_state(MouseButton::Left) {
+      std::thread::sleep(Duration::from_millis(8));
+    }
+    let _ = contain_window_in_work_area(&app, &export);
+    EXPORT_DRAG_ACTIVE.store(false, Ordering::Relaxed);
+  });
+}
+
+#[cfg(target_os = "windows")]
+fn watch_for_export_mouse_up(app: AppHandle, export: WebviewWindow) {
+  use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+
+  if EXPORT_DRAG_ACTIVE.swap(true, Ordering::Relaxed) {
+    return;
+  }
+  tauri::async_runtime::spawn_blocking(move || {
+    loop {
+      let is_pressed = unsafe { GetAsyncKeyState(VK_LBUTTON.0.into()) } < 0;
+      if !is_pressed {
+        break;
+      }
+      std::thread::sleep(Duration::from_millis(8));
+    }
+    let _ = contain_window_in_work_area(&app, &export);
+    EXPORT_DRAG_ACTIVE.store(false, Ordering::Relaxed);
+  });
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn watch_for_export_mouse_up(app: AppHandle, export: WebviewWindow) {
+  let _ = contain_window_in_work_area(&app, &export);
 }
 
 pub fn contain_export(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()> {

@@ -13,9 +13,9 @@ import {
 
 import {
   clamp,
-  containTransform,
   FIT,
   maximumZoom,
+  MINIMUM_ZOOM,
   PreviewGeometry,
   PreviewTransform,
 } from "./preview-transform";
@@ -38,6 +38,8 @@ type InteractivePreviewViewportProps<Element extends HTMLElement> = {
   resetKey: string | number;
   hideUntilMeasured?: boolean;
   onNeedFullResolution?: () => void;
+  onZoomChange?: (zoomPercent: number) => void;
+  zoomPercent?: number;
 };
 
 /** Shared transform surface for still-image and native canvas previews. */
@@ -45,8 +47,10 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
   getMediaSize,
   hideUntilMeasured = false,
   onNeedFullResolution,
+  onZoomChange,
   renderMedia,
   resetKey,
+  zoomPercent: controlledZoomPercent,
 }: InteractivePreviewViewportProps<Element>) {
   const boxRef = useRef<HTMLDivElement>(null);
   const mediaRef = useRef<Element | null>(null);
@@ -66,11 +70,13 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
   });
   const getMediaSizeRef = useRef(getMediaSize);
   const onNeedFullResolutionRef = useRef(onNeedFullResolution);
+  const onZoomChangeRef = useRef(onZoomChange);
   const requestedFullRef = useRef(false);
-  const [zoomPercent, setZoomPercent] = useState(100);
+  const [isPanning, setIsPanning] = useState(false);
 
   getMediaSizeRef.current = getMediaSize;
   onNeedFullResolutionRef.current = onNeedFullResolution;
+  onZoomChangeRef.current = onZoomChange;
 
   const applyTransform = (reveal: boolean) => {
     const media = mediaRef.current;
@@ -83,8 +89,6 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
       "--preview-inverse-scale",
       scale > 0 ? (1 / scale).toString() : "1",
     );
-    const inverse = scale > 0 ? 1 / scale : 1;
-    media.style.boxShadow = `0 ${(2 * inverse).toString()}px ${(12 * inverse).toString()}px rgb(0 0 0 / 0.28)`;
     if (reveal) media.style.opacity = "1";
   };
 
@@ -106,10 +110,6 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
       naturalHeight: size.height,
       naturalWidth: size.width,
     };
-    transformRef.current = containTransform(
-      transformRef.current,
-      geometryRef.current,
-    );
     applyTransform(true);
   };
 
@@ -121,7 +121,8 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = undefined;
       applyTransform(false);
-      setZoomPercent(Math.round(transformRef.current.zoom * 100));
+      const nextZoomPercent = Math.round(transformRef.current.zoom * 100);
+      onZoomChangeRef.current?.(nextZoomPercent);
     });
   };
 
@@ -148,6 +149,32 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
     // A reset is intentionally tied to media identity, not callback identity.
     // eslint-disable-next-line @eslint-react/exhaustive-deps
   }, [hideUntilMeasured, resetKey]);
+
+  useEffect(() => {
+    if (controlledZoomPercent === undefined) return;
+    const current = transformRef.current;
+    const zoom = clamp(
+      controlledZoomPercent / 100,
+      MINIMUM_ZOOM,
+      maximumZoom(geometryRef.current),
+    );
+    if (zoom === current.zoom) return;
+    if (zoom > FIT && !requestedFullRef.current) {
+      requestedFullRef.current = true;
+      onNeedFullResolutionRef.current?.();
+    }
+    const ratio = zoom / current.zoom;
+    transformRef.current = {
+      x: current.x * ratio,
+      y: current.y * ratio,
+      zoom,
+    };
+    clearTransition();
+    schedule();
+    // The transform helpers operate on refs so changing zoom does not rebuild
+    // the native preview surface.
+    // eslint-disable-next-line @eslint-react/exhaustive-deps
+  }, [controlledZoomPercent]);
 
   useEffect(() => {
     const box = boxRef.current;
@@ -177,7 +204,7 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
         const rate = isPinch ? PINCH_ZOOM_RATE : WHEEL_ZOOM_RATE;
         const zoom = clamp(
           current.zoom * Math.exp(-event.deltaY * rate),
-          FIT,
+          MINIMUM_ZOOM,
           maximumZoom(geometryRef.current),
         );
         if (zoom === current.zoom) return;
@@ -189,24 +216,17 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
         const pointerX = event.clientX - (bounds.left + bounds.width / 2);
         const pointerY = event.clientY - (bounds.top + bounds.height / 2);
         const ratio = zoom / current.zoom;
-        transformRef.current = containTransform(
-          {
-            x: pointerX - (pointerX - current.x) * ratio,
-            y: pointerY - (pointerY - current.y) * ratio,
-            zoom,
-          },
-          geometryRef.current,
-        );
+        transformRef.current = {
+          x: pointerX - (pointerX - current.x) * ratio,
+          y: pointerY - (pointerY - current.y) * ratio,
+          zoom,
+        };
       } else {
-        if (current.zoom <= FIT) return;
-        transformRef.current = containTransform(
-          {
-            x: current.x - event.deltaX,
-            y: current.y - event.deltaY,
-            zoom: current.zoom,
-          },
-          geometryRef.current,
-        );
+        transformRef.current = {
+          x: current.x - event.deltaX,
+          y: current.y - event.deltaY,
+          zoom: current.zoom,
+        };
       }
       schedule();
     };
@@ -228,16 +248,20 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
 
   return (
     <div
-      className="relative flex h-[280px] shrink-0 touch-none items-center justify-center overflow-hidden overscroll-contain rounded-md"
+      className="relative flex min-h-0 grow touch-none items-center justify-center overflow-hidden overscroll-contain bg-black/5 dark:bg-black/25"
       onDoubleClick={() => {
         measureAndApply();
         reset();
       }}
+      onPointerCancel={() => {
+        panRef.current = null;
+        setIsPanning(false);
+      }}
       onPointerDown={(event) => {
         measureAndApply();
-        if (transformRef.current.zoom <= FIT) return;
         clearTransition();
         event.currentTarget.setPointerCapture(event.pointerId);
+        setIsPanning(true);
         panRef.current = {
           pointerX: event.clientX,
           pointerY: event.clientY,
@@ -247,23 +271,21 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
       onPointerMove={(event) => {
         const pan = panRef.current;
         if (!pan) return;
-        transformRef.current = containTransform(
-          {
-            x: pan.start.x + event.clientX - pan.pointerX,
-            y: pan.start.y + event.clientY - pan.pointerY,
-            zoom: pan.start.zoom,
-          },
-          geometryRef.current,
-        );
+        transformRef.current = {
+          x: pan.start.x + event.clientX - pan.pointerX,
+          y: pan.start.y + event.clientY - pan.pointerY,
+          zoom: pan.start.zoom,
+        };
         schedule();
       }}
       onPointerUp={(event) => {
         panRef.current = null;
+        setIsPanning(false);
         if (event.currentTarget.hasPointerCapture(event.pointerId))
           event.currentTarget.releasePointerCapture(event.pointerId);
       }}
       ref={boxRef}
-      style={{ cursor: zoomPercent > 100 ? "grab" : "default" }}
+      style={{ cursor: isPanning ? "grabbing" : "grab" }}
     >
       {renderMedia({
         onReady: measureAndApply,
@@ -273,11 +295,6 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
         },
         style: { transformOrigin: "center center" },
       })}
-      {zoomPercent > 100 ? (
-        <span className="pointer-events-none absolute right-2 bottom-2 z-10 rounded bg-content/80 px-1.5 py-0.5 text-xxs text-muted tabular-nums">
-          {zoomPercent}% double-click to fit
-        </span>
-      ) : null}
     </div>
   );
 }

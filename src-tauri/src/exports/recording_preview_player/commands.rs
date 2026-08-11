@@ -10,7 +10,7 @@ pub async fn start_recording_preview_player(
   app: AppHandle,
   state: tauri::State<'_, RecordingPreviewPlayerState>,
   artifact_id: u64,
-  enabled_stream_indices: Vec<usize>,
+  audio: PreviewAudioSettings,
   frame_channel: Channel,
   event_channel: Channel<RecordingPreviewPlayerEvent>,
   session_id: u64,
@@ -30,7 +30,8 @@ pub async fn start_recording_preview_player(
   manager.stop();
   manager.latest_session_id = session_id;
   manager.artifact_id = Some(artifact_id);
-  manager.audio_indices = enabled_stream_indices;
+  manager.audio_indices = audio.enabled_stream_indices;
+  manager.audio_volumes = audio.audio_track_volumes;
   manager.event_channel = Some(event_channel);
   manager.frame_channel = Some(frame_channel);
   manager.latest_seek_request = 0;
@@ -108,7 +109,10 @@ pub fn request_recording_preview_full_resolution(
     .ok_or_else(|| "The recording preview event channel is unavailable".to_owned())?;
   manager.worker = Some(PreviewPlayerWorker::spawn(
     sources,
-    manager.audio_indices.clone(),
+    PreviewAudioSettings {
+      audio_track_volumes: manager.audio_volumes.clone(),
+      enabled_stream_indices: manager.audio_indices.clone(),
+    },
     manager.position_ms,
     manager.latest_seek_request,
     PlaybackMode::Still,
@@ -158,6 +162,24 @@ pub fn select_recording_preview_audio(
   manager.audio_indices.clone_from(&enabled_stream_indices);
   if let Some(worker) = &manager.worker {
     worker.select_audio(enabled_stream_indices)?;
+  }
+  Ok(())
+}
+
+#[tauri::command]
+pub fn set_recording_preview_audio_volumes(
+  state: tauri::State<'_, RecordingPreviewPlayerState>,
+  audio_track_volumes: Vec<AudioTrackVolume>,
+  session_id: u64,
+) -> Result<(), String> {
+  let mut manager = state
+    .0
+    .lock()
+    .map_err(|_| "The recording preview player is unavailable".to_owned())?;
+  manager.require_session(session_id)?;
+  manager.audio_volumes.clone_from(&audio_track_volumes);
+  if let Some(worker) = &manager.worker {
+    worker.set_audio_volumes(audio_track_volumes)?;
   }
   Ok(())
 }

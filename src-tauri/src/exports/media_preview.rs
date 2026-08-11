@@ -30,7 +30,10 @@ mod tools;
 
 pub use audio::prepare;
 pub use bake::baked_recording_exporter;
-pub use encode::{remuxer, selected_recording_exporter, Remux, SelectedRecordingExport};
+pub use encode::{
+  camera_recording_exporter, remuxer, selected_audio_exporter, selected_recording_exporter, Remux,
+  SelectedRecordingExport,
+};
 pub use estimate::{estimate_compressed_video_bytes, supports_compression};
 pub use tools::inspect_audio_tracks;
 

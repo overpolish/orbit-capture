@@ -3,8 +3,8 @@
 
 use super::{
   encode::{
-    export_selected_recording, progress_milliseconds, remux_args, remux_temp_path,
-    selected_export_args,
+    audio_export_args, camera_export_args, export_selected_recording, progress_milliseconds,
+    remux_args, remux_temp_path, selected_export_args,
   },
   estimate::{compression_crf, estimate_filter},
   *,
@@ -120,6 +120,51 @@ fn maps_only_the_selected_tracks_when_the_saved_audio_changes() {
     ]
     .map(OsString::from)
   );
+}
+
+#[test]
+fn audio_only_export_does_not_carry_the_recorded_video() {
+  let available = tracks(2);
+  let selection = TrackSelection::new(&available, &[1]);
+  let args = audio_export_args(
+    Path::new("/tmp/recording.mov"),
+    Path::new("/tmp/audio.m4a"),
+    &selection,
+    AudioLayout::SeparateTracks,
+  );
+  let args = args
+    .iter()
+    .map(|argument| argument.to_string_lossy())
+    .collect::<Vec<_>>();
+
+  assert!(!args.iter().any(|argument| argument.contains(":v:")));
+  assert!(args.windows(2).any(|pair| pair == ["-map", "0:a:1"]));
+}
+
+#[test]
+fn camera_only_export_takes_video_from_camera_and_audio_from_recording() {
+  let available = tracks(2);
+  let selection = TrackSelection::new(&available, &[0, 1]);
+  let args = camera_export_args(
+    Path::new("/tmp/recording.mov"),
+    Path::new("/tmp/camera.mov"),
+    Path::new("/tmp/camera-with-audio.mp4"),
+    &selection,
+    AudioLayout::SeparateTracks,
+    VideoExportOptions {
+      compression: 0,
+      resolution_scale_percent: 100,
+      source_scale_percent: 100,
+    },
+  );
+  let args = args
+    .iter()
+    .map(|argument| argument.to_string_lossy())
+    .collect::<Vec<_>>();
+
+  assert!(args.windows(2).any(|pair| pair == ["-map", "1:v:0"]));
+  assert!(args.windows(2).any(|pair| pair == ["-map", "0:a:0"]));
+  assert!(args.windows(2).any(|pair| pair == ["-map", "0:a:1"]));
 }
 
 #[test]

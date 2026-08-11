@@ -9,7 +9,7 @@
 //! be balanced, soloed or muted afterwards. Collapsing them into one is an
 //! explicit export option.
 
-use super::RecordingAudioTrack;
+use super::{AudioTrackVolume, RecordingAudioTrack};
 
 /// The bitrate the mixdown is encoded at. Summing tracks means decoding them,
 /// so this is the one place in the app that re-encodes audio; generous enough
@@ -37,6 +37,7 @@ pub enum AudioLayout {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TrackSelection {
   stream_indices: Vec<usize>,
+  volumes: Vec<(usize, i16)>,
 }
 
 impl TrackSelection {
@@ -47,13 +48,41 @@ impl TrackSelection {
   /// is showing, and a stale or reordered row must not become a mapping FFmpeg
   /// would refuse or, worse, one that quietly maps the wrong track.
   pub fn new(tracks: &[RecordingAudioTrack], enabled: &[usize]) -> Self {
-    Self {
-      stream_indices: tracks
-        .iter()
-        .map(|track| track.stream_index)
-        .filter(|index| enabled.contains(index))
-        .collect(),
+    Self::with_volumes(tracks, enabled, &[]).expect("zero-decibel track volumes are valid")
+  }
+
+  pub fn with_volumes(
+    tracks: &[RecordingAudioTrack],
+    enabled: &[usize],
+    volumes: &[AudioTrackVolume],
+  ) -> Result<Self, String> {
+    if volumes
+      .iter()
+      .any(|volume| !(-60..=12).contains(&volume.decibels))
+    {
+      return Err("Audio volume must be between -60 dB and +12 dB".to_owned());
     }
+    let stream_indices = tracks
+      .iter()
+      .map(|track| track.stream_index)
+      .filter(|index| enabled.contains(index))
+      .collect::<Vec<_>>();
+    Ok(Self {
+      volumes: volumes
+        .iter()
+        .filter(|volume| stream_indices.contains(&volume.stream_index) && volume.decibels != 0)
+        .map(|volume| (volume.stream_index, volume.decibels))
+        .collect(),
+      stream_indices,
+    })
+  }
+
+  fn volume(&self, stream_index: usize) -> i16 {
+    self
+      .volumes
+      .iter()
+      .find_map(|(index, decibels)| (*index == stream_index).then_some(*decibels))
+      .unwrap_or(0)
   }
 
   /// Whether this selection leaves nothing out.
@@ -67,7 +96,9 @@ impl TrackSelection {
   /// processing when there is actually more than one input to sum; asking to
   /// collapse a lone track must not re-encode it for no audible difference.
   pub fn needs_processing(&self, tracks: &[RecordingAudioTrack], layout: AudioLayout) -> bool {
-    !self.covers(tracks) || matches!(layout, AudioLayout::Mixdown) && self.stream_indices.len() > 1
+    !self.covers(tracks)
+      || !self.volumes.is_empty()
+      || matches!(layout, AudioLayout::Mixdown) && self.stream_indices.len() > 1
   }
 
   /// The selected audio's expected encoded size.
@@ -85,8 +116,14 @@ impl TrackSelection {
       return 0;
     }
 
-    let bitrate = if matches!(layout, AudioLayout::Mixdown) && self.stream_indices.len() > 1 {
-      MIXDOWN_BITRATE_BPS
+    let bitrate = if (matches!(layout, AudioLayout::Mixdown) && self.stream_indices.len() > 1)
+      || !self.volumes.is_empty()
+    {
+      if matches!(layout, AudioLayout::SeparateTracks) {
+        MIXDOWN_BITRATE_BPS.saturating_mul(self.stream_indices.len() as u64)
+      } else {
+        MIXDOWN_BITRATE_BPS
+      }
     } else {
       tracks
         .iter()
@@ -116,28 +153,24 @@ impl TrackSelection {
       return vec!["-an".to_owned()];
     }
 
+    let has_volume_changes = !self.volumes.is_empty();
     match layout {
       // One track needs no summing, so it crosses untouched rather than being
       // decoded and re-encoded for the sake of passing through a filter.
-      AudioLayout::Mixdown if self.stream_indices.len() == 1 => vec![
+      AudioLayout::Mixdown if self.stream_indices.len() == 1 && !has_volume_changes => vec![
         "-map".to_owned(),
         format!("{input}:a:{}", self.stream_indices[0]),
         "-c:a".to_owned(),
         "copy".to_owned(),
       ],
-      AudioLayout::Mixdown => {
+      AudioLayout::Mixdown if !has_volume_changes => {
         let inputs: String = self
           .stream_indices
           .iter()
           .map(|index| format!("[{input}:a:{index}]"))
           .collect();
-
         vec![
           "-filter_complex".to_owned(),
-          // `normalize=0` is the whole point: amix divides by the number of
-          // inputs by default, so including a second track would make the
-          // first one quieter than it was recorded. A person toggling
-          // microphone on must not hear the system audio drop by half.
           format!(
             "{inputs}amix=inputs={}:normalize=0[mix]",
             self.stream_indices.len()
@@ -150,7 +183,36 @@ impl TrackSelection {
           MIXDOWN_BITRATE.to_owned(),
         ]
       }
-      AudioLayout::SeparateTracks => {
+      AudioLayout::Mixdown => {
+        let mut filters = String::new();
+        let mut inputs = String::new();
+        for (position, index) in self.stream_indices.iter().enumerate() {
+          filters.push_str(&format!(
+            "[{input}:a:{index}]volume={}dB[track{position}];",
+            self.volume(*index)
+          ));
+          inputs.push_str(&format!("[track{position}]"));
+        }
+
+        vec![
+          "-filter_complex".to_owned(),
+          // `normalize=0` is the whole point: amix divides by the number of
+          // inputs by default, so including a second track would make the
+          // first one quieter than it was recorded. A person toggling
+          // microphone on must not hear the system audio drop by half.
+          format!(
+            "{filters}{inputs}amix=inputs={}:normalize=0[mix]",
+            self.stream_indices.len()
+          ),
+          "-map".to_owned(),
+          "[mix]".to_owned(),
+          "-c:a".to_owned(),
+          "aac".to_owned(),
+          "-b:a".to_owned(),
+          MIXDOWN_BITRATE.to_owned(),
+        ]
+      }
+      AudioLayout::SeparateTracks if !has_volume_changes => {
         let mut args = Vec::with_capacity(self.stream_indices.len() * 2 + 2);
         for index in &self.stream_indices {
           args.push("-map".to_owned());
@@ -161,142 +223,30 @@ impl TrackSelection {
 
         args
       }
+      AudioLayout::SeparateTracks => {
+        let mut filters = String::new();
+        let mut args = Vec::new();
+        for (position, index) in self.stream_indices.iter().enumerate() {
+          filters.push_str(&format!(
+            "[{input}:a:{index}]volume={}dB[track{position}];",
+            self.volume(*index)
+          ));
+          args.extend(["-map".to_owned(), format!("[track{position}]")]);
+        }
+        filters.pop();
+        args.splice(0..0, ["-filter_complex".to_owned(), filters]);
+        args.extend([
+          "-c:a".to_owned(),
+          "aac".to_owned(),
+          "-b:a".to_owned(),
+          MIXDOWN_BITRATE.to_owned(),
+        ]);
+        args
+      }
     }
   }
 }
 
 #[cfg(test)]
-mod tests {
-  use super::*;
-  use crate::exports::AudioTrackKind;
-
-  fn tracks(count: usize) -> Vec<RecordingAudioTrack> {
-    (0..count)
-      .map(|stream_index| RecordingAudioTrack {
-        kind: AudioTrackKind::Unknown,
-        label: format!("Audio {}", stream_index + 1),
-        stream_index,
-      })
-      .collect()
-  }
-
-  #[test]
-  fn keeps_the_recordings_own_order_whatever_order_the_window_sent() {
-    let selection = TrackSelection::new(&tracks(3), &[2, 0]);
-
-    assert_eq!(selection.stream_indices, vec![0, 2]);
-  }
-
-  #[test]
-  fn drops_a_track_this_recording_does_not_have() {
-    let selection = TrackSelection::new(&tracks(1), &[0, 7]);
-
-    assert_eq!(selection.stream_indices, vec![0]);
-    assert!(selection.covers(&tracks(1)));
-  }
-
-  #[test]
-  fn maps_the_empty_selection_to_no_audio() {
-    let selection = TrackSelection::new(&tracks(2), &[]);
-
-    assert!(selection.stream_indices.is_empty());
-    assert_eq!(
-      selection.audio_args(AudioLayout::Mixdown),
-      vec!["-an".to_owned()]
-    );
-    assert_eq!(
-      selection.audio_args(AudioLayout::SeparateTracks),
-      vec!["-an".to_owned()]
-    );
-  }
-
-  #[test]
-  fn copies_a_lone_track_instead_of_re_encoding_it() {
-    let selection = TrackSelection::new(&tracks(2), &[1]);
-
-    assert_eq!(
-      selection.audio_args(AudioLayout::Mixdown),
-      ["-map", "0:a:1", "-c:a", "copy"]
-    );
-  }
-
-  #[test]
-  fn sums_without_letting_amix_halve_either_track() {
-    let selection = TrackSelection::new(&tracks(2), &[0, 1]);
-
-    assert_eq!(
-      selection.audio_args(AudioLayout::Mixdown),
-      [
-        "-filter_complex",
-        "[0:a:0][0:a:1]amix=inputs=2:normalize=0[mix]",
-        "-map",
-        "[mix]",
-        "-c:a",
-        "aac",
-        "-b:a",
-        MIXDOWN_BITRATE,
-      ]
-    );
-  }
-
-  #[test]
-  fn keeps_every_selected_track_separate_for_an_export() {
-    let selection = TrackSelection::new(&tracks(3), &[0, 2]);
-
-    assert_eq!(
-      selection.audio_args(AudioLayout::SeparateTracks),
-      ["-map", "0:a:0", "-map", "0:a:2", "-c:a", "copy"]
-    );
-  }
-
-  #[test]
-  fn knows_when_something_was_left_out() {
-    assert!(!TrackSelection::new(&tracks(2), &[0]).covers(&tracks(2)));
-    assert!(TrackSelection::new(&tracks(2), &[0, 1]).covers(&tracks(2)));
-  }
-
-  #[test]
-  fn only_processes_an_export_when_its_contents_or_layout_change() {
-    let all = TrackSelection::new(&tracks(2), &[0, 1]);
-    assert!(!all.needs_processing(&tracks(2), AudioLayout::SeparateTracks));
-    assert!(all.needs_processing(&tracks(2), AudioLayout::Mixdown));
-
-    let one = TrackSelection::new(&tracks(2), &[0]);
-    assert!(one.needs_processing(&tracks(2), AudioLayout::SeparateTracks));
-    assert!(one.needs_processing(&tracks(2), AudioLayout::Mixdown));
-
-    let only = TrackSelection::new(&tracks(1), &[0]);
-    assert!(!only.needs_processing(&tracks(1), AudioLayout::Mixdown));
-  }
-
-  #[test]
-  fn estimates_selected_and_collapsed_audio_from_their_real_bitrates() {
-    let typed = vec![
-      RecordingAudioTrack {
-        kind: AudioTrackKind::SystemAudio,
-        label: "System audio".to_owned(),
-        stream_index: 0,
-      },
-      RecordingAudioTrack {
-        kind: AudioTrackKind::Microphone,
-        label: "Microphone".to_owned(),
-        stream_index: 1,
-      },
-    ];
-    let both = TrackSelection::new(&typed, &[0, 1]);
-    assert_eq!(
-      both.estimated_audio_bytes(&typed, AudioLayout::SeparateTracks, 10_000),
-      400_000
-    );
-    assert_eq!(
-      both.estimated_audio_bytes(&typed, AudioLayout::Mixdown, 10_000),
-      240_000
-    );
-
-    let microphone = TrackSelection::new(&typed, &[1]);
-    assert_eq!(
-      microphone.estimated_audio_bytes(&typed, AudioLayout::SeparateTracks, 10_000),
-      160_000
-    );
-  }
-}
+#[path = "track_selection_tests.rs"]
+mod tests;

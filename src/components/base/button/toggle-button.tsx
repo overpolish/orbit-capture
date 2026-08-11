@@ -72,11 +72,13 @@ const toggleButtonVariants = tv({
 type ToggleButtonProps = AriaToggleButtonProps &
   VariantProps<typeof toggleButtonVariants> & {
     children: React.ReactNode;
+    animation?: "scale" | "scale-selected";
     className?: string;
     off?: React.ReactNode;
   };
 
 export const ToggleButton = ({
+  animation = "scale",
   children,
   className,
   color,
@@ -85,10 +87,15 @@ export const ToggleButton = ({
   variant = "solid",
   ...props
 }: ToggleButtonProps) => {
-  const animationProps: MotionProps = {
+  const scaleAnimation: MotionProps = {
     animate: { opacity: 1, scale: 1 },
     exit: { opacity: 0, scale: 0 },
     initial: { opacity: 0, scale: 0 },
+  };
+  const fadeAnimation: MotionProps = {
+    animate: { opacity: 1, scale: 1 },
+    exit: { opacity: 0, scale: 1 },
+    initial: { opacity: 0, scale: 1 },
   };
 
   return (
@@ -108,15 +115,22 @@ export const ToggleButton = ({
                 {isSelected ? (
                   <motion.div
                     key="selected"
-                    {...animationProps}
+                    {...scaleAnimation}
                     className="absolute inset-0 flex items-center justify-center text-content-fg"
+                    exit={
+                      animation === "scale-selected"
+                        ? fadeAnimation.exit
+                        : scaleAnimation.exit
+                    }
                   >
                     {children}
                   </motion.div>
                 ) : (
                   <motion.div
                     key="deselected"
-                    {...animationProps}
+                    {...(animation === "scale-selected"
+                      ? fadeAnimation
+                      : scaleAnimation)}
                     className="absolute inset-0 flex items-center justify-center text-muted"
                   >
                     {off ?? children}

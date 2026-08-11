@@ -1,30 +1,28 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { X } from "lucide-react";
-
-import logoUrl from "../../../assets/orbit-capture-mark.svg";
 import { Button } from "../../../components/base/button/button";
-import { Checkbox } from "../../../components/base/checkbox/checkbox";
 import { CircularProgressBar } from "../../../components/base/circular-progress-bar/circular-progress-bar";
-import { OverflowShadow } from "../../../components/base/overflow-shadow/overflow-shadow";
 import { Overlay } from "../../../components/base/overlay/overlay";
-import { resolutionScales } from "../resolution";
 import {
+  AudioTrackVolume,
   CameraOverlaySettings,
   ExportArtifact,
   PreparedAudioTrack,
   RecordingPreviewLayout,
+  RecordingTrackId,
+  RecordingVideoTrackId,
 } from "../types";
 
-import { ExportDestinationForm } from "./export-destination-form";
+import { ExportInspector } from "./export-inspector";
 import { RecordingSection, ScreenshotSection } from "./export-preview-section";
-import { RecordingExportOptions } from "./recording-export-options";
+import { ExportTitlebar } from "./export-titlebar";
 
 type ExportPanelProps = {
   artifact: ExportArtifact | null;
   directory: string | null;
   fileStem: string;
+  audioTrackVolumes?: AudioTrackVolume[];
   bakeCamera?: boolean;
   cameraCompression?: number;
   cameraOverlay?: CameraOverlaySettings;
@@ -33,6 +31,7 @@ type ExportPanelProps = {
   compression?: number;
   enabledAudioTrackCount?: number;
   enabledStreamIndices?: number[];
+  enabledVideoTracks?: RecordingVideoTrackId[];
   error?: string | null;
   estimatedSizeBytes?: number | null;
   isCancelingSave?: boolean;
@@ -52,12 +51,16 @@ type ExportPanelProps = {
   onCompressionChange?: (compression: number) => void;
   onCopy?: () => void;
   onEnabledTracksChange?: (streamIndices: number[]) => void;
+  onEnabledVideoTracksChange?: (tracks: RecordingVideoTrackId[]) => void;
   onFileStemChange?: (fileStem: string) => void;
+  onMinimize?: () => void;
   onNeedFullResolution?: () => void;
   onResolutionScaleChange?: (scale: number) => void;
   onSave?: () => void;
   onScreenshotRadiusChange?: (radiusPercent: number) => void;
   onScreenshotRadiusChangeEnd?: () => void;
+  onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
+  onSelectedTrackVolumeChange?: (decibels: number) => void;
   previewUrl?: string | null;
   recordingPreviewError?: string | null;
   recordingPreviewLayout?: RecordingPreviewLayout;
@@ -66,10 +69,12 @@ type ExportPanelProps = {
   savePhase?: "camera" | "finalizing" | "recording";
   saveProgress?: number | null;
   screenshotRadiusPercent?: number;
+  selectedTrack?: RecordingTrackId | null;
 };
 
 export function ExportPanel({
   artifact,
+  audioTrackVolumes = [],
   bakeCamera = false,
   cameraCompression = 0,
   cameraOverlay,
@@ -79,6 +84,7 @@ export function ExportPanel({
   directory,
   enabledAudioTrackCount,
   enabledStreamIndices,
+  enabledVideoTracks = [],
   error,
   estimatedSizeBytes,
   fileStem,
@@ -99,12 +105,16 @@ export function ExportPanel({
   onCompressionChange,
   onCopy,
   onEnabledTracksChange,
+  onEnabledVideoTracksChange,
   onFileStemChange,
+  onMinimize,
   onNeedFullResolution,
   onResolutionScaleChange,
   onSave,
   onScreenshotRadiusChange,
   onScreenshotRadiusChangeEnd,
+  onSelectedTrackChange,
+  onSelectedTrackVolumeChange,
   previewUrl,
   recordingPreviewError,
   recordingPreviewLayout,
@@ -113,17 +123,51 @@ export function ExportPanel({
   savePhase = "recording",
   saveProgress = null,
   screenshotRadiusPercent = 0,
+  selectedTrack = null,
 }: ExportPanelProps) {
   const isRecording = artifact?.kind === "recording";
-  const isAudio = isRecording && artifact.primaryKind === "audio";
-  const availableResolutionScales =
-    artifact?.kind === "recording" ? resolutionScales(artifact) : [];
-  const effectiveResolutionScale =
-    artifact?.kind === "recording"
-      ? (resolutionScalePercent ?? availableResolutionScales[0])
-      : 100;
+  const enabledVideoTrackCount = enabledVideoTracks.length;
+  const isAudioExport = isRecording && enabledVideoTrackCount === 0;
+  const hasExportableContent =
+    !isRecording || enabledVideoTrackCount + (enabledAudioTrackCount ?? 0) > 0;
+  const exportExtension =
+    isRecording && enabledVideoTrackCount === 0 ? "m4a" : undefined;
+  const inspector =
+    artifact?.kind === "recording" ? (
+      <ExportInspector
+        artifact={artifact}
+        bakeCamera={bakeCamera}
+        cameraCompression={cameraCompression}
+        cameraResolutionScalePercent={cameraResolutionScalePercent}
+        collapseAudio={collapseAudio}
+        compression={compression}
+        enabledAudioTrackCount={enabledAudioTrackCount}
+        enabledVideoTracks={enabledVideoTracks}
+        error={error}
+        estimatedSizeBytes={estimatedSizeBytes}
+        isEstimatingSize={isEstimatingSize}
+        isSaving={isSaving}
+        onBakeCameraChange={onBakeCameraChange}
+        onCameraCompressionChange={onCameraCompressionChange}
+        onCameraResolutionScaleChange={onCameraResolutionScaleChange}
+        onCollapseAudioChange={onCollapseAudioChange}
+        onCompressionChange={onCompressionChange}
+        onResolutionScaleChange={onResolutionScaleChange}
+        onSelectedTrackChange={onSelectedTrackChange}
+        onSelectedTrackVolumeChange={onSelectedTrackVolumeChange}
+        resolutionScalePercent={resolutionScalePercent}
+        selectedTrack={selectedTrack}
+        selectedTrackVolume={
+          audioTrackVolumes.find(
+            (volume) =>
+              `audio:${volume.streamIndex.toString()}` === selectedTrack,
+          )?.decibels ?? 0
+        }
+      />
+    ) : null;
+
   return (
-    <main className="window-surface relative h-screen overflow-hidden rounded-[10px] bg-content/92 text-content-fg">
+    <main className="window-surface relative flex h-screen w-screen flex-col overflow-hidden rounded-[10px] bg-content/92 text-content-fg">
       <Overlay blur="lg" contained isOpen={isSaving}>
         <div className="flex flex-col items-center gap-3">
           <CircularProgressBar
@@ -141,7 +185,7 @@ export function ExportPanel({
             value={saveProgress ?? undefined}
           />
           <span className="text-sm text-content-fg">
-            {isAudio
+            {isAudioExport
               ? "Saving audio…"
               : isRecording
                 ? savePhase === "camera"
@@ -162,141 +206,61 @@ export function ExportPanel({
           </Button>
         </div>
       </Overlay>
-      <OverflowShadow className="p-6" rootClassName="h-full" shadowRadius="md">
-        <div className="flex flex-col gap-4">
-          <header
-            className="-m-6 mb-0 flex shrink-0 cursor-grab items-center gap-3 p-6 pb-0"
-            data-tauri-drag-region
-          >
-            <img
-              alt="Orbit Capture"
-              className="pointer-events-none size-6 shrink-0 brightness-0 dark:invert"
-              draggable={false}
-              src={logoUrl}
-            />
-            <h1 className="pointer-events-none m-0 animate-gradient bg-linear-to-r from-sky-400 to-blue-400 bg-clip-text bg-size-[300%] text-2xl font-bold text-transparent">
-              {isAudio
-                ? "Save audio"
-                : isRecording
-                  ? "Save recording"
-                  : "Save screenshot"}
-            </h1>
+      <ExportTitlebar
+        artifact={artifact}
+        directory={directory}
+        extension={exportExtension}
+        fileStem={fileStem}
+        hasExportableContent={hasExportableContent}
+        isExportPreparationPending={isExportPreparationPending}
+        isSaving={isSaving}
+        onBrowse={onBrowse}
+        onClose={onCancel}
+        onCopy={onCopy}
+        onExport={onSave}
+        onFileStemChange={onFileStemChange}
+        onMinimize={onMinimize}
+      />
 
-            <Button
-              aria-label="Close"
-              className="group ml-auto cursor-default"
-              icon
-              onPress={onCancel}
-              showFocus={false}
-              size="sm"
-              variant="ghost"
-            >
-              <X
-                className="origin-center transform-gpu backface-hidden text-muted will-change-transform transition-[color,transform] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg"
-                size={20}
-              />
-            </Button>
-          </header>
-
-          {artifact?.kind === "recording" && !isAudio ? (
-            <RecordingExportOptions
-              artifact={artifact}
-              availableResolutionScales={availableResolutionScales}
-              bakeCamera={bakeCamera}
-              cameraCompression={cameraCompression}
-              cameraResolutionScale={cameraResolutionScalePercent}
-              compression={compression}
-              effectiveResolutionScale={effectiveResolutionScale}
-              estimatedSizeBytes={estimatedSizeBytes}
-              isEstimatingSize={isEstimatingSize}
-              isSaving={isSaving}
-              onCameraCompressionChange={onCameraCompressionChange}
-              onCameraResolutionScaleChange={onCameraResolutionScaleChange}
-              onCompressionChange={onCompressionChange}
-              onResolutionScaleChange={onResolutionScaleChange}
-            />
-          ) : null}
-
-          {artifact?.kind === "recording" ? (
-            <RecordingSection
-              artifact={artifact}
-              bakeCamera={bakeCamera}
-              cameraOverlay={cameraOverlay}
-              enabledStreamIndices={enabledStreamIndices}
-              isPreparingRecordingAudio={isPreparingRecordingAudio}
-              isPreparingRecordingPreview={isPreparingRecordingPreview}
-              key={artifact.id}
-              onCameraOverlayChange={onCameraOverlayChange}
-              onEnabledTracksChange={onEnabledTracksChange}
-              recordingPreviewError={recordingPreviewError}
-              recordingPreviewLayout={recordingPreviewLayout}
-              recordingPreviewTracks={recordingPreviewTracks}
-            />
-          ) : artifact ? (
-            <ScreenshotSection
-              artifact={artifact}
-              onNeedFullResolution={onNeedFullResolution}
-              onRadiusChange={onScreenshotRadiusChange}
-              onRadiusChangeEnd={onScreenshotRadiusChangeEnd}
-              previewUrl={previewUrl}
-              radiusPercent={screenshotRadiusPercent}
-            />
-          ) : (
-            <div className="flex h-[280px] items-center justify-center rounded-md border border-muted/20 text-sm text-muted">
-              Nothing to export
-            </div>
-          )}
-
-          {isRecording && artifact.camera && cameraOverlay ? (
-            <div className="flex flex-col gap-2.5">
-              <Checkbox
-                isDisabled={isSaving}
-                isSelected={bakeCamera}
-                onChange={onBakeCameraChange}
-                size="sm"
-              >
-                <span className="flex flex-col">
-                  <span className="text-xs">Bake camera into recording</span>
-                  <span className="text-xxs text-muted">
-                    Drag the camera preview to position it in the recording.
-                  </span>
-                </span>
-              </Checkbox>
-            </div>
-          ) : null}
-
-          {isRecording && (enabledAudioTrackCount ?? 0) > 1 ? (
-            <Checkbox
-              isDisabled={isSaving}
-              isSelected={collapseAudio}
-              onChange={onCollapseAudioChange}
-              size="sm"
-            >
-              <span className="flex flex-col">
-                <span className="text-xs">Collapse audio tracks</span>
-                <span className="text-xxs text-muted">
-                  Mix the selected tracks into one for easier sharing.
-                </span>
-              </span>
-            </Checkbox>
-          ) : null}
-
-          <ExportDestinationForm
+      {artifact?.kind === "recording" ? (
+        <RecordingSection
+          artifact={artifact}
+          audioTrackVolumes={audioTrackVolumes}
+          bakeCamera={bakeCamera}
+          cameraOverlay={cameraOverlay}
+          cameraResolutionScalePercent={cameraResolutionScalePercent}
+          enabledStreamIndices={enabledStreamIndices}
+          enabledVideoTracks={enabledVideoTracks}
+          inspector={inspector}
+          isPreparingRecordingAudio={isPreparingRecordingAudio}
+          isPreparingRecordingPreview={isPreparingRecordingPreview}
+          key={artifact.id}
+          onCameraOverlayChange={onCameraOverlayChange}
+          onEnabledTracksChange={onEnabledTracksChange}
+          onEnabledVideoTracksChange={onEnabledVideoTracksChange}
+          onSelectedTrackChange={onSelectedTrackChange}
+          recordingPreviewError={recordingPreviewError}
+          recordingPreviewLayout={recordingPreviewLayout}
+          recordingPreviewTracks={recordingPreviewTracks}
+          resolutionScalePercent={resolutionScalePercent}
+          selectedTrack={selectedTrack}
+        />
+      ) : artifact ? (
+        <section className="flex min-h-0 min-w-0 grow bg-black/5 dark:bg-black/25">
+          <ScreenshotSection
             artifact={artifact}
-            directory={directory}
-            error={error}
-            fileStem={fileStem}
-            hasExportableContent={!isAudio || (enabledAudioTrackCount ?? 0) > 0}
-            isExportPreparationPending={isExportPreparationPending}
-            isSaving={isSaving}
-            onBrowse={onBrowse}
-            onCancel={onCancel}
-            onCopy={onCopy}
-            onFileStemChange={onFileStemChange}
-            onSave={onSave}
+            onNeedFullResolution={onNeedFullResolution}
+            onRadiusChange={onScreenshotRadiusChange}
+            onRadiusChangeEnd={onScreenshotRadiusChangeEnd}
+            previewUrl={previewUrl}
+            radiusPercent={screenshotRadiusPercent}
           />
+        </section>
+      ) : (
+        <div className="flex min-h-0 grow items-center justify-center text-sm text-muted">
+          Nothing to export
         </div>
-      </OverflowShadow>
+      )}
     </main>
   );
 }

@@ -91,7 +91,7 @@ const buttonVariants = tv({
       ],
     },
     icon: { true: [] },
-    isDisabled: { true: "cursor-not-allowed!" },
+    isDisabled: { true: "cursor-not-allowed! opacity-40 saturate-0" },
     shiny: {
       true: [
         "relative",

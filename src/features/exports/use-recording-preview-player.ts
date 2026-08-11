@@ -11,16 +11,19 @@ import {
   requestRecordingPreviewFullResolution,
   seekRecordingPreview,
   selectRecordingPreviewAudio,
+  setRecordingPreviewAudioVolumes,
   startRecordingPreviewPlayer,
   stopRecordingPreviewPlayer,
 } from "./api";
 import { ScrubPhase } from "./components/scrub-timeline";
+import { AudioTrackVolume } from "./types";
 import { useRecordingPreviewFrames } from "./use-recording-preview-frames";
 
 let sessionSequence = 0;
 
 export function useRecordingPreviewPlayer({
   artifactId,
+  audioTrackVolumes,
   cameraCanvasRef,
   enabledStreamIndices,
   isEnabled,
@@ -28,6 +31,7 @@ export function useRecordingPreviewPlayer({
   screenCanvasRef,
 }: {
   artifactId: number;
+  audioTrackVolumes: AudioTrackVolume[];
   cameraCanvasRef: RefObject<HTMLCanvasElement | null>;
   enabledStreamIndices: number[];
   isEnabled: boolean;
@@ -62,6 +66,12 @@ export function useRecordingPreviewPlayer({
     screenCanvasRef,
   });
   const selectionSignature = enabledStreamIndices.join("-");
+  const volumeSignature = audioTrackVolumes
+    .map(
+      (volume) =>
+        `${volume.streamIndex.toString()}:${volume.decibels.toString()}`,
+    )
+    .join("-");
   onPositionRef.current = onPosition;
 
   const updatePlaying = (playing: boolean) => {
@@ -181,6 +191,7 @@ export function useRecordingPreviewPlayer({
     };
     void startRecordingPreviewPlayer({
       artifactId,
+      audioTrackVolumes,
       enabledStreamIndices,
       eventChannel,
       frameChannel,
@@ -226,6 +237,16 @@ export function useRecordingPreviewPlayer({
     // The signature prevents a freshly allocated but identical selection from restarting playback.
     // eslint-disable-next-line @eslint-react/exhaustive-deps
   }, [isEnabled, selectionSignature]);
+
+  useEffect(() => {
+    if (!isEnabled || !startedRef.current) return;
+    void setRecordingPreviewAudioVolumes(
+      audioTrackVolumes,
+      sessionIdRef.current,
+    ).catch(setError);
+    // The signature keeps object identity changes from sending duplicate updates.
+    // eslint-disable-next-line @eslint-react/exhaustive-deps
+  }, [isEnabled, volumeSignature]);
 
   const play = useCallback(() => {
     if (!isEnabled) return;

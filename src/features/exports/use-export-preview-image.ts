@@ -5,7 +5,10 @@ import { useCallback, useEffect, useState } from "react";
 
 import { getExportPreview } from "./api";
 
-export function useExportPreviewImage(artifactId: number | undefined) {
+export function useExportPreviewImage(
+  artifactId: number | undefined,
+  loadFullResolutionInitially = false,
+) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [fullPreviewUrl, setFullPreviewUrl] = useState<string | null>(null);
 
@@ -15,7 +18,7 @@ export function useExportPreviewImage(artifactId: number | undefined) {
     let url: string | undefined;
     let disposed = false;
 
-    void getExportPreview()
+    void getExportPreview(loadFullResolutionInitially)
       .then((bytes) => {
         if (disposed) return;
         url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
@@ -31,7 +34,7 @@ export function useExportPreviewImage(artifactId: number | undefined) {
       setPreviewUrl(null);
       setFullPreviewUrl(null);
     };
-  }, [artifactId]);
+  }, [artifactId, loadFullResolutionInitially]);
 
   useEffect(() => {
     if (!fullPreviewUrl) return;
@@ -41,7 +44,7 @@ export function useExportPreviewImage(artifactId: number | undefined) {
   }, [fullPreviewUrl]);
 
   const loadFullPreview = useCallback(() => {
-    if (fullPreviewUrl) return;
+    if (loadFullResolutionInitially || fullPreviewUrl) return;
 
     void getExportPreview(true)
       .then((bytes) => {
@@ -52,7 +55,7 @@ export function useExportPreviewImage(artifactId: number | undefined) {
       .catch((cause: unknown) => {
         console.error("Could not load the full-resolution preview", cause);
       });
-  }, [fullPreviewUrl]);
+  }, [fullPreviewUrl, loadFullResolutionInitially]);
 
   return {
     loadFullPreview,

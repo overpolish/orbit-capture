@@ -23,6 +23,7 @@ const badgeVariants = tv({
     size: {
       md: "gap-1 rounded-lg px-2 py-1 text-sm",
       sm: "gap-1 rounded-md px-1.5 py-0.5 text-xs",
+      xs: "gap-1 rounded px-1.5 py-0.5 text-xxs",
     },
     variant: {
       ghost: "",

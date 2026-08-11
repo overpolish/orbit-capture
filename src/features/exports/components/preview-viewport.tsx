@@ -15,8 +15,10 @@ type PreviewViewportProps = {
   onNeedFullResolution?: () => void;
   onRadiusChange?: (radiusPercent: number) => void;
   onRadiusChangeEnd?: () => void;
+  onZoomChange?: (zoomPercent: number) => void;
   previewUrl?: string | null;
   radiusPercent?: number;
+  zoomPercent?: number;
 };
 
 export function PreviewViewport({
@@ -27,8 +29,10 @@ export function PreviewViewport({
   onNeedFullResolution,
   onRadiusChange,
   onRadiusChangeEnd,
+  onZoomChange,
   previewUrl,
   radiusPercent = 0,
+  zoomPercent,
 }: PreviewViewportProps) {
   const mediaRef = useRef<HTMLDivElement | null>(null);
   const radius = (Math.min(naturalWidth, naturalHeight) * radiusPercent) / 100;
@@ -37,6 +41,7 @@ export function PreviewViewport({
       getMediaSize={() => ({ height: naturalHeight, width: naturalWidth })}
       hideUntilMeasured
       onNeedFullResolution={onNeedFullResolution}
+      onZoomChange={onZoomChange}
       renderMedia={({ onReady, ref, style }) => (
         <div
           className="absolute flex shrink-0 items-center justify-center overflow-hidden select-none"
@@ -75,6 +80,7 @@ export function PreviewViewport({
         </div>
       )}
       resetKey={`${artifactId.toString()}:${previewUrl ?? "empty"}`}
+      zoomPercent={zoomPercent}
     />
   );
 }

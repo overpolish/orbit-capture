@@ -3722,6 +3722,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "cidre",
+ "core-graphics 0.25.0",
  "cpal",
  "image",
  "nokhwa",

@@ -8,6 +8,8 @@ mod camera_preview;
 mod capture_geometry;
 #[cfg(target_os = "macos")]
 mod capture_kit;
+#[cfg(target_os = "macos")]
+mod cursor_scrub;
 mod exports;
 mod permissions;
 mod recording;
@@ -51,6 +53,10 @@ pub fn run() {
       audio_preview::stop_audio_preview,
       camera_preview::start_camera_preview,
       camera_preview::stop_camera_preview,
+      #[cfg(target_os = "macos")]
+      cursor_scrub::begin_cursor_scrub,
+      #[cfg(target_os = "macos")]
+      cursor_scrub::end_cursor_scrub,
       exports::commands::browse_export_directory,
       exports::commands::cancel_export,
       exports::commands::cancel_export_job,
@@ -64,8 +70,10 @@ pub fn run() {
       exports::recording_preview_player::commands::request_recording_preview_full_resolution,
       exports::recording_preview_player::commands::seek_recording_preview,
       exports::recording_preview_player::commands::select_recording_preview_audio,
+      exports::recording_preview_player::commands::set_recording_preview_audio_volumes,
       exports::recording_preview_player::commands::start_recording_preview_player,
       exports::recording_preview_player::commands::stop_recording_preview_player,
+      exports::recording_preview_player::timeline_thumbnails::stream_recording_timeline_thumbnails,
       exports::save::save_export,
       exports::commands::set_export_directory,
       exports::commands::set_screenshot_radius,

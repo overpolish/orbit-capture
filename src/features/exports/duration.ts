@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-/** `1:04:07`, or `4:07` for anything under an hour. */
+/** `01:04:07`, or `04:07` for anything under an hour. */
 export const formatDuration = (durationMs: number) => {
-  const total = Math.max(0, Math.round(durationMs / 1000));
+  const total = Math.max(0, Math.floor(durationMs / 1000));
   const seconds = String(total % 60).padStart(2, "0");
   const minutes = Math.floor(total / 60) % 60;
   const hours = Math.floor(total / 3600);
 
   return hours > 0
-    ? `${hours.toString()}:${String(minutes).padStart(2, "0")}:${seconds}`
-    : `${minutes.toString()}:${seconds}`;
+    ? `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${seconds}`
+    : `${String(minutes).padStart(2, "0")}:${seconds}`;
 };
 
 export const formatBytes = (bytes: number) => {

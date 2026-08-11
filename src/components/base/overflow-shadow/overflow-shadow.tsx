@@ -90,6 +90,9 @@ const overflowShadowVariants = tv({
       md: {
         os: "rounded-md",
       },
+      none: {
+        os: "rounded-none",
+      },
       sm: {
         os: "rounded-sm",
       },

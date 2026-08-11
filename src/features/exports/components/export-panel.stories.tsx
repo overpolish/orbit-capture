@@ -8,6 +8,10 @@ import { ExportArtifact } from "../types";
 
 import { ExportPanel } from "./export-panel";
 import screenshotPreview from "./export-panel-preview.svg";
+import {
+  AudioRecordingStoryPanel,
+  RecordingStoryPanel,
+} from "./export-panel-story-panels";
 
 const screenshot: ExportArtifact = {
   extension: "png",
@@ -103,7 +107,7 @@ const meta = {
   },
   component: ExportPanel,
   parameters: {
-    layout: "centered",
+    layout: "fullscreen",
   },
   title: "Export/Export Panel",
 } satisfies Meta<typeof ExportPanel>;
@@ -158,12 +162,12 @@ export const NothingPending: Story = {
   args: { artifact: null, fileStem: "" },
 };
 
-/** A finished recording: a poster, how long it runs, and no clipboard offer. */
 export const Recording: Story = {
   args: {
     artifact: recording,
     compression: 2,
     enabledAudioTrackCount: 2,
+    enabledVideoTracks: ["primary"],
     estimatedSizeBytes: 74_200_000,
     fileStem: recording.suggestedFileStem,
     recordingPreviewLayout: screenPreviewLayout,
@@ -189,12 +193,24 @@ export const Recording: Story = {
     ],
     resolutionScalePercent: 150,
   },
+  render: (args) => <RecordingStoryPanel {...args} />,
 };
 
 export const RecordingWithCollapsedAudio: Story = {
   args: {
     ...Recording.args,
     collapseAudio: true,
+  },
+  render: (args) => <RecordingStoryPanel {...args} />,
+};
+
+/** Export is unavailable once every recorded track has been excluded. */
+export const RecordingWithNothingSelected: Story = {
+  args: {
+    ...Recording.args,
+    enabledAudioTrackCount: 0,
+    enabledStreamIndices: [],
+    enabledVideoTracks: [],
   },
 };
 
@@ -212,6 +228,7 @@ export const CameraRecording: Story = {
     recordingPreviewLayout: cameraOnlyPreviewLayout,
     resolutionScalePercent: 75,
   },
+  render: (args) => <RecordingStoryPanel {...args} />,
 };
 
 /** Audio-only capture has transport, waveforms and tracks, but no video controls. */
@@ -228,10 +245,12 @@ export const AudioRecording: Story = {
       sourceScalePercent: 100,
       width: 0,
     },
+    enabledVideoTracks: [],
     estimatedSizeBytes: null,
     recordingPreviewLayout: audioPreviewLayout,
     resolutionScalePercent: 100,
   },
+  render: (args) => <AudioRecordingStoryPanel {...args} />,
 };
 
 /** Screen and camera captures remain separate, synchronized preview panels. */
@@ -250,20 +269,11 @@ export const RecordingWithCamera: Story = {
     },
     cameraCompression: 2,
     cameraResolutionScalePercent: 100,
+    enabledVideoTracks: ["primary", "camera"],
     recordingPreviewLayout: cameraPreviewLayout,
   },
+  render: (args) => <RecordingStoryPanel {...args} />,
 };
-
-function CameraBakePanel(args: ComponentProps<typeof ExportPanel>) {
-  const [cameraOverlay, setCameraOverlay] = useState(args.cameraOverlay);
-  return (
-    <ExportPanel
-      {...args}
-      cameraOverlay={cameraOverlay}
-      onCameraOverlayChange={setCameraOverlay}
-    />
-  );
-}
 
 export const RecordingWithBakedCamera: Story = {
   args: {
@@ -280,7 +290,7 @@ export const RecordingWithBakedCamera: Story = {
       radiusPercent: 8,
     },
   },
-  render: (args) => <CameraBakePanel {...args} />,
+  render: (args) => <RecordingStoryPanel {...args} />,
 };
 
 export const SavingRecording: Story = {
@@ -346,6 +356,7 @@ export const RecoveredRecording: Story = {
       originalSizeBytes: 0,
       width: 0,
     },
+    enabledVideoTracks: ["primary"],
     fileStem: recording.suggestedFileStem,
   },
 };

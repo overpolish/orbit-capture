@@ -69,6 +69,7 @@ pub async fn estimate_recording_export(
   options: RecordingExportOptions,
 ) -> Result<u64, String> {
   let RecordingExportOptions {
+    audio_track_volumes,
     bake_camera,
     camera_compression,
     camera_overlay,
@@ -76,6 +77,8 @@ pub async fn estimate_recording_export(
     collapse_audio,
     compression,
     enabled_stream_indices,
+    include_camera,
+    include_primary_video,
     resolution_scale_percent,
     screenshot_radius_percent: _,
   } = options;
@@ -129,8 +132,11 @@ pub async fn estimate_recording_export(
         *source_scale_percent,
       )
     };
-    if bake_camera && camera.is_none() {
+    if bake_camera && (!include_primary_video || !include_camera || camera.is_none()) {
       return Err("There is no camera recording to bake in".to_owned());
+    }
+    if !include_primary_video && !include_camera && enabled_stream_indices.is_empty() {
+      return Err("Select at least one track to export".to_owned());
     }
     validate_primary_resolution_scale(
       resolution_scale_percent,
@@ -139,7 +145,11 @@ pub async fn estimate_recording_export(
     )?;
     validate_camera_resolution_scale(camera_resolution_scale_percent)?;
 
-    let selection = track_selection::TrackSelection::new(&tracks, &enabled_stream_indices);
+    let selection = track_selection::TrackSelection::with_volumes(
+      &tracks,
+      &enabled_stream_indices,
+      &audio_track_volumes,
+    )?;
     let layout = if collapse_audio {
       track_selection::AudioLayout::Mixdown
     } else {
@@ -183,6 +193,7 @@ pub async fn estimate_recording_export(
       .get(&key)
       .copied();
     let screen_video = match cached {
+      _ if !include_primary_video => 0,
       Some(bytes) => bytes,
       None if !has_video => 0,
       None
@@ -207,7 +218,9 @@ pub async fn estimate_recording_export(
       }
     };
 
-    let camera_video = if bake_camera {
+    let camera_video = if !include_camera {
+      0
+    } else if bake_camera {
       // Baking necessarily re-encodes the screen. The screen sample remains
       // the useful predictor; a small allowance covers motion in the overlay
       // without counting the camera as a second deliverable file.

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -20,12 +21,20 @@ import {
 } from "./recording-export-settings";
 import { sourceScalePercent } from "./resolution";
 import { selectArtifact, selectDirectory, useExportStore } from "./store";
+import {
+  AudioTrackVolume,
+  recordingAudioStreamIndex,
+  recordingAudioTrackId,
+  RecordingTrackId,
+  RecordingVideoTrackId,
+} from "./types";
 import { useExportPreviewImage } from "./use-export-preview-image";
 import { useExportProgress } from "./use-export-progress";
 import { useRecordingExportEstimate } from "./use-recording-export-estimate";
 import { useRecordingExportPreview } from "./use-recording-export-preview";
 
 const DEFAULT_COMPRESSION = 2;
+const EMPTY_AUDIO_TRACK_VOLUMES: AudioTrackVolume[] = [];
 export function ExportWindow() {
   const artifact = useExportStore(selectArtifact);
   const directory = useExportStore(selectDirectory);
@@ -49,6 +58,18 @@ export function ExportWindow() {
     artifactId: number;
     streamIndices: number[];
   } | null>(null);
+  const [videoTrackSelection, setVideoTrackSelection] = useState<{
+    artifactId: number;
+    tracks: RecordingVideoTrackId[];
+  } | null>(null);
+  const [selectedTrack, setSelectedTrack] = useState<{
+    artifactId: number;
+    trackId: RecordingTrackId;
+  } | null>(null);
+  const [audioTrackVolumes, setAudioTrackVolumes] = useState<{
+    artifactId: number;
+    values: AudioTrackVolume[];
+  } | null>(null);
   const screenshotRadiusRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,7 +79,10 @@ export function ExportWindow() {
   // the previous capture's pixels.
   const artifactId = artifact?.id;
   const saveProgress = useExportProgress(artifactId);
-  const { loadFullPreview, previewUrl } = useExportPreviewImage(artifactId);
+  const { loadFullPreview, previewUrl } = useExportPreviewImage(
+    artifactId,
+    artifact?.kind === "screenshot",
+  );
   const canCompress = artifact?.kind === "recording" && artifact.canCompress;
   const originalResolutionScale =
     artifact?.kind === "recording" ? sourceScalePercent(artifact) : 100;
@@ -88,17 +112,61 @@ export function ExportWindow() {
         ? trackSelection.streamIndices
         : artifact.audioTracks.map((track) => track.streamIndex)
       : null;
+  const defaultVideoTracks: RecordingVideoTrackId[] =
+    artifact?.kind === "recording"
+      ? [
+          ...(artifact.primaryKind === "audio" ? [] : (["primary"] as const)),
+          ...(artifact.camera ? (["camera"] as const) : []),
+        ]
+      : [];
+  const enabledVideoTracks =
+    artifact?.kind === "recording" &&
+    videoTrackSelection?.artifactId === artifact.id
+      ? videoTrackSelection.tracks
+      : defaultVideoTracks;
+  const includePrimaryVideo = enabledVideoTracks.includes("primary");
+  const includeCamera = enabledVideoTracks.includes("camera");
+  const effectiveBakeCamera =
+    bakeCamera && includePrimaryVideo && includeCamera;
   const effectiveCollapseAudio =
     collapseAudio && (enabledStreamIndices?.length ?? 0) > 1;
+  const currentAudioTrackVolumes =
+    artifact?.kind === "recording" &&
+    audioTrackVolumes?.artifactId === artifact.id
+      ? audioTrackVolumes.values
+      : EMPTY_AUDIO_TRACK_VOLUMES;
+  const selectedTrackId: RecordingTrackId | null =
+    artifact?.kind === "recording"
+      ? selectedTrack?.artifactId === artifact.id &&
+        (selectedTrack.trackId === "primary" ||
+          selectedTrack.trackId === "camera" ||
+          artifact.audioTracks.some(
+            (track) =>
+              recordingAudioTrackId(track.streamIndex) ===
+              selectedTrack.trackId,
+          ))
+        ? selectedTrack.trackId
+        : artifact.primaryKind !== "audio"
+          ? "primary"
+          : artifact.camera
+            ? "camera"
+            : artifact.audioTracks[0]
+              ? recordingAudioTrackId(artifact.audioTracks[0].streamIndex)
+              : null
+      : null;
+  const selectedStreamIndex = recordingAudioStreamIndex(selectedTrackId);
   const { estimatedSizeBytes, isEstimatingSize, isPending } =
     useRecordingExportEstimate({
       artifact,
-      bakeCamera,
+      audioTrackVolumes: currentAudioTrackVolumes,
+      bakeCamera: effectiveBakeCamera,
       camera: cameraExport,
       cameraOverlay,
       collapseAudio: effectiveCollapseAudio,
       compression,
       enabledStreamIndices,
+      includeCamera,
+      includePrimaryVideo,
       resolutionScalePercent,
     });
 
@@ -113,6 +181,9 @@ export function ExportWindow() {
   useEffect(() => {
     /* eslint-disable @eslint-react/set-state-in-effect */
     setTrackSelection(null);
+    setVideoTrackSelection(null);
+    setSelectedTrack(null);
+    setAudioTrackVolumes(null);
     setBakeCamera(false);
     setCameraOverlay(defaultCameraOverlay(artifact));
     setCollapseAudio(false);
@@ -151,7 +222,8 @@ export function ExportWindow() {
   return (
     <ExportPanel
       artifact={artifact}
-      bakeCamera={bakeCamera}
+      audioTrackVolumes={currentAudioTrackVolumes}
+      bakeCamera={effectiveBakeCamera}
       cameraCompression={cameraCompression}
       cameraOverlay={cameraOverlay}
       cameraResolutionScalePercent={cameraResolutionScalePercent}
@@ -160,6 +232,7 @@ export function ExportWindow() {
       directory={directory}
       enabledAudioTrackCount={enabledStreamIndices?.length ?? 0}
       enabledStreamIndices={enabledStreamIndices ?? undefined}
+      enabledVideoTracks={enabledVideoTracks}
       error={error}
       estimatedSizeBytes={estimatedSizeBytes}
       fileStem={fileStem}
@@ -219,9 +292,20 @@ export function ExportWindow() {
         copyExportToClipboard(screenshotRadiusPercent).catch(report("copy"));
       }}
       onEnabledTracksChange={onEnabledTracksChange}
+      onEnabledVideoTracksChange={(tracks) => {
+        if (artifactId === undefined) return;
+        setVideoTrackSelection({ artifactId, tracks });
+      }}
       onFileStemChange={(value) => {
         setFileStem(value);
         setError(null);
+      }}
+      onMinimize={() => {
+        getCurrentWindow()
+          .minimize()
+          .catch((cause: unknown) => {
+            console.error("Could not minimize the export window", cause);
+          });
       }}
       onNeedFullResolution={loadFullPreview}
       onResolutionScaleChange={(scale) => {
@@ -234,12 +318,15 @@ export function ExportWindow() {
       onSave={() => {
         const plan = recordingSavePlan({
           artifact,
-          bakeCamera,
+          audioTrackVolumes: currentAudioTrackVolumes,
+          bakeCamera: effectiveBakeCamera,
           camera: cameraExport,
           cameraOverlay,
           collapseAudio,
           compression,
           enabledStreamIndices,
+          includeCamera,
+          includePrimaryVideo,
           originalResolutionScale,
           resolutionScalePercent,
         });
@@ -275,6 +362,23 @@ export function ExportWindow() {
           report("remember the screenshot radius for"),
         );
       }}
+      onSelectedTrackChange={(trackId) => {
+        if (artifactId === undefined) return;
+        setSelectedTrack({ artifactId, trackId });
+      }}
+      onSelectedTrackVolumeChange={(decibels) => {
+        if (artifactId === undefined || selectedStreamIndex === null) return;
+        const next = currentAudioTrackVolumes.filter(
+          (volume) => volume.streamIndex !== selectedStreamIndex,
+        );
+        if (decibels !== 0) {
+          next.push({
+            decibels: Math.round(decibels),
+            streamIndex: selectedStreamIndex,
+          });
+        }
+        setAudioTrackVolumes({ artifactId, values: next });
+      }}
       previewUrl={previewUrl}
       recordingPreviewError={recordingPreviewError}
       recordingPreviewTracks={recordingPreviewTracks}
@@ -282,6 +386,7 @@ export function ExportWindow() {
       savePhase={saveProgress.phase}
       saveProgress={saveProgress.progress}
       screenshotRadiusPercent={screenshotRadiusPercent}
+      selectedTrack={selectedTrackId}
     />
   );
 }

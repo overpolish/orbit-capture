@@ -8,6 +8,7 @@ import {
   type CheckboxFieldProps as AriaCheckboxFieldProps,
 } from "react-aria-components";
 
+import { focusStyles, groupFocusVisible } from "../../../lib/styling";
 import { tv } from "../../../lib/variants";
 
 import type { VariantProps } from "tailwind-variants";
@@ -17,11 +18,15 @@ const checkboxVariants = tv({
     size: "md",
   },
   slots: {
-    base: "group relative flex items-center gap-2 text-sm text-content-fg",
+    base: [
+      "group relative flex items-center gap-2 text-sm text-content-fg",
+      focusStyles,
+    ],
     checkbox: [
       "flex shrink-0 items-center justify-center rounded-sm border-1 border-muted/50 transition-colors",
       "group-data-[hovered]:bg-info/10",
       "group-data-[selected]:border-info group-data-[selected]:bg-info",
+      groupFocusVisible,
     ],
     svg: "fill-none",
   },

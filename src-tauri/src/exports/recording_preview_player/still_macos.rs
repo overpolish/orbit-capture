@@ -25,7 +25,9 @@ pub(super) struct NativeStillDecoder {
   thread: Option<JoinHandle<()>>,
 }
 
-fn image_generator(path: &Path) -> Result<cidre::arc::R<av::AssetImageGenerator>, String> {
+pub(super) fn image_generator(
+  path: &Path,
+) -> Result<cidre::arc::R<av::AssetImageGenerator>, String> {
   let path_text = path
     .to_str()
     .ok_or_else(|| "The recording path is not valid UTF-8".to_owned())?;
@@ -70,7 +72,7 @@ pub(super) fn jpeg(image: &cg::Image) -> Result<Vec<u8>, String> {
   Ok(data.as_slice().to_vec())
 }
 
-fn images_at(
+pub(super) fn images_at(
   screen: &av::AssetImageGenerator,
   camera: Option<&av::AssetImageGenerator>,
   screen_position_ms: u64,
@@ -95,7 +97,7 @@ fn images_at(
   }
 }
 
-fn frame_position(requested_ms: u64, duration_ms: u64) -> u64 {
+pub(super) fn frame_position(requested_ms: u64, duration_ms: u64) -> u64 {
   requested_ms.min(duration_ms.saturating_sub(1))
 }
 

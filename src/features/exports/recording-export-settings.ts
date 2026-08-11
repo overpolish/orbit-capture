@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { CameraOverlaySettings, ExportArtifact } from "./types";
+import {
+  AudioTrackVolume,
+  CameraOverlaySettings,
+  ExportArtifact,
+} from "./types";
 
 export const defaultCameraOverlay = (
   artifact?: ExportArtifact | null,
@@ -45,6 +49,7 @@ export type VideoExportSettings = {
 };
 
 type RecordingSavePlanOptions = {
+  audioTrackVolumes: AudioTrackVolume[];
   bakeCamera: boolean;
   cameraCompression: number;
   cameraOverlay: CameraOverlaySettings;
@@ -52,6 +57,8 @@ type RecordingSavePlanOptions = {
   collapseAudio: boolean;
   compression: number;
   enabledStreamIndices: number[];
+  includeCamera: boolean;
+  includePrimaryVideo: boolean;
   resolutionScalePercent: number;
 };
 
@@ -78,35 +85,44 @@ export const cameraExportSettings = (
 
 export const recordingSavePlan = ({
   artifact,
+  audioTrackVolumes,
   bakeCamera,
   camera,
   cameraOverlay,
   collapseAudio,
   compression,
   enabledStreamIndices,
+  includeCamera,
+  includePrimaryVideo,
   originalResolutionScale,
   resolutionScalePercent,
 }: {
   artifact: ExportArtifact | null;
+  audioTrackVolumes: AudioTrackVolume[];
   bakeCamera: boolean;
   camera: VideoExportSettings;
   cameraOverlay: CameraOverlaySettings;
   collapseAudio: boolean;
   compression: number;
   enabledStreamIndices: number[] | null;
+  includeCamera: boolean;
+  includePrimaryVideo: boolean;
   originalResolutionScale: number;
   resolutionScalePercent: number;
 }): RecordingSavePlan => {
   const selectedIndices = enabledStreamIndices ?? [];
-  const hasCamera = artifact?.kind === "recording" && artifact.camera !== null;
+  const hasCamera =
+    artifact?.kind === "recording" && artifact.camera !== null && includeCamera;
   const hasAudioChanges =
     artifact?.kind === "recording" &&
     (selectedIndices.length !== artifact.audioTracks.length ||
-      (collapseAudio && selectedIndices.length > 1));
+      (collapseAudio && selectedIndices.length > 1) ||
+      audioTrackVolumes.some((volume) => volume.decibels !== 0));
   const hasMeasuredWork =
     artifact?.kind === "recording" &&
     artifact.durationMs > 0 &&
-    (artifact.primaryKind === "audio" ||
+    (!includePrimaryVideo ||
+      artifact.primaryKind === "audio" ||
       compression > 0 ||
       resolutionScalePercent < originalResolutionScale ||
       (hasCamera &&
@@ -117,13 +133,16 @@ export const recordingSavePlan = ({
 
   return {
     options: {
-      bakeCamera: hasCamera && bakeCamera,
+      audioTrackVolumes,
+      bakeCamera: hasCamera && includePrimaryVideo && bakeCamera,
       cameraCompression: camera.compression,
       cameraOverlay,
       cameraResolutionScalePercent: camera.resolutionScalePercent,
       collapseAudio: collapseAudio && selectedIndices.length > 1,
       compression,
       enabledStreamIndices: selectedIndices,
+      includeCamera: hasCamera,
+      includePrimaryVideo,
       resolutionScalePercent,
     },
     showsMeasuredProgress: hasMeasuredWork || hasCamera,
