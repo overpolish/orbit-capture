@@ -4,6 +4,7 @@
 use super::*;
 
 mod cursor;
+mod location;
 mod recording_file;
 
 pub(super) use recording_file::{
@@ -18,6 +19,7 @@ pub(super) use recording_file::{save_recording, save_selected_recording};
 pub async fn save_export(
   app: AppHandle,
   file_stem: String,
+  open_location_after_export: bool,
   options: RecordingExportOptions,
 ) -> Result<Option<PathBuf>, String> {
   let RecordingExportOptions {
@@ -366,6 +368,9 @@ pub async fn save_export(
   if let Err(error) = remember_cursor_effects(&app, cursor_effects) {
     eprintln!("Could not remember cursor export settings: {error}");
   }
+  if let Err(error) = remember_open_location_after_export(&app, open_location_after_export) {
+    eprintln!("Could not remember the export-location setting: {error}");
+  }
   // Saving is transactional: keep the native player alive while the artifact
   // may still be restored by Cancel or an export error, then retire it only
   // once the finished files have been published.
@@ -373,6 +378,12 @@ pub async fn save_export(
   artifact::clear_cached_previews(&app);
   let _ = window::hide(&app);
   emit_snapshot(&app);
+
+  if open_location_after_export {
+    if let Err(error) = location::open_containing_folder(&path) {
+      eprintln!("Could not open the export location: {error}");
+    }
+  }
 
   Ok(Some(path))
 }

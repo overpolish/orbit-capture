@@ -183,6 +183,7 @@ export const estimateRecordingExport = ({
 
 type SaveExportOptions = RecordingProcessingOptions & {
   fileStem: string;
+  openLocationAfterExport: boolean;
 };
 
 export const saveExport = ({
@@ -198,11 +199,13 @@ export const saveExport = ({
   fileStem,
   includeCamera,
   includePrimaryVideo,
+  openLocationAfterExport,
   resolutionScalePercent,
   screenshotRadiusPercent,
 }: SaveExportOptions) =>
   invoke<string | null>("save_export", {
     fileStem,
+    openLocationAfterExport,
     options: {
       audioTrackVolumes,
       bakeCamera,

@@ -229,6 +229,11 @@ pub fn initialize(app: &AppHandle) {
     .cursor_effects
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_cursor_effects(app);
+  *app
+    .state::<ExportState>()
+    .open_location_after_export
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_open_location_after_export(app);
 
   sweep_orphaned_recordings(app);
 }

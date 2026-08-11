@@ -26,7 +26,8 @@ use commands::set_export_directory;
 use directory::{current_directory, load_directory, store_directory};
 use naming::sanitize_file_stem;
 use preferences::{
-  load_cursor_effects, load_screenshot_radius, remember_cursor_effects, remember_screenshot_radius,
+  load_cursor_effects, load_open_location_after_export, load_screenshot_radius,
+  remember_cursor_effects, remember_open_location_after_export, remember_screenshot_radius,
 };
 pub use recovery::initialize;
 #[cfg(test)]
@@ -249,6 +250,7 @@ pub struct ExportSnapshot {
   pub artifact: Option<ExportArtifactSnapshot>,
   pub cursor_effects: cursor_effects::CursorEffectSettings,
   pub directory: Option<PathBuf>,
+  pub open_location_after_export: bool,
   pub screenshot_radius_percent: f64,
 }
 
@@ -276,6 +278,7 @@ pub struct ExportState {
   full_preview: Mutex<Option<Vec<u8>>>,
   directory: Mutex<Option<PathBuf>>,
   cursor_effects: Mutex<cursor_effects::CursorEffectSettings>,
+  open_location_after_export: Mutex<bool>,
   screenshot_radius_percent: Mutex<f64>,
   recording_preview: Mutex<Option<media_preview::RecordingPreview>>,
   recording_preview_preparation: Mutex<()>,

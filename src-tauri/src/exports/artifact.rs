@@ -74,11 +74,16 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
     .cursor_effects
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner());
+  let open_location_after_export = *state
+    .open_location_after_export
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner());
 
   ExportSnapshot {
     artifact,
     cursor_effects,
     directory: current_directory(app),
+    open_location_after_export,
     screenshot_radius_percent,
   }
 }

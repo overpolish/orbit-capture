@@ -18,6 +18,9 @@ export function AudioRecordingStoryPanel(
   const [selectedTrack, setSelectedTrack] = useState<RecordingTrackId | null>(
     () => recordingAudioTrackId(0),
   );
+  const [openLocationAfterExport, setOpenLocationAfterExport] = useState(
+    args.openLocationAfterExport ?? false,
+  );
   const [volumes, setVolumes] = useState<Record<number, number>>({});
   return (
     <ExportPanel
@@ -31,12 +34,14 @@ export function AudioRecordingStoryPanel(
       enabledAudioTrackCount={enabledTracks.length}
       enabledStreamIndices={enabledTracks}
       onEnabledTracksChange={setEnabledTracks}
+      onOpenLocationAfterExportChange={setOpenLocationAfterExport}
       onSelectedTrackChange={setSelectedTrack}
       onSelectedTrackVolumeChange={(decibels) => {
         const streamIndex = recordingAudioStreamIndex(selectedTrack);
         if (streamIndex === null) return;
         setVolumes((current) => ({ ...current, [streamIndex]: decibels }));
       }}
+      openLocationAfterExport={openLocationAfterExport}
       selectedTrack={selectedTrack}
     />
   );
@@ -64,6 +69,9 @@ export function RecordingStoryPanel(args: ComponentProps<typeof ExportPanel>) {
   );
   const [enabledVideo, setEnabledVideo] = useState(
     () => args.enabledVideoTracks ?? [],
+  );
+  const [openLocationAfterExport, setOpenLocationAfterExport] = useState(
+    args.openLocationAfterExport ?? false,
   );
   const [resolution, setResolution] = useState(
     args.resolutionScalePercent ?? 100,
@@ -98,8 +106,10 @@ export function RecordingStoryPanel(args: ComponentProps<typeof ExportPanel>) {
       onCompressionChange={setCompression}
       onEnabledTracksChange={setEnabledAudio}
       onEnabledVideoTracksChange={setEnabledVideo}
+      onOpenLocationAfterExportChange={setOpenLocationAfterExport}
       onResolutionScaleChange={setResolution}
       onSelectedTrackChange={setSelectedTrack}
+      openLocationAfterExport={openLocationAfterExport}
       resolutionScalePercent={resolution}
       selectedTrack={selectedTrack}
     />

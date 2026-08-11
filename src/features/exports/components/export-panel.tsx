@@ -58,12 +58,14 @@ type ExportPanelProps = {
   onFileStemChange?: (fileStem: string) => void;
   onMinimize?: () => void;
   onNeedFullResolution?: () => void;
+  onOpenLocationAfterExportChange?: (open: boolean) => void;
   onResolutionScaleChange?: (scale: number) => void;
   onSave?: () => void;
   onScreenshotRadiusChange?: (radiusPercent: number) => void;
   onScreenshotRadiusChangeEnd?: () => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
   onSelectedTrackVolumeChange?: (decibels: number) => void;
+  openLocationAfterExport?: boolean;
   previewUrl?: string | null;
   recordingPreviewError?: string | null;
   recordingPreviewLayout?: RecordingPreviewLayout;
@@ -120,12 +122,14 @@ export function ExportPanel({
   onFileStemChange,
   onMinimize,
   onNeedFullResolution,
+  onOpenLocationAfterExportChange,
   onResolutionScaleChange,
   onSave,
   onScreenshotRadiusChange,
   onScreenshotRadiusChangeEnd,
   onSelectedTrackChange,
   onSelectedTrackVolumeChange,
+  openLocationAfterExport,
   previewUrl,
   recordingPreviewError,
   recordingPreviewLayout,
@@ -165,9 +169,11 @@ export function ExportPanel({
         onCollapseAudioChange={onCollapseAudioChange}
         onCompressionChange={onCompressionChange}
         onCursorEffectsChange={onCursorEffectsChange}
+        onOpenLocationAfterExportChange={onOpenLocationAfterExportChange}
         onResolutionScaleChange={onResolutionScaleChange}
         onSelectedTrackChange={onSelectedTrackChange}
         onSelectedTrackVolumeChange={onSelectedTrackVolumeChange}
+        openLocationAfterExport={openLocationAfterExport}
         resolutionScalePercent={resolutionScalePercent}
         selectedTrack={selectedTrack}
         selectedTrackVolume={

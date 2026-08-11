@@ -94,9 +94,11 @@ export function ExportInspector({
   onCollapseAudioChange,
   onCompressionChange,
   onCursorEffectsChange,
+  onOpenLocationAfterExportChange,
   onResolutionScaleChange,
   onSelectedTrackChange,
   onSelectedTrackVolumeChange,
+  openLocationAfterExport,
   resolutionScalePercent,
   selectedTrack,
   selectedTrackVolume = 0,
@@ -121,9 +123,11 @@ export function ExportInspector({
   onCollapseAudioChange?: (collapse: boolean) => void;
   onCompressionChange?: (compression: number) => void;
   onCursorEffectsChange?: (settings: CursorEffectSettings) => void;
+  onOpenLocationAfterExportChange?: (open: boolean) => void;
   onResolutionScaleChange?: (scale: number) => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
   onSelectedTrackVolumeChange?: (decibels: number) => void;
+  openLocationAfterExport?: boolean;
   resolutionScalePercent?: number;
   selectedTrackVolume?: number;
 }) {
@@ -189,6 +193,22 @@ export function ExportInspector({
                   </span>
                 </Checkbox>
               ) : null}
+
+              <Checkbox
+                isDisabled={isSaving}
+                isSelected={openLocationAfterExport}
+                onChange={onOpenLocationAfterExportChange}
+                size="sm"
+              >
+                <span className="flex flex-col">
+                  <span className="text-xs">
+                    Open export location when finished
+                  </span>
+                  <span className="text-xxs text-muted">
+                    Shows the containing folder after a successful export.
+                  </span>
+                </span>
+              </Checkbox>
 
               <RecordingSizeEstimate
                 estimatedSizeBytes={estimatedSizeBytes}

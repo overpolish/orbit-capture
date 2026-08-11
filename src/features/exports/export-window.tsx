@@ -52,8 +52,12 @@ export function ExportWindow() {
   const persistedCursorEffects = useExportStore(
     (state) => state.snapshot.cursorEffects,
   );
+  const persistedOpenLocationAfterExport = useExportStore(
+    (state) => state.snapshot.openLocationAfterExport,
+  );
   const [fileStem, setFileStem] = useState("");
   const [collapseAudio, setCollapseAudio] = useState(false);
+  const [openLocationAfterExport, setOpenLocationAfterExport] = useState(false);
   const [compression, setCompression] = useState(DEFAULT_COMPRESSION);
   const [cameraCompression, setCameraCompression] =
     useState(DEFAULT_COMPRESSION);
@@ -202,6 +206,7 @@ export function ExportWindow() {
     setCameraOverlay(defaultCameraOverlay(artifact));
     setCursorEffects(persistedCursorEffects);
     setCollapseAudio(false);
+    setOpenLocationAfterExport(persistedOpenLocationAfterExport);
     setCompression(canCompress ? DEFAULT_COMPRESSION : 0);
     setCameraCompression(canCompress ? DEFAULT_COMPRESSION : 0);
     setCameraResolutionScalePercent(100);
@@ -321,6 +326,7 @@ export function ExportWindow() {
           });
       }}
       onNeedFullResolution={loadFullPreview}
+      onOpenLocationAfterExportChange={setOpenLocationAfterExport}
       onResolutionScaleChange={(scale) => {
         setResolutionScalePercent(scale);
         if (scale < originalResolutionScale && compression === 0) {
@@ -351,6 +357,7 @@ export function ExportWindow() {
         saveExport({
           ...plan.options,
           fileStem,
+          openLocationAfterExport,
           screenshotRadiusPercent,
         })
           .then((path) => {
@@ -398,6 +405,7 @@ export function ExportWindow() {
         }
         setAudioTrackVolumes({ artifactId, values: next });
       }}
+      openLocationAfterExport={openLocationAfterExport}
       previewUrl={previewUrl}
       recordingPreviewError={recordingPreviewError}
       recordingPreviewTracks={recordingPreviewTracks}
