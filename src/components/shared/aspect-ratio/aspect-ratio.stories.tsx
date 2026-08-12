@@ -10,7 +10,7 @@ const meta = {
   parameters: {
     layout: "centered",
   },
-  title: "Shared/Aspect Ratio",
+  title: "Features/Aspect Ratio",
 } satisfies Meta<typeof AspectRatio>;
 
 export default meta;

@@ -13,7 +13,7 @@ const meta = {
   parameters: {
     layout: "centered",
   },
-  title: "Shared/Check On Click Button",
+  title: "Check On Click Button",
 } satisfies Meta<typeof CheckOnClickButton>;
 
 export default meta;

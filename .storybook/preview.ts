@@ -29,6 +29,11 @@ const preview: Preview = {
     docs: {
       theme: themes.dark,
     },
+    options: {
+      storySort: {
+        method: "alphabetical",
+      },
+    },
   },
   tags: ["autodocs"],
 };

@@ -70,7 +70,10 @@ pub fn hide_region_selector(app: AppHandle) -> tauri::Result<()> {
 }
 
 fn raise_recording_controls(app: &AppHandle) -> tauri::Result<()> {
-  if !RECORDING_CONTROLS_VISIBLE.load(Ordering::Relaxed) {
+  if !recording_controls_may_raise(
+    RECORDING_CONTROLS_VISIBLE.load(Ordering::Relaxed),
+    REGION_SELECTOR_EDITING.load(Ordering::Relaxed),
+  ) {
     return Ok(());
   }
 
@@ -83,6 +86,13 @@ fn raise_recording_controls(app: &AppHandle) -> tauri::Result<()> {
     }
   }
   Ok(())
+}
+
+/// Cross-window persistence may ask the overlay to show while its edit
+/// gesture is ending. Editing owns the pointer during that interval, so the
+/// source selector must not be raised over it.
+const fn recording_controls_may_raise(controls_visible: bool, region_editing: bool) -> bool {
+  controls_visible && !region_editing
 }
 
 /// The region overlay may take clicks only while the user is actively editing
@@ -178,7 +188,16 @@ pub fn set_recording_controls_opacity(app: AppHandle, opacity: f64) -> tauri::Re
 
 #[cfg(test)]
 mod tests {
-  use super::{region_selector_is_interactive, region_selector_may_show};
+  use super::{
+    recording_controls_may_raise, region_selector_is_interactive, region_selector_may_show,
+  };
+
+  #[test]
+  fn region_editing_does_not_raise_the_source_selector() {
+    assert!(recording_controls_may_raise(true, false));
+    assert!(!recording_controls_may_raise(true, true));
+    assert!(!recording_controls_may_raise(false, false));
+  }
 
   #[test]
   fn the_region_overlay_takes_clicks_only_while_editing_outside_a_recording() {

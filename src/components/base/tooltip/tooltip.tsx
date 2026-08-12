@@ -46,23 +46,28 @@ export const Tooltip = ({
     <AriaTooltip {...props} className={tooltipVariants({ className, size })}>
       {withArrow && (
         <OverlayArrow>
-          <svg
-            className={clsx(
-              "fill-content-fg",
-              (props.placement?.startsWith("left") ||
-                props.placement?.startsWith("start")) &&
-                "rotate-270",
-              (props.placement?.startsWith("right") ||
-                props.placement?.startsWith("end")) &&
-                "rotate-90",
-              props.placement?.startsWith("bottom") && "rotate-180",
-            )}
-            height={8}
-            viewBox="0 0 8 8"
-            width={8}
-          >
-            <path d="M0 0 L4 4 L8 0" />
-          </svg>
+          {({ placement }) => {
+            const resolvedPlacement = placement ?? props.placement ?? "top";
+            return (
+              <svg
+                className={clsx(
+                  "fill-content-fg",
+                  (resolvedPlacement.startsWith("left") ||
+                    resolvedPlacement.startsWith("start")) &&
+                    "rotate-270",
+                  (resolvedPlacement.startsWith("right") ||
+                    resolvedPlacement.startsWith("end")) &&
+                    "rotate-90",
+                  resolvedPlacement.startsWith("bottom") && "rotate-180",
+                )}
+                height={8}
+                viewBox="0 0 8 8"
+                width={8}
+              >
+                <path d="M0 0 L4 4 L8 0" />
+              </svg>
+            );
+          }}
         </OverlayArrow>
       )}
 

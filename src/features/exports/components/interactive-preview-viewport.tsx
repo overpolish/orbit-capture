@@ -71,6 +71,7 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
   const getMediaSizeRef = useRef(getMediaSize);
   const onNeedFullResolutionRef = useRef(onNeedFullResolution);
   const onZoomChangeRef = useRef(onZoomChange);
+  const reportedZoomRef = useRef<number | undefined>(undefined);
   const requestedFullRef = useRef(false);
   const [isPanning, setIsPanning] = useState(false);
 
@@ -122,7 +123,10 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
       frameRef.current = undefined;
       applyTransform(false);
       const nextZoomPercent = Math.round(transformRef.current.zoom * 100);
-      onZoomChangeRef.current?.(nextZoomPercent);
+      if (nextZoomPercent !== reportedZoomRef.current) {
+        reportedZoomRef.current = nextZoomPercent;
+        onZoomChangeRef.current?.(nextZoomPercent);
+      }
     });
   };
 
@@ -152,6 +156,10 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
 
   useEffect(() => {
     if (controlledZoomPercent === undefined) return;
+    // The toolbar mirrors the live transform as a whole percentage. Do not
+    // feed that rounded value back into an in-progress pinch and discard its
+    // sub-percent movement.
+    if (controlledZoomPercent === reportedZoomRef.current) return;
     const current = transformRef.current;
     const zoom = clamp(
       controlledZoomPercent / 100,
@@ -193,10 +201,7 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
     if (!box) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
-      // A native window can become visible after its first layout effects.
-      // Measuring on the gesture makes that lifecycle irrelevant and ensures
-      // the very first pinch uses the displayed media's real fit geometry.
-      measureAndApply();
+      if (geometryRef.current.boxWidth === 0) measureAndApply();
       clearTransition();
       const current = transformRef.current;
       const isPinch = isMac && event.ctrlKey;

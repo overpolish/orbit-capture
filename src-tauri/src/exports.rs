@@ -26,7 +26,9 @@ use commands::set_export_directory;
 use directory::current_directory;
 use naming::sanitize_file_stem;
 use preferences::{
-  load_cursor_effects, load_screenshot_radius, remember_cursor_effects, remember_screenshot_radius,
+  load_cursor_effects, load_screenshot_background_radius, load_screenshot_output,
+  load_screenshot_radius, remember_cursor_effects, remember_screenshot_background_radius,
+  remember_screenshot_output, remember_screenshot_radius,
 };
 pub use recovery::initialize;
 #[cfg(test)]
@@ -49,7 +51,8 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::recording::{FinalizeInfo, PrimaryRecordingKind};
 use crate::screenshots::{
-  encode_png, rounded_corners, screenshot_directory, unique_path, CapturedImage,
+  compose_screenshot, encode_png, screenshot_directory, unique_path, CapturedImage,
+  ScreenshotOutputSettings,
 };
 
 pub(crate) fn initialize_cursor_artwork() {
@@ -210,7 +213,7 @@ pub struct RecordingExportOptions {
   pub include_camera: bool,
   pub include_primary_video: bool,
   pub resolution_scale_percent: u16,
-  pub screenshot_radius_percent: f64,
+  pub screenshot_output: ScreenshotOutputSettings,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -249,6 +252,8 @@ pub struct ExportSnapshot {
   pub cursor_effects: cursor_effects::CursorEffectSettings,
   pub directory: Option<PathBuf>,
   pub screenshot_radius_percent: f64,
+  pub screenshot_background_radius_percent: f64,
+  pub screenshot_output: Option<ScreenshotOutputSettings>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -276,6 +281,8 @@ pub struct ExportState {
   directory: Mutex<Option<PathBuf>>,
   cursor_effects: Mutex<cursor_effects::CursorEffectSettings>,
   screenshot_radius_percent: Mutex<f64>,
+  screenshot_background_radius_percent: Mutex<f64>,
+  screenshot_output: Mutex<Option<ScreenshotOutputSettings>>,
   recording_preview: Mutex<Option<media_preview::RecordingPreview>>,
   recording_preview_preparation: Mutex<()>,
   /// Cached by artifact, stream kind (screen/camera/baked), quality and scale.

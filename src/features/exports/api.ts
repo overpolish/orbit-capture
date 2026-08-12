@@ -3,6 +3,11 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 
+import { MeshGradientPoint } from "./screenshot-background";
+import {
+  normalizedScreenshotOutput,
+  ScreenshotOutputSettings,
+} from "./screenshot-output";
 import {
   CameraOverlaySettings,
   AudioTrackVolume,
@@ -35,6 +40,30 @@ export const getExportSnapshot = () =>
  */
 export const getExportPreview = (full = false) =>
   invoke<ArrayBuffer>("get_export_preview", { full });
+
+export const renderMeshBackgroundPreview = ({
+  channel,
+  colors,
+  height,
+  points,
+  requestId,
+  seed,
+  warpPercent,
+  width,
+}: {
+  channel: Channel<ArrayBuffer>;
+  colors: string[];
+  height: number;
+  points: MeshGradientPoint[];
+  requestId: number;
+  seed: number;
+  warpPercent: number;
+  width: number;
+}) =>
+  invoke<null>("render_mesh_background_preview", {
+    channel,
+    options: { colors, height, points, requestId, seed, warpPercent, width },
+  });
 
 export const getRecordingPreview = (artifactId: number) =>
   invoke<RecordingPreview>("get_recording_preview", { artifactId });
@@ -143,7 +172,7 @@ type RecordingProcessingOptions = {
   includeCamera: boolean;
   includePrimaryVideo: boolean;
   resolutionScalePercent: number;
-  screenshotRadiusPercent: number;
+  screenshotOutput: ScreenshotOutputSettings;
 };
 
 export const estimateRecordingExport = ({
@@ -160,7 +189,7 @@ export const estimateRecordingExport = ({
   includeCamera,
   includePrimaryVideo,
   resolutionScalePercent,
-  screenshotRadiusPercent,
+  screenshotOutput,
 }: RecordingProcessingOptions & { artifactId: number }) =>
   invoke<number>("estimate_recording_export", {
     artifactId,
@@ -177,7 +206,7 @@ export const estimateRecordingExport = ({
       includeCamera,
       includePrimaryVideo,
       resolutionScalePercent,
-      screenshotRadiusPercent,
+      screenshotOutput: normalizedScreenshotOutput(screenshotOutput),
     },
   });
 
@@ -199,7 +228,7 @@ export const saveExport = ({
   includeCamera,
   includePrimaryVideo,
   resolutionScalePercent,
-  screenshotRadiusPercent,
+  screenshotOutput,
 }: SaveExportOptions) =>
   invoke<string | null>("save_export", {
     fileStem,
@@ -216,18 +245,24 @@ export const saveExport = ({
       includeCamera,
       includePrimaryVideo,
       resolutionScalePercent,
-      screenshotRadiusPercent,
+      screenshotOutput: normalizedScreenshotOutput(screenshotOutput),
     },
   });
 
 export const copyExportToClipboard = async (
-  screenshotRadiusPercent: number,
+  screenshotOutput: ScreenshotOutputSettings,
 ) => {
-  await invoke<null>("copy_export_to_clipboard", { screenshotRadiusPercent });
+  await invoke<null>("copy_export_to_clipboard", {
+    screenshotOutput: normalizedScreenshotOutput(screenshotOutput),
+  });
 };
 
 export const setScreenshotRadius = async (radiusPercent: number) => {
   await invoke<null>("set_screenshot_radius", { radiusPercent });
+};
+
+export const setScreenshotBackgroundRadius = async (radiusPercent: number) => {
+  await invoke<null>("set_screenshot_background_radius", { radiusPercent });
 };
 
 export const cancelExport = async () => {

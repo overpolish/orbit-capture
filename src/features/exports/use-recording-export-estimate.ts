@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { estimateRecordingExport } from "./api";
 import { mixSignature, VideoExportSettings } from "./recording-export-settings";
+import { defaultScreenshotOutput } from "./screenshot-output";
 import {
   AudioTrackVolume,
   CameraOverlaySettings,
@@ -134,7 +135,7 @@ export function useRecordingExportEstimate({
         includeCamera,
         includePrimaryVideo,
         resolutionScalePercent,
-        screenshotRadiusPercent: 0,
+        screenshotOutput: defaultScreenshotOutput(1, 1),
       })
         .then((bytes) => {
           if (disposed) return;

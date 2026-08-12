@@ -10,9 +10,13 @@ import { useExportWindowShortcuts } from "./use-export-window-shortcuts";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 function ShortcutPreview() {
+  const [isCropping, setIsCropping] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const playhead = useMemo(() => createPlayhead(), []);
   useExportWindowShortcuts({
+    onToggleCrop: () => {
+      setIsCropping((cropping) => !cropping);
+    },
     onTogglePlayback: () => {
       setIsPlaying((playing) => !playing);
     },
@@ -25,7 +29,10 @@ function ShortcutPreview() {
         className="flex h-48 w-96 items-center justify-center rounded-md bg-content/75 outline-none"
         tabIndex={0}
       >
-        <span role="status">{isPlaying ? "Playing" : "Paused"}</span>
+        <span role="status">
+          {isPlaying ? "Playing" : "Paused"} ·{" "}
+          {isCropping ? "Crop on" : "Crop off"}
+        </span>
       </div>
       <TimelineRuler
         durationMs={5_000}
@@ -46,7 +53,7 @@ function ShortcutPreview() {
 const meta = {
   component: ShortcutPreview,
   parameters: { layout: "centered" },
-  title: "Export/Window Shortcuts",
+  title: "Features/Window Shortcuts",
 } satisfies Meta<typeof ShortcutPreview>;
 
 export default meta;

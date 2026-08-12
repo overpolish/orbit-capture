@@ -22,6 +22,8 @@ const keyboardVariants = tv({
     variant: {
       default: "bg-neutral text-muted",
       ghost: "bg-transparent text-muted",
+      tooltip:
+        "bg-neutral-700 text-neutral-300 dark:bg-neutral-200 dark:text-neutral-700",
     },
   },
 });

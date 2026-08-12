@@ -34,12 +34,11 @@ pub async fn save_export(
     include_camera,
     include_primary_video,
     resolution_scale_percent,
-    screenshot_radius_percent,
+    screenshot_output,
   } = options;
   if compression > 4 || camera_compression > 4 {
     return Err("Compression must be between 0 and 4".to_owned());
   }
-  let screenshot_radius_percent = remember_screenshot_radius(&app, screenshot_radius_percent)?;
   let stem =
     sanitize_file_stem(&file_stem).ok_or_else(|| "That file name cannot be used".to_owned())?;
   let directory =
@@ -48,6 +47,8 @@ pub async fn save_export(
   let artifact_id = match &artifact {
     ExportArtifact::Screenshot { id, .. } | ExportArtifact::Recording { id, .. } => *id,
   };
+  let screenshot_preference =
+    matches!(&artifact, ExportArtifact::Screenshot { .. }).then(|| screenshot_output.clone());
   let cancelled = Arc::new(AtomicBool::new(false));
   {
     let state = app.state::<ExportState>();
@@ -85,8 +86,8 @@ pub async fn save_export(
           let path = unique_path(&writing, &stem, SCREENSHOT_EXTENSION, &|candidate| {
             candidate.exists()
           });
-          let rounded = rounded_corners(image, screenshot_radius_percent);
-          std::fs::write(&path, encode_png(&rounded)?).map_err(|error| error.to_string())?;
+          let composed = compose_screenshot(image, &screenshot_output)?;
+          std::fs::write(&path, encode_png(&composed)?).map_err(|error| error.to_string())?;
           Ok(Some(path))
         }
         ExportArtifact::Recording {
@@ -364,6 +365,11 @@ pub async fn save_export(
   };
 
   set_export_directory(app.clone(), directory)?;
+  if let Some(output) = screenshot_preference {
+    if let Err(error) = remember_screenshot_output(&app, output) {
+      eprintln!("Could not remember screenshot export settings: {error}");
+    }
+  }
   if let Err(error) = remember_cursor_effects(&app, cursor_effects) {
     eprintln!("Could not remember cursor export settings: {error}");
   }

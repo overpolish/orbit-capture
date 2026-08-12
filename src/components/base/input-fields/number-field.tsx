@@ -38,7 +38,9 @@ export type NumberFieldProps = AriaNumberFieldProps &
   VariantProps<typeof numberFieldVariants> & {
     centered?: boolean;
     className?: string;
+    fieldClassName?: string;
     label?: string;
+    labelClassName?: string;
     leftSection?: React.ReactNode;
     rightAligned?: boolean;
     rightSection?: React.ReactNode;
@@ -53,7 +55,9 @@ export const NumberField = ({
   centered,
   className,
   defaultValue,
+  fieldClassName,
   label,
+  labelClassName,
   leftSection,
   maxValue,
   minValue,
@@ -217,11 +221,16 @@ export const NumberField = ({
       step={step}
       value={resolvedValue}
     >
-      {label && <Label className={_label()}>{label}</Label>}
+      {label && (
+        <Label className={_label({ className: labelClassName })}>{label}</Label>
+      )}
 
       <Group
         className={field({
-          className: scrubbable ? "cursor-ew-resize" : undefined,
+          className: [
+            scrubbable ? "cursor-ew-resize" : undefined,
+            fieldClassName,
+          ],
         })}
         onPointerDown={handlePointerDown}
         ref={groupRef}

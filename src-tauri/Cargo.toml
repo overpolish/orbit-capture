@@ -40,6 +40,9 @@ png = "0.18.1"
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-global-shortcut = "2.3.2"
 tauri-plugin-autostart = "2.5.1"
+wgpu = "30.0.0"
+pollster = "1.0.1"
+bytemuck = { version = "1.25.2", features = ["derive"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 xcap = { version = "0.9.8", features = ["wgc"] }

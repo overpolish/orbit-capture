@@ -57,7 +57,7 @@ export const snapCameraFramePosition = ({
 }: {
   frame: OverlayRect;
   position: { x: number; y: number };
-  screen: RecordingPreviewPane;
+  screen: Pick<RecordingPreviewPane, "height" | "width">;
   paddingPercent?: number;
 }) => {
   const maximumX = Math.max(0, screen.width - frame.width);

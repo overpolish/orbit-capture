@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { RndResizeStartCallback } from "react-rnd";
+import { PixelMagnifierDirection } from "../../components/shared/canvas-tools/pixel-magnifier";
 
-export type ResizeDirection = Parameters<RndResizeStartCallback>[1];
+export type ResizeDirection = PixelMagnifierDirection;

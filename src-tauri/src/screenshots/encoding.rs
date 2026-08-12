@@ -13,7 +13,6 @@ use super::CapturedImage;
 
 /// The largest palette an 8-bit indexed PNG can carry.
 const MAX_PALETTE: usize = 256;
-
 /// Applies an antialiased alpha mask without changing the captured dimensions.
 pub fn rounded_corners(image: &CapturedImage, radius_percent: f64) -> CapturedImage {
   let radius = f64::from(image.width.min(image.height)) * radius_percent.clamp(0.0, 50.0) / 100.0;

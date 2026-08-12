@@ -47,12 +47,22 @@ export const dimensionsAtRatio = (
   ratio: AspectRatioParts,
 ) => {
   const { ratioHeight, ratioWidth } = ratio;
-  const divisor = editingDimension === "width" ? ratioWidth : ratioHeight;
-  const multiplier = Math.max(1, Math.round(value / divisor));
-  return {
-    height: multiplier * ratioHeight,
-    width: multiplier * ratioWidth,
-  };
+  const editedValue = Math.max(1, Math.round(value));
+  return editingDimension === "width"
+    ? {
+        height: Math.max(
+          1,
+          Math.round((editedValue * ratioHeight) / ratioWidth),
+        ),
+        width: editedValue,
+      }
+    : {
+        height: editedValue,
+        width: Math.max(
+          1,
+          Math.round((editedValue * ratioWidth) / ratioHeight),
+        ),
+      };
 };
 
 export const closestDimensionsAtRatio = (

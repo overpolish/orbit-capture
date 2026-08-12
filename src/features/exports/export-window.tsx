@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   browseExportDirectory,
@@ -11,6 +11,7 @@ import {
   copyExportToClipboard,
   saveExport,
   setExportDirectory,
+  setScreenshotBackgroundRadius,
   setScreenshotRadius,
 } from "./api";
 import { ExportPanel } from "./components/export-panel";
@@ -20,6 +21,11 @@ import {
   recordingSavePlan,
 } from "./recording-export-settings";
 import { sourceScalePercent } from "./resolution";
+import {
+  defaultScreenshotOutput,
+  resetScreenshotLayout,
+  ScreenshotOutputSettings,
+} from "./screenshot-output";
 import { selectArtifact, selectDirectory, useExportStore } from "./store";
 import {
   AudioTrackVolume,
@@ -29,6 +35,10 @@ import {
   RecordingTrackId,
   RecordingVideoTrackId,
 } from "./types";
+import {
+  ExportEditState,
+  useExportEditHistory,
+} from "./use-export-edit-history";
 import { useExportPreviewImage } from "./use-export-preview-image";
 import { useExportProgress } from "./use-export-progress";
 import { useRecordingExportEstimate } from "./use-recording-export-estimate";
@@ -43,11 +53,18 @@ const DEFAULT_CURSOR_EFFECTS: CursorEffectSettings = {
   sizePercent: 100,
   smoothMovement: true,
 };
+
 export function ExportWindow() {
   const artifact = useExportStore(selectArtifact);
   const directory = useExportStore(selectDirectory);
   const persistedScreenshotRadius = useExportStore(
     (state) => state.snapshot.screenshotRadiusPercent,
+  );
+  const persistedScreenshotBackgroundRadius = useExportStore(
+    (state) => state.snapshot.screenshotBackgroundRadiusPercent,
+  );
+  const persistedScreenshotOutput = useExportStore(
+    (state) => state.snapshot.screenshotOutput,
   );
   const persistedCursorEffects = useExportStore(
     (state) => state.snapshot.cursorEffects,
@@ -64,6 +81,8 @@ export function ExportWindow() {
     useState(100);
   const [resolutionScalePercent, setResolutionScalePercent] = useState(100);
   const [screenshotRadiusPercent, setScreenshotRadiusPercent] = useState(0);
+  const [screenshotOutput, setScreenshotOutput] =
+    useState<ScreenshotOutputSettings>(() => defaultScreenshotOutput(1, 1));
   const [isSaving, setIsSaving] = useState(false);
   const [isCancelingSave, setIsCancelingSave] = useState(false);
   const [trackSelection, setTrackSelection] = useState<{
@@ -83,6 +102,7 @@ export function ExportWindow() {
     values: AudioTrackVolume[];
   } | null>(null);
   const screenshotRadiusRef = useRef(0);
+  const screenshotBackgroundRadiusRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
 
   const suggestedFileStem = artifact?.suggestedFileStem ?? "";
@@ -169,6 +189,60 @@ export function ExportWindow() {
               : null
       : null;
   const selectedStreamIndex = recordingAudioStreamIndex(selectedTrackId);
+  const editState = useMemo<ExportEditState>(
+    () => ({
+      audioTrackVolumes,
+      bakeCamera,
+      cameraCompression,
+      cameraOverlay,
+      cameraResolutionScalePercent,
+      collapseAudio,
+      compression,
+      cursorEffects,
+      resolutionScalePercent,
+      screenshotOutput,
+      trackSelection,
+      videoTrackSelection,
+    }),
+    [
+      audioTrackVolumes,
+      bakeCamera,
+      cameraCompression,
+      cameraOverlay,
+      cameraResolutionScalePercent,
+      collapseAudio,
+      compression,
+      cursorEffects,
+      resolutionScalePercent,
+      screenshotOutput,
+      trackSelection,
+      videoTrackSelection,
+    ],
+  );
+  const applyEditState = useCallback((next: ExportEditState) => {
+    setAudioTrackVolumes(next.audioTrackVolumes);
+    setBakeCamera(next.bakeCamera);
+    setCameraCompression(next.cameraCompression);
+    setCameraOverlay(next.cameraOverlay);
+    setCameraResolutionScalePercent(next.cameraResolutionScalePercent);
+    setCollapseAudio(next.collapseAudio);
+    setCompression(next.compression);
+    setCursorEffects(next.cursorEffects);
+    setResolutionScalePercent(next.resolutionScalePercent);
+    screenshotRadiusRef.current = next.screenshotOutput.radiusPercent;
+    screenshotBackgroundRadiusRef.current =
+      next.screenshotOutput.backgroundRadiusPercent;
+    setScreenshotRadiusPercent(next.screenshotOutput.radiusPercent);
+    setScreenshotOutput(next.screenshotOutput);
+    setTrackSelection(next.trackSelection);
+    setVideoTrackSelection(next.videoTrackSelection);
+    setError(null);
+  }, []);
+  useExportEditHistory({
+    apply: applyEditState,
+    resetKey: artifactId,
+    state: editState,
+  });
   const { estimatedSizeBytes, isEstimatingSize } = useRecordingExportEstimate({
     artifact,
     audioTrackVolumes: currentAudioTrackVolumes,
@@ -207,7 +281,31 @@ export function ExportWindow() {
     setCameraResolutionScalePercent(100);
     setResolutionScalePercent(originalResolutionScale);
     screenshotRadiusRef.current = persistedScreenshotRadius;
+    screenshotBackgroundRadiusRef.current = persistedScreenshotBackgroundRadius;
     setScreenshotRadiusPercent(persistedScreenshotRadius);
+    const screenshotDefaults = defaultScreenshotOutput(
+      artifact?.width ?? 1,
+      artifact?.height ?? 1,
+      {
+        background: persistedScreenshotBackgroundRadius,
+        screenshot: persistedScreenshotRadius,
+      },
+    );
+    setScreenshotOutput(
+      artifact?.kind === "screenshot" && persistedScreenshotOutput
+        ? resetScreenshotLayout(
+            {
+              ...screenshotDefaults,
+              ...persistedScreenshotOutput,
+              backgroundRadiusPercent: persistedScreenshotBackgroundRadius,
+              radiusPercent: persistedScreenshotRadius,
+            },
+            artifact,
+          )
+        : artifact?.kind === "screenshot"
+          ? resetScreenshotLayout(screenshotDefaults, artifact)
+          : screenshotDefaults,
+    );
     /* eslint-enable @eslint-react/set-state-in-effect */
     // A cancelled or failed save restores the same artifact through a fresh
     // snapshot. Its controls are still the user's current editing session and
@@ -301,7 +399,7 @@ export function ExportWindow() {
         setError(null);
       }}
       onCopy={() => {
-        copyExportToClipboard(screenshotRadiusPercent).catch(report("copy"));
+        copyExportToClipboard(screenshotOutput).catch(report("copy"));
       }}
       onCursorEffectsChange={setCursorEffects}
       onEnabledTracksChange={onEnabledTracksChange}
@@ -351,7 +449,7 @@ export function ExportWindow() {
         saveExport({
           ...plan.options,
           fileStem,
-          screenshotRadiusPercent,
+          screenshotOutput,
         })
           .then((path) => {
             if (path === null) {
@@ -371,9 +469,32 @@ export function ExportWindow() {
           })
           .catch(report("save"));
       }}
+      onScreenshotBackgroundRadiusChange={(value) => {
+        screenshotBackgroundRadiusRef.current = value;
+        setScreenshotOutput((current) => ({
+          ...current,
+          backgroundRadiusPercent: value,
+        }));
+        setError(null);
+      }}
+      onScreenshotBackgroundRadiusChangeEnd={() => {
+        setScreenshotBackgroundRadius(
+          screenshotBackgroundRadiusRef.current,
+        ).catch(report("remember the screenshot background radius for"));
+      }}
+      onScreenshotOutputChange={(settings) => {
+        screenshotRadiusRef.current = settings.radiusPercent;
+        setScreenshotRadiusPercent(settings.radiusPercent);
+        setScreenshotOutput(settings);
+        setError(null);
+      }}
       onScreenshotRadiusChange={(value) => {
         screenshotRadiusRef.current = value;
         setScreenshotRadiusPercent(value);
+        setScreenshotOutput((current) => ({
+          ...current,
+          radiusPercent: value,
+        }));
         setError(null);
       }}
       onScreenshotRadiusChangeEnd={() => {
@@ -404,6 +525,7 @@ export function ExportWindow() {
       resolutionScalePercent={resolutionScalePercent}
       savePhase={saveProgress.phase}
       saveProgress={saveProgress.progress}
+      screenshotOutput={screenshotOutput}
       screenshotRadiusPercent={screenshotRadiusPercent}
       selectedTrack={selectedTrackId}
     />

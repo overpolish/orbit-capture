@@ -41,7 +41,7 @@ const meta: Meta<typeof AudioMeter> = {
   parameters: {
     layout: "centered",
   },
-  title: "Inputs Selection/Audio Meter",
+  title: "Audio Meter",
 };
 
 export default meta;

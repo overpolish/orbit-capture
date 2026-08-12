@@ -13,6 +13,7 @@ const sizes: React.ComponentProps<typeof Keyboard>["size"][] = [
 const variants: React.ComponentProps<typeof Keyboard>["variant"][] = [
   "default",
   "ghost",
+  "tooltip",
 ] as const;
 
 const meta = {

@@ -81,7 +81,7 @@ pub async fn estimate_recording_export(
     include_camera,
     include_primary_video,
     resolution_scale_percent,
-    screenshot_radius_percent: _,
+    screenshot_output: _,
   } = options;
   if compression > 4 || camera_compression > 4 {
     return Err("Compression must be between 0 and 4".to_owned());

@@ -4,6 +4,11 @@
 import { type Meta, type StoryObj } from "@storybook/react-vite";
 import { ComponentProps, useState } from "react";
 
+import {
+  defaultScreenshotOutput,
+  resetScreenshotLayout,
+  ScreenshotOutputSettings,
+} from "../screenshot-output";
 import { ExportArtifact } from "../types";
 
 import { ExportPanel } from "./export-panel";
@@ -21,6 +26,17 @@ const screenshot: ExportArtifact = {
   suggestedFileStem: "Orbit Capture 2026-08-08 at 14.32.05",
   width: 3456,
 };
+const screenshotOutput = defaultScreenshotOutput(3456, 2234);
+const customScreenshotOutput = resetScreenshotLayout(
+  {
+    ...screenshotOutput,
+    backgroundColor: "#172554",
+    height: 1080,
+    radiusPercent: 8,
+    width: 1920,
+  },
+  screenshot,
+);
 
 const recording: Extract<ExportArtifact, { kind: "recording" }> = {
   audioTracks: [
@@ -106,12 +122,14 @@ const meta = {
     artifact: screenshot,
     directory: "/Users/dom/Desktop",
     fileStem: screenshot.suggestedFileStem,
+    previewUrl: screenshotPreview,
+    screenshotOutput,
   },
   component: ExportPanel,
   parameters: {
     layout: "fullscreen",
   },
-  title: "Export/Export Panel",
+  title: "Features/Export Panel",
 } satisfies Meta<typeof ExportPanel>;
 
 export default meta;
@@ -131,18 +149,36 @@ function RoundedScreenshotPanel(args: ComponentProps<typeof ExportPanel>) {
 }
 
 export const RoundedScreenshot: Story = {
-  args: {
-    previewUrl: screenshotPreview,
-    screenshotRadiusPercent: 12,
-  },
+  args: { previewUrl: screenshotPreview, screenshotRadiusPercent: 12 },
   render: (args) => <RoundedScreenshotPanel {...args} />,
+};
+
+function CustomScreenshotPanel(args: ComponentProps<typeof ExportPanel>) {
+  const [settings, setSettings] = useState<ScreenshotOutputSettings>(
+    customScreenshotOutput,
+  );
+  return (
+    <ExportPanel
+      {...args}
+      onScreenshotBackgroundRadiusChange={(backgroundRadiusPercent) => {
+        setSettings((current) => ({ ...current, backgroundRadiusPercent }));
+      }}
+      onScreenshotOutputChange={setSettings}
+      screenshotOutput={settings}
+      screenshotRadiusPercent={settings.radiusPercent}
+    />
+  );
+}
+
+export const CustomScreenshotCanvas: Story = {
+  args: { previewUrl: screenshotPreview },
+  render: (args) => <CustomScreenshotPanel {...args} />,
 };
 
 export const Saving: Story = {
   args: { isSaving: true },
 };
 
-/** A name that has been emptied cannot be saved. */
 export const EmptyName: Story = {
   args: { fileStem: "" },
 };
@@ -151,7 +187,6 @@ export const WithError: Story = {
   args: { error: "That file name cannot be used" },
 };
 
-/** A long path truncates rather than pushing the Choose button off the row. */
 export const LongDestination: Story = {
   args: {
     directory:
@@ -159,7 +194,6 @@ export const LongDestination: Story = {
   },
 };
 
-/** Cancelling clears the artifact, which is what the window then shows. */
 export const NothingPending: Story = {
   args: { artifact: null, fileStem: "" },
 };
@@ -206,7 +240,6 @@ export const RecordingWithCollapsedAudio: Story = {
   render: (args) => <RecordingStoryPanel {...args} />,
 };
 
-/** Export is unavailable once every recorded track has been excluded. */
 export const RecordingWithNothingSelected: Story = {
   args: {
     ...Recording.args,
@@ -216,7 +249,6 @@ export const RecordingWithNothingSelected: Story = {
   },
 };
 
-/** Camera-only capture is the primary movie, not a screen sidecar to bake. */
 export const CameraRecording: Story = {
   args: {
     ...Recording.args,
@@ -348,10 +380,7 @@ export const PreparingRecordingPreview: Story = {
   },
 };
 
-/**
- * A recording recovered from a previous run. Its frames are long gone, so it
- * has neither a poster nor a length - only the file and a name for it.
- */
+/** A recovered recording has only its file and name, not frames or duration. */
 export const RecoveredRecording: Story = {
   args: {
     artifact: {

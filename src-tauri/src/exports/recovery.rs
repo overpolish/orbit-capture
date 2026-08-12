@@ -213,6 +213,16 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
 pub fn initialize(app: &AppHandle) {
   *app
     .state::<ExportState>()
+    .screenshot_output
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_screenshot_output(app);
+  *app
+    .state::<ExportState>()
+    .screenshot_background_radius_percent
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_screenshot_background_radius(app);
+  *app
+    .state::<ExportState>()
     .screenshot_radius_percent
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_screenshot_radius(app);

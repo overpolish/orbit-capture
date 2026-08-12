@@ -137,7 +137,7 @@ const meta = {
     layout: "centered",
   },
   render: (args) => <StatefulOptions {...args} />,
-  title: "Recording/Options",
+  title: "Features/Recording Options",
 } satisfies Meta<typeof RecordingOptions>;
 
 export default meta;

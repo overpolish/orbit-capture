@@ -4,6 +4,7 @@
 import { Button } from "../../../components/base/button/button";
 import { CircularProgressBar } from "../../../components/base/circular-progress-bar/circular-progress-bar";
 import { Overlay } from "../../../components/base/overlay/overlay";
+import { ScreenshotOutputSettings } from "../screenshot-output";
 import {
   AudioTrackVolume,
   CameraOverlaySettings,
@@ -18,6 +19,7 @@ import {
 import { ExportInspector } from "./export-inspector";
 import { RecordingSection, ScreenshotSection } from "./export-preview-section";
 import { ExportTitlebar } from "./export-titlebar";
+import { ScreenshotInspector } from "./screenshot-inspector";
 
 type ExportPanelProps = {
   artifact: ExportArtifact | null;
@@ -60,6 +62,9 @@ type ExportPanelProps = {
   onNeedFullResolution?: () => void;
   onResolutionScaleChange?: (scale: number) => void;
   onSave?: () => void;
+  onScreenshotBackgroundRadiusChange?: (radiusPercent: number) => void;
+  onScreenshotBackgroundRadiusChangeEnd?: () => void;
+  onScreenshotOutputChange?: (settings: ScreenshotOutputSettings) => void;
   onScreenshotRadiusChange?: (radiusPercent: number) => void;
   onScreenshotRadiusChangeEnd?: () => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
@@ -71,6 +76,7 @@ type ExportPanelProps = {
   resolutionScalePercent?: number;
   savePhase?: "camera" | "finalizing" | "recording";
   saveProgress?: number | null;
+  screenshotOutput?: ScreenshotOutputSettings;
   screenshotRadiusPercent?: number;
   selectedTrack?: RecordingTrackId | null;
 };
@@ -122,6 +128,9 @@ export function ExportPanel({
   onNeedFullResolution,
   onResolutionScaleChange,
   onSave,
+  onScreenshotBackgroundRadiusChange,
+  onScreenshotBackgroundRadiusChangeEnd,
+  onScreenshotOutputChange,
   onScreenshotRadiusChange,
   onScreenshotRadiusChangeEnd,
   onSelectedTrackChange,
@@ -133,6 +142,7 @@ export function ExportPanel({
   resolutionScalePercent,
   savePhase = "recording",
   saveProgress = null,
+  screenshotOutput,
   screenshotRadiusPercent = 0,
   selectedTrack = null,
 }: ExportPanelProps) {
@@ -261,14 +271,27 @@ export function ExportPanel({
           selectedTrack={selectedTrack}
         />
       ) : artifact ? (
-        <section className="flex min-h-0 min-w-0 grow bg-black/5 dark:bg-black/25">
+        <section className="grid min-h-0 grow grid-cols-[clamp(320px,28vw,400px)_minmax(0,1fr)]">
+          {screenshotOutput ? (
+            <ScreenshotInspector
+              isSaving={isSaving}
+              onChange={onScreenshotOutputChange}
+              settings={screenshotOutput}
+              sourceHeight={artifact.height}
+              sourceWidth={artifact.width}
+            />
+          ) : null}
           <ScreenshotSection
             artifact={artifact}
+            onBackgroundRadiusChange={onScreenshotBackgroundRadiusChange}
+            onBackgroundRadiusChangeEnd={onScreenshotBackgroundRadiusChangeEnd}
             onNeedFullResolution={onNeedFullResolution}
+            onOutputChange={onScreenshotOutputChange}
             onRadiusChange={onScreenshotRadiusChange}
             onRadiusChangeEnd={onScreenshotRadiusChangeEnd}
             previewUrl={previewUrl}
             radiusPercent={screenshotRadiusPercent}
+            screenshotOutput={screenshotOutput}
           />
         </section>
       ) : (

@@ -70,6 +70,15 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
     .screenshot_radius_percent
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner());
+  let screenshot_background_radius_percent = *state
+    .screenshot_background_radius_percent
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner());
+  let screenshot_output = state
+    .screenshot_output
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .clone();
   let cursor_effects = *state
     .cursor_effects
     .lock()
@@ -79,6 +88,8 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
     cursor_effects,
     directory: current_directory(app),
     screenshot_radius_percent,
+    screenshot_background_radius_percent,
+    screenshot_output,
   }
 }
 

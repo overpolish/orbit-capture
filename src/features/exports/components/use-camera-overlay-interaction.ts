@@ -17,7 +17,7 @@ import {
 } from "../camera-overlay-geometry";
 import { CameraOverlaySettings, RecordingPreviewPane } from "../types";
 
-export type OverlayEdge = "bottom" | "left" | "right" | "top";
+type OverlayEdge = "bottom" | "left" | "right" | "top";
 export type OverlayAction =
   | { kind: "frame" | "whole"; pointerX: number; pointerY: number }
   | {

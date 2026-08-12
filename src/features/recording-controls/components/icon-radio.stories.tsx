@@ -21,7 +21,7 @@ const meta = {
     controls: { exclude: ["icon", "shortcut"] },
     layout: "centered",
   },
-  title: "Start Recording/Icon Option",
+  title: "Icon Option",
 } satisfies Meta<typeof IconRadio>;
 
 export default meta;

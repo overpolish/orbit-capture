@@ -10,7 +10,7 @@ const meta = {
   parameters: {
     layout: "centered",
   },
-  title: "Start Recording/Recording Bar",
+  title: "Features/Recording Bar",
 } satisfies Meta<typeof RecordingBar>;
 
 export default meta;

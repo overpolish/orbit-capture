@@ -251,7 +251,6 @@ export function RegionSelectorWindow() {
 
       {screenshot ? (
         <Magnifier
-          activeHandle={activeHandleRef}
           monitor={selectedMonitor}
           regionRect={{
             height: draft.size.height,

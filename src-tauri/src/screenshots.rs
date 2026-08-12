@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 pub(crate) mod encoding;
+mod mesh;
+mod mesh_gpu;
+mod output;
 #[cfg(target_os = "macos")]
 mod platform;
 #[cfg(target_os = "windows")]
@@ -9,11 +12,19 @@ mod platform_windows;
 #[cfg(test)]
 mod tests;
 
-use std::path::{Path, PathBuf};
+use std::{
+  path::{Path, PathBuf},
+  sync::{Arc, Condvar, Mutex, OnceLock},
+};
 
 use chrono::{Local, NaiveDateTime};
+use image::codecs::jpeg::JpegEncoder;
 use serde::Deserialize;
-use tauri::{image::Image, AppHandle, Manager};
+use tauri::{
+  image::Image,
+  ipc::{Channel, InvokeResponseBody},
+  AppHandle, Manager,
+};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::recording::Region;
@@ -22,6 +33,7 @@ pub(crate) use crate::capture_geometry::physical_capture_rect;
 #[cfg(test)]
 pub(crate) use crate::capture_geometry::CaptureRect;
 pub use encoding::{encode_png, rounded_corners};
+pub use output::{compose_screenshot, ScreenshotOutputSettings};
 
 /// A captured still: straight (non-premultiplied) RGBA8, packed rows, top down.
 /// That is what both the clipboard and the PNG encoder want.
@@ -30,6 +42,133 @@ pub struct CapturedImage {
   pub rgba: Vec<u8>,
   pub width: u32,
   pub height: u32,
+}
+
+struct MeshPreviewRequest {
+  channel: Channel,
+  colors: Vec<String>,
+  height: u32,
+  points: Vec<mesh::MeshGradientPoint>,
+  request_id: u32,
+  seed: u32,
+  warp_percent: f64,
+  width: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshPreviewOptions {
+  colors: Vec<String>,
+  height: u32,
+  points: Vec<mesh::MeshGradientPoint>,
+  request_id: u32,
+  seed: u32,
+  warp_percent: f64,
+  width: u32,
+}
+
+#[derive(Default)]
+pub struct MeshPreviewState {
+  pending: Arc<(Mutex<Option<MeshPreviewRequest>>, Condvar)>,
+  worker: OnceLock<()>,
+}
+
+impl MeshPreviewState {
+  fn submit(&self, request: MeshPreviewRequest) -> Result<(), String> {
+    let pending = Arc::clone(&self.pending);
+    self.worker.get_or_init(|| {
+      std::thread::Builder::new()
+        .name("mesh-preview".to_owned())
+        .spawn(move || mesh_preview_worker(&pending))
+        .expect("the mesh preview worker must start");
+    });
+    let (slot, wake) = &*self.pending;
+    *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(request);
+    wake.notify_one();
+    Ok(())
+  }
+}
+
+fn mesh_preview_worker(pending: &(Mutex<Option<MeshPreviewRequest>>, Condvar)) {
+  loop {
+    let request = {
+      let (slot, wake) = pending;
+      let mut slot = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+      while slot.is_none() {
+        slot = wake
+          .wait(slot)
+          .unwrap_or_else(|poisoned| poisoned.into_inner());
+      }
+      slot.take().expect("a woken mesh worker has a request")
+    };
+    let Ok(canvas) = mesh::mesh_canvas(
+      request.width,
+      request.height,
+      &request.colors,
+      &request.points,
+      request.seed,
+      request.warp_percent,
+    ) else {
+      continue;
+    };
+    // If another request arrived while the GPU was working, skip the obsolete
+    // frame entirely. The worker will pick up only the newest replacement.
+    if pending
+      .0
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner())
+      .is_some()
+    {
+      continue;
+    }
+    let mut jpeg = Vec::new();
+    if JpegEncoder::new_with_quality(&mut jpeg, 94)
+      .encode_image(&canvas)
+      .is_err()
+    {
+      continue;
+    }
+    // Encoding is outside the GPU work, so a newer request may have replaced
+    // this frame in the meantime as well.
+    if pending
+      .0
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner())
+      .is_some()
+    {
+      continue;
+    }
+    let mut payload = Vec::with_capacity(12 + jpeg.len());
+    payload.extend_from_slice(&request.request_id.to_le_bytes());
+    payload.extend_from_slice(&request.width.to_le_bytes());
+    payload.extend_from_slice(&request.height.to_le_bytes());
+    payload.extend_from_slice(&jpeg);
+    let _ = request.channel.send(InvokeResponseBody::Raw(payload));
+  }
+}
+
+/// Queues a native GPU frame for the export window. This uses the same binary
+/// channel architecture as camera and recording previews; the command returns
+/// immediately and only the newest completed request reaches the canvas.
+#[tauri::command]
+pub fn render_mesh_background_preview(
+  state: tauri::State<'_, MeshPreviewState>,
+  options: MeshPreviewOptions,
+  channel: Channel,
+) -> Result<(), String> {
+  if options.width == 0 || options.height == 0 {
+    return Err("The mesh preview dimensions are not valid".to_owned());
+  }
+  state.submit(MeshPreviewRequest {
+    channel,
+    colors: options.colors,
+    height: options.height,
+    points: options.points,
+    request_id: options.request_id,
+    seed: options.seed,
+    warp_percent: options.warp_percent,
+    width: options.width,
+  })
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]

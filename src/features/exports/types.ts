@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import { ScreenshotOutputSettings } from "./screenshot-output";
+
 type ExportArtifactBase = {
   extension: string;
   height: number;
@@ -132,6 +134,8 @@ export type ExportSnapshot = {
   artifact: ExportArtifact | null;
   cursorEffects: CursorEffectSettings;
   directory: string | null;
+  screenshotBackgroundRadiusPercent: number;
+  screenshotOutput: ScreenshotOutputSettings | null;
   screenshotRadiusPercent: number;
 };
 
@@ -145,5 +149,7 @@ export const initialExportSnapshot: ExportSnapshot = {
     smoothMovement: true,
   },
   directory: null,
+  screenshotBackgroundRadiusPercent: 0,
+  screenshotOutput: null,
   screenshotRadiusPercent: 0,
 };

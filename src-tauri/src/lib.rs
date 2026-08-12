@@ -56,6 +56,7 @@ pub fn run() {
     .manage(exports::recording_preview_player::RecordingPreviewPlayerState::default())
     .manage(permissions::PermissionState::default())
     .manage(recording::RecordingState::default())
+    .manage(screenshots::MeshPreviewState::default())
     .manage(settings::GeneralSettingsState::default())
     .manage(shortcuts::ShortcutSettingsState::default())
     .manage(text_recognition::TextRecognitionState::default())
@@ -88,6 +89,7 @@ pub fn run() {
       exports::recording_preview_player::timeline_thumbnails::stream_recording_timeline_thumbnails,
       exports::save::save_export,
       exports::commands::set_export_directory,
+      exports::commands::set_screenshot_background_radius,
       exports::commands::set_screenshot_radius,
       permissions::open_permission_settings,
       permissions::permission_snapshot,
@@ -112,6 +114,7 @@ pub fn run() {
       recording_sources::resize_window,
       recording_sources::restore_window_border,
       screenshots::capture_still,
+      screenshots::render_mesh_background_preview,
       text_recognition::cancel_text_recognition,
       text_recognition::capture_text_region,
       text_recognition::copy_recognized_text,

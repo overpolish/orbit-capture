@@ -11,6 +11,9 @@ import {
   useState,
 } from "react";
 
+import { CanvasToolbar } from "../../components/shared/canvas-tools/canvas-toolbar";
+import { SelectionFrame } from "../../components/shared/canvas-tools/selection-frame";
+import { SelectionOverlay } from "../../components/shared/canvas-tools/selection-overlay";
 import { cn } from "../../lib/styling";
 
 import {
@@ -205,21 +208,7 @@ export function TextRecognitionWindow() {
       )}
 
       {selection && (
-        <div
-          className={cn(
-            "absolute overflow-hidden rounded-sm before:pointer-events-none before:absolute before:inset-0 before:z-10 before:rounded-[inherit] before:border-2 before:border-dashed before:border-white before:content-['']",
-            status === "loading" &&
-              "ocr-shine-border before:border-transparent",
-            status === "ready" && "before:border-info",
-          )}
-          ref={selectionRef}
-          style={{
-            height: selection.height,
-            left: selection.x,
-            top: selection.y,
-            width: selection.width,
-          }}
-        >
+        <SelectionFrame bounds={selection} ref={selectionRef} state={status}>
           {(status === "loading" || status === "ready") && frozenUrl && (
             <>
               <img
@@ -287,40 +276,20 @@ export function TextRecognitionWindow() {
                     setSelectingText(false);
                   }}
                 >
-                  {result.lines.map((line, index) => (
-                    <span
-                      className="pointer-events-none absolute rounded-[2px] bg-info/20 outline outline-1 outline-info/65"
-                      key={`detected-${line.text}-${index.toString()}`}
-                      style={{
-                        height: `${(line.bounds.height * 100).toString()}%`,
-                        left: `${(line.bounds.x * 100).toString()}%`,
-                        top: `${(line.bounds.y * 100).toString()}%`,
-                        width: `${(line.bounds.width * 100).toString()}%`,
-                      }}
-                    />
-                  ))}
-                  {selectionRects(result, [
-                    ...textRanges,
-                    ...(textAnchor && textFocus
-                      ? [orderedRange(textAnchor, textFocus)]
-                      : []),
-                  ]).map((rect, index) => (
-                    <span
-                      className="pointer-events-none absolute rounded-[2px] bg-info/45 outline outline-1 outline-info/80"
-                      key={`${rect.x.toString()}-${rect.y.toString()}-${index.toString()}`}
-                      style={{
-                        height: `${(rect.height * 100).toString()}%`,
-                        left: `${(rect.x * 100).toString()}%`,
-                        top: `${(rect.y * 100).toString()}%`,
-                        width: `${(rect.width * 100).toString()}%`,
-                      }}
-                    />
-                  ))}
+                  <SelectionOverlay
+                    regions={result.lines.map((line) => line.bounds)}
+                    selectedRegions={selectionRects(result, [
+                      ...textRanges,
+                      ...(textAnchor && textFocus
+                        ? [orderedRange(textAnchor, textFocus)]
+                        : []),
+                    ])}
+                  />
                 </div>
               )}
             </>
           )}
-        </div>
+        </SelectionFrame>
       )}
 
       {status === "loading" && selection && (
@@ -340,8 +309,8 @@ export function TextRecognitionWindow() {
       )}
 
       {status === "ready" && result && selection && (
-        <div
-          className="absolute flex max-w-[calc(100vw-16px)] items-center gap-1 rounded-md border border-muted/25 bg-content p-2 shadow-md"
+        <CanvasToolbar
+          className="absolute max-w-[calc(100vw-16px)] p-2"
           style={{
             left: Math.min(selection.x, window.innerWidth - 220),
             top:
@@ -368,7 +337,7 @@ export function TextRecognitionWindow() {
             }}
             onReset={reset}
           />
-        </div>
+        </CanvasToolbar>
       )}
 
       {status !== "ready" && (

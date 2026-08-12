@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { Camera, Image as ImageIcon, Monitor, ZoomIn } from "lucide-react";
+import { ReactNode } from "react";
 
 import { Badge } from "../../../components/base/badge/badge";
 import { NumberField } from "../../../components/base/input-fields/number-field";
@@ -20,15 +21,17 @@ const iconFor = (kind: PreviewBadge["kind"]) => {
 
 export function PreviewToolbar({
   badges,
+  center,
   onZoomChange,
   zoomPercent,
 }: {
   badges: PreviewBadge[];
   onZoomChange: (zoomPercent: number) => void;
   zoomPercent: number;
+  center?: ReactNode;
 }) {
   return (
-    <div className="flex h-9 shrink-0 items-center justify-between border-b border-muted/15 px-3 text-muted">
+    <div className="relative flex h-9 shrink-0 items-center justify-between border-b border-muted/15 px-3 text-muted">
       <div className="flex min-w-0 items-center gap-1.5">
         {badges.map((badge) => {
           return (
@@ -44,6 +47,11 @@ export function PreviewToolbar({
           );
         })}
       </div>
+      {center ? (
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+          {center}
+        </div>
+      ) : null}
       <NumberField
         aria-label="Preview zoom"
         className="w-24 font-light tabular-nums"

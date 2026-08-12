@@ -4,6 +4,7 @@
 import { Copy, Pilcrow, RotateCcw, Trash2, X } from "lucide-react";
 
 import { Button } from "../../components/base/button/button";
+import { CanvasToolbar } from "../../components/shared/canvas-tools/canvas-toolbar";
 import { ConfirmActionButton } from "../../components/shared/confirm-action-button/confirm-action-button";
 import { cn } from "../../lib/styling";
 
@@ -15,9 +16,9 @@ export function TextRecognitionCloseAction({
   onClose: () => void;
 }) {
   return (
-    <div
+    <CanvasToolbar
       className={cn(
-        "absolute left-1/2 flex -translate-x-1/2 items-center rounded-md border border-muted/25 bg-content p-1 shadow-md",
+        "absolute left-1/2 -translate-x-1/2",
         isMac ? "top-12" : "top-2",
       )}
       onPointerDown={(event) => {
@@ -32,7 +33,7 @@ export function TextRecognitionCloseAction({
         idleLabel="Close text recognition"
         onConfirm={onClose}
       />
-    </div>
+    </CanvasToolbar>
   );
 }
 
