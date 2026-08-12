@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use tauri::{LogicalPosition, LogicalSize};
@@ -125,6 +125,7 @@ pub(crate) struct CaptureStartupConfig {
   pub camera: Option<CameraCaptureMode>,
   pub camera_path: Option<PathBuf>,
   pub microphone_id: Option<String>,
+  pub monitor: Arc<super::monitor::RecordingMonitor>,
   pub on_failure: FailureReport,
   pub path: PathBuf,
   pub primary: PrimaryCaptureSource,

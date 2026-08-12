@@ -107,6 +107,7 @@ pub(super) struct CaptureStats {
 #[repr(C)]
 pub(super) struct ScreenOutputInner {
   pub(super) commands: SyncSender<Command>,
+  pub(super) monitor: Arc<crate::recording::monitor::RecordingMonitor>,
   pub(super) stats: Arc<CaptureStats>,
 }
 
@@ -152,6 +153,7 @@ impl ScreenOutputInner {
       self.stats.audio_rejected.fetch_add(1, Ordering::Relaxed);
       return;
     };
+    self.monitor.send_system_audio(&samples);
     let audio = AudioSample {
       samples,
       source_ns,

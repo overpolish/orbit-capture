@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicBool;
 
 use crate::recording_inputs::camera_id;
 
+mod confidence;
 mod device;
 mod output;
 
@@ -40,6 +41,7 @@ impl CameraSpec {
 
 pub(super) struct CameraStream {
   cancelled: Arc<AtomicBool>,
+  confidence: Option<confidence::ConfidenceWorker>,
   worker: Option<JoinHandle<()>>,
 }
 
@@ -48,6 +50,9 @@ impl CameraStream {
     self.cancelled.store(true, Ordering::Release);
     if let Some(worker) = self.worker.take() {
       let _ = worker.join();
+    }
+    if let Some(confidence) = self.confidence.take() {
+      confidence.stop();
     }
   }
 }
@@ -58,6 +63,9 @@ impl Drop for CameraStream {
     if let Some(worker) = self.worker.take() {
       let _ = worker.join();
     }
+    if let Some(confidence) = self.confidence.take() {
+      confidence.stop();
+    }
   }
 }
 
@@ -65,8 +73,11 @@ pub(super) fn start(
   spec: CameraSpec,
   flipped: bool,
   commands: SyncSender<Command>,
+  monitor: Arc<crate::recording::monitor::RecordingMonitor>,
   stats: Arc<CaptureStats>,
 ) -> Result<CameraStream, String> {
+  let confidence = confidence::ConfidenceWorker::spawn(Arc::clone(&monitor))?;
+  let confidence_frames = confidence.sender();
   let cancelled = Arc::new(AtomicBool::new(false));
   let owner_cancelled = Arc::clone(&cancelled);
   let callback_cancelled = Arc::clone(&cancelled);
@@ -74,15 +85,17 @@ pub(super) fn start(
   let worker = std::thread::Builder::new()
     .name("orbit-camera-capture".to_owned())
     .spawn(move || {
-      let result = run_capture(
-        spec,
-        flipped,
-        commands,
-        stats,
+      let result = run_capture(CameraCaptureContext {
         callback_cancelled,
-        started_tx.clone(),
+        commands,
+        confidence_frames,
+        flipped,
+        monitor,
         owner_cancelled,
-      );
+        spec,
+        started: started_tx.clone(),
+        stats,
+      });
       if let Err(error) = result {
         let _ = started_tx.send(Err(error));
       }
@@ -92,30 +105,48 @@ pub(super) fn start(
   match started.recv_timeout(START_TIMEOUT) {
     Ok(Ok(())) => Ok(CameraStream {
       cancelled,
+      confidence: Some(confidence),
       worker: Some(worker),
     }),
     Ok(Err(error)) => {
       cancelled.store(true, Ordering::Release);
       let _ = worker.join();
+      confidence.stop();
       Err(error)
     }
     Err(_) => {
       cancelled.store(true, Ordering::Release);
       let _ = worker.join();
+      confidence.stop();
       Err("The camera did not produce a stable frame in time".to_owned())
     }
   }
 }
 
-fn run_capture(
-  spec: CameraSpec,
-  flipped: bool,
-  commands: SyncSender<Command>,
-  stats: Arc<CaptureStats>,
+struct CameraCaptureContext {
   callback_cancelled: Arc<AtomicBool>,
-  started: mpsc::Sender<Result<(), String>>,
+  commands: SyncSender<Command>,
+  confidence_frames: SyncSender<confidence::CameraFrame>,
+  flipped: bool,
+  monitor: Arc<crate::recording::monitor::RecordingMonitor>,
   owner_cancelled: Arc<AtomicBool>,
-) -> Result<(), String> {
+  spec: CameraSpec,
+  started: mpsc::Sender<Result<(), String>>,
+  stats: Arc<CaptureStats>,
+}
+
+fn run_capture(context: CameraCaptureContext) -> Result<(), String> {
+  let CameraCaptureContext {
+    callback_cancelled,
+    commands,
+    confidence_frames,
+    flipped,
+    monitor,
+    owner_cancelled,
+    spec,
+    started,
+    stats,
+  } = context;
   let mut device = device::resolve(&spec)?;
 
   let input = av::CaptureDeviceInput::with_device(&device).map_err(|error| error.to_string())?;
@@ -130,7 +161,15 @@ fn run_capture(
     .map_err(|error| error.to_string())?;
 
   let queue = dispatch::Queue::serial_with_ar_pool();
-  let delegate = output::create(callback_cancelled, commands, &spec, started, stats);
+  let delegate = output::create(
+    callback_cancelled,
+    commands,
+    confidence_frames,
+    monitor,
+    &spec,
+    started,
+    stats,
+  );
   output.set_sample_buf_delegate(Some(delegate.as_ref()), Some(&queue));
 
   let mut session = av::capture::Session::new();

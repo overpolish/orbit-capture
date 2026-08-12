@@ -2,18 +2,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::super::*;
+use crate::recording::monitor::RecordingMonitor;
 
 pub(super) fn start(
   source: Option<MicrophoneSource>,
   commands: &SyncSender<Command>,
+  monitor: &Arc<RecordingMonitor>,
   stats: &Arc<CaptureStats>,
 ) -> Result<Option<Stream>, String> {
   let Some(source) = source else {
     return Ok(None);
   };
   let sample_commands = commands.clone();
+  let sample_monitor = Arc::clone(monitor);
   let sample_stats = Arc::clone(stats);
-  let on_buffer = Arc::new(move |buffer| {
+  let on_buffer = Arc::new(move |buffer: MicrophoneBuffer| {
+    sample_monitor.send_microphone(&buffer.samples);
     if let Err(TrySendError::Full(_)) = sample_commands.try_send(Command::Microphone(buffer)) {
       sample_stats
         .microphone_dropped

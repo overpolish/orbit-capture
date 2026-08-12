@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 import { RecordingSnapshot, StartRecordingOptions } from "./types";
 
@@ -34,3 +34,14 @@ export const cancelRecording = async () => {
 // the user left it on the next recording.
 export const finishRecordingDockDrag = () =>
   invoke<null>("finish_recording_dock_drag");
+
+export const resizeRecordingDock = (width: number) =>
+  invoke<null>("resize_recording_dock", { width });
+
+export const startRecordingMonitor = (
+  subscriptionId: number,
+  channel: Channel<ArrayBuffer>,
+) => invoke<null>("start_recording_monitor", { channel, subscriptionId });
+
+export const stopRecordingMonitor = (subscriptionId: number) =>
+  invoke<null>("stop_recording_monitor", { subscriptionId });

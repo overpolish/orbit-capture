@@ -5,6 +5,7 @@ use super::super::*;
 use super::writer_thread::{spawn_writer, WriterThread};
 use super::{camera::CameraSpec, session::CameraObjects, writer::VideoSource};
 use crate::recording::encoding::FailureReport;
+use crate::recording::monitor::RecordingMonitor;
 
 pub(super) struct CameraWriterSetup {
   pub first_frame: Option<Receiver<Result<(), String>>>,
@@ -18,6 +19,7 @@ pub(super) fn prepare(
   camera_flipped: bool,
   camera_path: Option<PathBuf>,
   timeline_origin: &Arc<OnceLock<Instant>>,
+  monitor: &Arc<RecordingMonitor>,
   on_failure: &FailureReport,
 ) -> Result<CameraWriterSetup, String> {
   let Some(spec) = spec else {
@@ -62,7 +64,13 @@ pub(super) fn prepare(
     },
     "orbit-camera-writer",
   )?;
-  let stream = camera::start(spec, camera_flipped, commands.clone(), stats)?;
+  let stream = camera::start(
+    spec,
+    camera_flipped,
+    commands.clone(),
+    Arc::clone(monitor),
+    stats,
+  )?;
 
   Ok(CameraWriterSetup {
     first_frame: Some(first_frame),

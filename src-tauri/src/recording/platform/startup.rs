@@ -21,13 +21,14 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
     camera,
     camera_path,
     microphone_id,
+    monitor,
     on_failure,
     path,
     primary,
     system_audio,
   } = config;
   if matches!(primary, PrimaryCaptureSource::Audio) {
-    return audio_only::begin(microphone_id, on_failure, path, system_audio).await;
+    return audio_only::begin(microphone_id, monitor, on_failure, path, system_audio).await;
   }
   let camera_primary = matches!(primary, PrimaryCaptureSource::Camera);
   let camera_flipped = camera.as_ref().is_some_and(|camera| camera.flipped);
@@ -122,6 +123,7 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
     camera_flipped,
     camera_path,
     &timeline_origin,
+    &monitor,
     &on_failure,
   )?;
   let mut primary_camera = None;
@@ -129,6 +131,7 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
   let output = content.as_ref().map(|_| {
     ScreenOutput::with(ScreenOutputInner {
       commands: commands.clone(),
+      monitor: Arc::clone(&monitor),
       stats: Arc::clone(&stats),
     })
   });
@@ -154,7 +157,7 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
     })
     .transpose()?;
 
-  let microphone = microphone_stream::start(microphone_source, &commands, &stats)?;
+  let microphone = microphone_stream::start(microphone_source, &commands, &monitor, &stats)?;
 
   system_audio_streams.start().await?;
   if let Some(stream) = &video_stream {
@@ -171,6 +174,7 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
       spec,
       camera_flipped,
       commands.clone(),
+      Arc::clone(&monitor),
       Arc::clone(&stats),
     )?);
   }

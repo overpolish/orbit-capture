@@ -5,7 +5,9 @@ use super::super::*;
 use cidre::{av, av::capture::VideoDataOutputSampleBufDelegate, objc};
 use std::sync::atomic::AtomicBool;
 
+use super::confidence::CameraFrame;
 use super::CameraSpec;
+use crate::recording::monitor::RecordingMonitor;
 use crate::recording::platform::output::FrameClock;
 
 /// Let exposure, focus, and white balance settle before time zero. A duration
@@ -17,6 +19,8 @@ const WARMUP_MIN_FRAMES: usize = 4;
 pub(super) fn create(
   cancelled: Arc<AtomicBool>,
   commands: SyncSender<Command>,
+  confidence_frames: SyncSender<CameraFrame>,
+  monitor: Arc<RecordingMonitor>,
   spec: &CameraSpec,
   started: mpsc::Sender<Result<(), String>>,
   stats: Arc<CaptureStats>,
@@ -24,10 +28,12 @@ pub(super) fn create(
   CameraOutput::with(CameraOutputInner {
     cancelled,
     commands,
+    confidence_frames,
     expected_height: spec.height,
     expected_width: spec.width,
     first_frame_at: None,
     frame_count: 0,
+    monitor,
     started: Some(started),
     stats,
   })
@@ -37,10 +43,12 @@ pub(super) fn create(
 struct CameraOutputInner {
   cancelled: Arc<AtomicBool>,
   commands: SyncSender<Command>,
+  confidence_frames: SyncSender<CameraFrame>,
   expected_height: u32,
   expected_width: u32,
   first_frame_at: Option<Instant>,
   frame_count: usize,
+  monitor: Arc<RecordingMonitor>,
   started: Option<mpsc::Sender<Result<(), String>>>,
   stats: Arc<CaptureStats>,
 }
@@ -75,6 +83,11 @@ impl CameraOutputInner {
 
     if let Some(started) = self.started.take() {
       let _ = started.send(Ok(()));
+    }
+    if self.monitor.is_subscribed() {
+      let _ = self
+        .confidence_frames
+        .try_send(CameraFrame(image.retained()));
     }
     let clock = time_to_ns(sample.pts()).map_or(FrameClock::Wall, FrameClock::Source);
     let frame = Frame {

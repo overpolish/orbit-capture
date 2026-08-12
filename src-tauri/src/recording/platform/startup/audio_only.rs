@@ -6,10 +6,12 @@ use super::super::*;
 use super::audio_stream;
 use super::microphone_stream;
 use crate::recording::encoding::FailureReport;
+use crate::recording::monitor::RecordingMonitor;
 use crate::recording::SystemAudioSelection;
 
 pub(super) async fn begin(
   microphone_id: Option<String>,
+  monitor: Arc<RecordingMonitor>,
   on_failure: FailureReport,
   path: PathBuf,
   system_audio: SystemAudioSelection,
@@ -46,6 +48,7 @@ pub(super) async fn begin(
   let output = content.as_ref().map(|_| {
     ScreenOutput::with(ScreenOutputInner {
       commands: commands.clone(),
+      monitor: Arc::clone(&monitor),
       stats: Arc::clone(&stats),
     })
   });
@@ -57,7 +60,7 @@ pub(super) async fn begin(
     &queue,
     None,
   )?;
-  let microphone = microphone_stream::start(microphone_source, &commands, &stats)?;
+  let microphone = microphone_stream::start(microphone_source, &commands, &monitor, &stats)?;
   system_audio_streams.start().await?;
   let timeline_origin = Arc::new(OnceLock::new());
   let begin_at = Instant::now();

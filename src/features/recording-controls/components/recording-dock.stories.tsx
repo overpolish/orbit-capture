@@ -46,6 +46,22 @@ export const Recording: Story = {
   args: { elapsedMs: 42_000, status: "recording" },
 };
 
+export const RecordingWithConfidenceChecks: Story = {
+  args: {
+    elapsedMs: 42_000,
+    monitor: {
+      cameraCanvasRef: { current: null },
+      hasCamera: true,
+      hasCameraFrame: false,
+      hasMicrophone: true,
+      hasSystemAudio: true,
+      microphoneDecibels: -14,
+      systemAudioDecibels: -24,
+    },
+    status: "recording",
+  },
+};
+
 export const RecordingForHours: Story = {
   args: { elapsedMs: 4_215_000, status: "recording" },
 };

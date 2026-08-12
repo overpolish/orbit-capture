@@ -3,7 +3,7 @@
 
 use std::{
   path::PathBuf,
-  sync::mpsc::Receiver,
+  sync::{mpsc::Receiver, Arc},
   time::{Duration, Instant},
 };
 
@@ -183,6 +183,12 @@ pub(super) fn begin_capture(
   });
 
   crate::camera_preview::stop_all(app);
+  let monitor = Arc::clone(&state(app).monitor);
+  monitor.configure(
+    options.system_audio,
+    options.microphone_id.is_some(),
+    options.camera_id.is_some(),
+  );
   let primary = match options.mode {
     RecordingMode::Screen => PrimaryCaptureSource::Screen {
       fps: options.fps,
@@ -213,6 +219,7 @@ pub(super) fn begin_capture(
     camera,
     camera_path: camera_path.clone(),
     microphone_id: options.microphone_id.clone(),
+    monitor,
     on_failure,
     path: output_path.clone(),
     primary,

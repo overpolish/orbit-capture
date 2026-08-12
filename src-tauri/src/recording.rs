@@ -5,6 +5,7 @@ pub(crate) mod cursor;
 mod encoding;
 #[cfg(target_os = "macos")]
 mod microphone;
+mod monitor;
 #[cfg(target_os = "macos")]
 mod platform;
 #[cfg(not(target_os = "macos"))]
@@ -43,6 +44,20 @@ pub(crate) use types::CameraCaptureMode;
 use types::DEFAULT_FPS;
 pub(crate) use types::{CaptureStartupConfig, PrimaryCaptureSource};
 use ui::{prepare_windows, restore_windows, show_recording_ui};
+
+#[tauri::command]
+pub fn start_recording_monitor(
+  state: State<'_, RecordingState>,
+  subscription_id: u64,
+  channel: tauri::ipc::Channel,
+) {
+  state.monitor.subscribe(subscription_id, channel);
+}
+
+#[tauri::command]
+pub fn stop_recording_monitor(state: State<'_, RecordingState>, subscription_id: u64) {
+  state.monitor.unsubscribe(subscription_id);
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle. Each entry point validates before it causes any side effect, and

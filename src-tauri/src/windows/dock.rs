@@ -18,7 +18,8 @@ use tauri::{
 use super::{geometry::monitor_with_most_overlap, platform, WindowLabel};
 
 const RECORDING_DOCK_POSITION_FILE: &str = "recording-dock-position.json";
-const RECORDING_DOCK_WIDTH: f64 = 216.0;
+const RECORDING_DOCK_MIN_WIDTH: f64 = 198.0;
+const RECORDING_DOCK_MAX_WIDTH: f64 = 320.0;
 const RECORDING_DOCK_HEIGHT: f64 = 44.0;
 const RECORDING_DOCK_TOP_GAP: f64 = 8.0;
 
@@ -132,16 +133,11 @@ fn recording_dock_local_position(
 
 fn recording_dock_position(
   monitor: &Monitor,
+  dock_size: PhysicalSize<u32>,
   offset: Option<RecordingDockOffset>,
 ) -> PhysicalPosition<i32> {
   let scale = monitor.scale_factor();
   let work_area = monitor.work_area();
-  // Derived from the target monitor's scale rather than read back from the
-  // window, whose physical size still belongs to the monitor it is leaving.
-  let dock_size = PhysicalSize {
-    width: (RECORDING_DOCK_WIDTH * scale).round() as u32,
-    height: (RECORDING_DOCK_HEIGHT * scale).round() as u32,
-  };
   let (x, y) = recording_dock_local_position(work_area.size, dock_size, scale, offset);
 
   PhysicalPosition {
@@ -154,16 +150,17 @@ pub fn show_recording_dock(app: &AppHandle) -> tauri::Result<()> {
   let dock = app
     .get_webview_window(WindowLabel::RecordingDock.as_str())
     .ok_or_else(|| tauri::Error::WindowNotFound)?;
-  dock.set_size(LogicalSize::new(
-    RECORDING_DOCK_WIDTH,
-    RECORDING_DOCK_HEIGHT,
-  ))?;
-
   if let Some(monitor) = recording_dock_monitor(app)? {
     let offset = *RECORDING_DOCK_OFFSET
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let position = recording_dock_position(&monitor, offset);
+    let scale = monitor.scale_factor();
+    let logical_size = dock.outer_size()?.to_logical::<f64>(dock.scale_factor()?);
+    let dock_size = PhysicalSize::new(
+      (logical_size.width * scale).round() as u32,
+      (RECORDING_DOCK_HEIGHT * scale).round() as u32,
+    );
+    let position = recording_dock_position(&monitor, dock_size, offset);
     dock.set_position(position)?;
     *RECORDING_DOCK_PLACED
       .lock()
@@ -172,6 +169,45 @@ pub fn show_recording_dock(app: &AppHandle) -> tauri::Result<()> {
 
   platform::show(&dock)?;
   platform::restore_recording_level(&dock)
+}
+
+#[tauri::command]
+pub fn resize_recording_dock(app: AppHandle, width: f64) -> Result<(), String> {
+  if !width.is_finite() {
+    return Err("The recording pill width must be finite".to_owned());
+  }
+
+  let to_message = |error: tauri::Error| error.to_string();
+  let dock = app
+    .get_webview_window(WindowLabel::RecordingDock.as_str())
+    .ok_or_else(|| "The recording pill is unavailable".to_owned())?;
+  let visible = dock.is_visible().map_err(to_message)?;
+  let old_position = dock.outer_position().map_err(to_message)?;
+  let old_size = dock.outer_size().map_err(to_message)?;
+  dock
+    .set_size(LogicalSize::new(
+      width
+        .ceil()
+        .clamp(RECORDING_DOCK_MIN_WIDTH, RECORDING_DOCK_MAX_WIDTH),
+      RECORDING_DOCK_HEIGHT,
+    ))
+    .map_err(to_message)?;
+
+  if visible {
+    let new_size = dock.outer_size().map_err(to_message)?;
+    let centred_position = PhysicalPosition::new(
+      old_position.x + (old_size.width as i32 - new_size.width as i32) / 2,
+      old_position.y,
+    );
+    dock.set_position(centred_position).map_err(to_message)?;
+    contain_recording_dock(&app, &dock).map_err(to_message)?;
+    let position = dock.outer_position().map_err(to_message)?;
+    *RECORDING_DOCK_PLACED
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(position);
+  }
+
+  Ok(())
 }
 
 /// Clamps the pill into the work area it mostly sits on, so a drag cannot park
@@ -303,92 +339,4 @@ pub fn hide_recording_dock(app: &AppHandle) -> tauri::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-  use super::*;
-
-  const DOCK: PhysicalSize<u32> = PhysicalSize {
-    width: 216,
-    height: 44,
-  };
-  const WORK_AREA: PhysicalSize<u32> = PhysicalSize {
-    width: 1440,
-    height: 850,
-  };
-
-  #[test]
-  fn centres_the_pill_below_the_work_area_top_when_it_was_never_dragged() {
-    let (x, y) = recording_dock_local_position(WORK_AREA, DOCK, 1.0, None);
-    assert_eq!(x, (1440 - 216) / 2);
-    assert_eq!(y, RECORDING_DOCK_TOP_GAP as i32);
-  }
-
-  #[test]
-  fn scales_the_default_gap_with_the_monitor() {
-    let work_area = PhysicalSize {
-      width: 2880,
-      height: 1700,
-    };
-    let dock = PhysicalSize {
-      width: 432,
-      height: 88,
-    };
-    let (x, y) = recording_dock_local_position(work_area, dock, 2.0, None);
-    assert_eq!(x, (2880 - 432) / 2);
-    assert_eq!(y, (RECORDING_DOCK_TOP_GAP * 2.0) as i32);
-  }
-
-  #[test]
-  fn applies_a_saved_offset_relative_to_the_work_area() {
-    let offset = Some(RecordingDockOffset { x: 200.0, y: 60.0 });
-    let (x, y) = recording_dock_local_position(WORK_AREA, DOCK, 1.0, offset);
-    assert_eq!((x, y), (200, 60));
-  }
-
-  #[test]
-  fn keeps_a_saved_offset_the_same_visual_distance_on_a_retina_monitor() {
-    // The same logical offset, applied to a 2x display, has to land twice as
-    // far along in physical pixels to look identical.
-    let offset = Some(RecordingDockOffset { x: 200.0, y: 60.0 });
-    let work_area = PhysicalSize {
-      width: 2880,
-      height: 1700,
-    };
-    let dock = PhysicalSize {
-      width: 432,
-      height: 88,
-    };
-    let (x, y) = recording_dock_local_position(work_area, dock, 2.0, offset);
-    assert_eq!((x, y), (400, 120));
-  }
-
-  #[test]
-  fn clamps_a_saved_offset_onto_a_smaller_monitor() {
-    let offset = Some(RecordingDockOffset {
-      x: 2_000.0,
-      y: 1_400.0,
-    });
-    let work_area = PhysicalSize {
-      width: 1280,
-      height: 700,
-    };
-    let (x, y) = recording_dock_local_position(work_area, DOCK, 1.0, offset);
-    assert_eq!((x, y), (1280 - 216, 700 - 44));
-  }
-
-  #[test]
-  fn clamps_a_negative_offset_back_inside_the_work_area() {
-    let offset = Some(RecordingDockOffset { x: -50.0, y: -80.0 });
-    let (x, y) = recording_dock_local_position(WORK_AREA, DOCK, 1.0, offset);
-    assert_eq!((x, y), (0, 0));
-  }
-
-  #[test]
-  fn keeps_a_pill_wider_than_its_work_area_at_the_origin() {
-    let work_area = PhysicalSize {
-      width: 100,
-      height: 20,
-    };
-    let (x, y) = recording_dock_local_position(work_area, DOCK, 1.0, None);
-    assert_eq!((x, y), (0, 0));
-  }
-}
+mod tests;

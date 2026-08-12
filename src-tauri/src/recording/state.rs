@@ -4,14 +4,17 @@
 use std::{
   sync::{
     atomic::{AtomicU64, Ordering},
-    Mutex, RwLock,
+    Arc, Mutex, RwLock,
   },
   time::{SystemTime, UNIX_EPOCH},
 };
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use super::{session::CaptureHandles, RecordingMode, RecordingSnapshot, RecordingStatus};
+use super::{
+  monitor::RecordingMonitor, session::CaptureHandles, RecordingMode, RecordingSnapshot,
+  RecordingStatus,
+};
 
 const RECORDING_STATE_EVENT: &str = "recording://state";
 
@@ -19,6 +22,7 @@ const RECORDING_STATE_EVENT: &str = "recording://state";
 pub struct RecordingState {
   pub(super) snapshot: RwLock<RecordingSnapshot>,
   pub(super) handles: Mutex<Option<CaptureHandles>>,
+  pub(super) monitor: Arc<RecordingMonitor>,
   generation: AtomicU64,
 }
 

@@ -137,7 +137,7 @@
         "label": "recording-dock",
         "title": "Orbit Capture Recording Dock",
         "url": "/recording-dock",
-        "width": 216,
+        "width": 198,
         "height": 44,
         "acceptFirstMouse": true,
         "alwaysOnTop": true,
