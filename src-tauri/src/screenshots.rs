@@ -43,6 +43,15 @@ pub enum ScreenshotTarget {
   Region { monitor_id: u32, region: Region },
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ScreenshotDestination {
+  Export,
+  #[default]
+  Clipboard,
+  Both,
+}
+
 /// The naming macOS's own `screencapture` uses, which is the least surprising
 /// thing to find sitting on a Desktop. Recordings are named the same way, from
 /// the moment they started, so a session's files sit together in order.
@@ -124,19 +133,23 @@ pub async fn capture_still(
   app: AppHandle,
   target: ScreenshotTarget,
   show_cursor: bool,
-  to_clipboard: bool,
+  destination: ScreenshotDestination,
 ) -> Result<Option<PathBuf>, String> {
   let image = capture(&app, target, show_cursor).await?;
 
-  if to_clipboard {
+  if matches!(
+    destination,
+    ScreenshotDestination::Clipboard | ScreenshotDestination::Both
+  ) {
     // The clipboard takes the raw pixels, so there is nothing to encode.
     app
       .clipboard()
       .write_image(&Image::new(&image.rgba, image.width, image.height))
       .map_err(|error| error.to_string())?;
-    let _ = crate::windows::hide_recording_ui(app.clone());
-
-    return Ok(None);
+    if matches!(destination, ScreenshotDestination::Clipboard) {
+      let _ = crate::windows::hide_recording_ui(app.clone());
+      return Ok(None);
+    }
   }
 
   // With the clipboard off, the export window takes over: the user names the

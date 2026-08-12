@@ -9,6 +9,7 @@
     "recording-source-selector",
     "region-selector",
     "recording-options",
+    "settings",
     "standalone-listbox",
     "permissions"
   ],

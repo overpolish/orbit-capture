@@ -70,6 +70,7 @@ function DiscardButton({ isDisabled, onDiscard }: DiscardButtonProps) {
 }
 
 type RecordingDockProps = {
+  countdownSeconds?: number;
   elapsedMs?: number;
   monitor?: RecordingMonitorSnapshot;
   onDiscard?: () => void;
@@ -81,6 +82,7 @@ type RecordingDockProps = {
 };
 
 export function RecordingDock({
+  countdownSeconds = 0,
   elapsedMs = 0,
   monitor,
   onDiscard,
@@ -130,12 +132,26 @@ export function RecordingDock({
         aria-label={
           status === "starting" ? "Starting recording" : "Finishing recording"
         }
-        className="z-60 gap-2 rounded-[10px] bg-content/70 text-xs font-semibold text-content-fg"
+        className={`z-60 rounded-[10px] bg-content/70 text-content-fg ${countdownSeconds > 0 ? "" : "gap-2 text-xs font-semibold"}`}
         contained
         isOpen={isBusy}
       >
-        <LoaderCircle className="animate-spin text-muted" size={ICON_SIZE} />
-        {status === "starting" ? "Starting" : "Finishing"}
+        {status === "starting" && countdownSeconds > 0 ? (
+          <ContentRotate
+            className="text-2xl font-semibold tabular-nums"
+            contentKey={String(countdownSeconds)}
+          >
+            {countdownSeconds}
+          </ContentRotate>
+        ) : (
+          <>
+            <LoaderCircle
+              className="transform-gpu animate-spin text-muted"
+              size={ICON_SIZE}
+            />
+            {status === "starting" ? "Starting" : "Finishing"}
+          </>
+        )}
       </Overlay>
       <div
         className="flex h-full shrink-0 cursor-grab items-center pl-0.5 text-muted"

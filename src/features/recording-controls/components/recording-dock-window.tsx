@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useCallback, useRef } from "react";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { useCallback, useRef, useEffect, useState } from "react";
 
+import { getGeneralSettings } from "../../settings/api";
+import { GeneralSettings } from "../../settings/types";
 import {
   cancelRecording,
   finishRecordingDockDrag,
@@ -22,9 +25,10 @@ const report = (action: string) => (error: unknown) => {
 };
 
 export function RecordingDockWindow() {
+  const [showConfidenceChecks, setShowConfidenceChecks] = useState(true);
   const snapshot = useRecordingStore(selectSnapshot);
   const elapsedMs = useElapsedTime(snapshot);
-  const monitor = useRecordingMonitor();
+  const monitor = useRecordingMonitor(showConfidenceChecks);
   const lastWidthRef = useRef(0);
   const resizeToContent = useCallback((width: number) => {
     if (width === lastWidthRef.current) return;
@@ -32,10 +36,24 @@ export function RecordingDockWindow() {
     resizeRecordingDock(width).catch(report("resize"));
   }, []);
 
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    void getGeneralSettings().then((settings) => {
+      setShowConfidenceChecks(settings.showRecordingConfidenceChecks);
+    });
+    void listen<GeneralSettings>("settings://changed", ({ payload }) => {
+      setShowConfidenceChecks(payload.showRecordingConfidenceChecks);
+    }).then((listener) => {
+      unlisten = listener;
+    });
+    return () => unlisten?.();
+  }, []);
+
   return (
     <RecordingDock
+      countdownSeconds={snapshot.countdownSecondsRemaining}
       elapsedMs={elapsedMs}
-      monitor={monitor}
+      monitor={showConfidenceChecks ? monitor : undefined}
       onDiscard={() => {
         cancelRecording().catch(report("discard"));
       }}

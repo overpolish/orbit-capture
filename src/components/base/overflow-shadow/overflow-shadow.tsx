@@ -13,7 +13,7 @@ import type { OverlayScrollbars } from "overlayscrollbars";
 const overflowShadowVariants = tv({
   compoundSlots: [
     {
-      class: "absolute z-100 from-content-fg/25 to-transparent",
+      class: "absolute z-100 from-black/30 to-transparent",
       slots: ["end", "start"],
     },
     {

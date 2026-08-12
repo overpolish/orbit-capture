@@ -13,6 +13,7 @@ export type RecordingStatus =
  */
 export type RecordingSnapshot = {
   accumulatedMs: number;
+  countdownSecondsRemaining: number;
   mode: RecordingMode | null;
   pausedAtMs: number | null;
   startedAtMs: number | null;
@@ -21,6 +22,7 @@ export type RecordingSnapshot = {
 
 export const initialRecordingSnapshot: RecordingSnapshot = {
   accumulatedMs: 0,
+  countdownSecondsRemaining: 0,
   mode: null,
   pausedAtMs: null,
   startedAtMs: null,

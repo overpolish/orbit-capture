@@ -169,3 +169,16 @@ pub(super) fn transition(
 
   Ok(snapshot)
 }
+
+pub(super) fn set_countdown(app: &AppHandle, seconds: u8) {
+  let snapshot = {
+    let state = state(app);
+    let mut snapshot = state
+      .snapshot
+      .write()
+      .unwrap_or_else(|poisoned| poisoned.into_inner());
+    snapshot.countdown_seconds_remaining = seconds;
+    *snapshot
+  };
+  let _ = app.emit(RECORDING_STATE_EVENT, snapshot);
+}

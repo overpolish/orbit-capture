@@ -4,6 +4,8 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import { ScreenshotDestination } from "../screenshots/api";
+
 import {
   CameraDevice,
   CameraResolution,
@@ -74,7 +76,7 @@ type RecordingInputStore = {
   cameraModeIdById: Record<string, string>;
   fps: RecordingFps;
   inputs: RecordingInputs;
-  screenshotToClipboard: boolean;
+  screenshotDestination: ScreenshotDestination;
   selectedCamera: CameraDevice | null;
   selectedCameraMode: CameraResolution | null;
   selectedMicrophone: InputDevice | null;
@@ -82,7 +84,7 @@ type RecordingInputStore = {
   setCameraFlipped: (cameraId: string, flipped: boolean) => void;
   setFps: (fps: RecordingFps) => void;
   setInput: (input: keyof RecordingInputs, selected: boolean) => void;
-  setScreenshotToClipboard: (toClipboard: boolean) => void;
+  setScreenshotDestination: (destination: ScreenshotDestination) => void;
   setSelectedCameraMode: (mode: CameraResolution | null) => void;
   setSelectedCameraSelection: (
     camera: CameraDevice | null,
@@ -104,7 +106,7 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
         showCursor: true,
         systemAudio: false,
       },
-      screenshotToClipboard: true,
+      screenshotDestination: "clipboard",
       selectedCamera: null,
       selectedCameraMode: null,
       selectedMicrophone: null,
@@ -125,8 +127,8 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
           inputs: { ...state.inputs, [input]: selected },
         }));
       },
-      setScreenshotToClipboard: (screenshotToClipboard) => {
-        set({ screenshotToClipboard });
+      setScreenshotDestination: (screenshotDestination) => {
+        set({ screenshotDestination });
       },
       setSelectedCameraMode: (selectedCameraMode) => {
         set((state) => ({

@@ -7,7 +7,6 @@ use super::*;
 #[serde(default)]
 struct ExportPreferences {
   cursor_effects: cursor_effects::CursorEffectSettings,
-  open_location_after_export: bool,
   screenshot_radius_percent: f64,
 }
 
@@ -15,7 +14,6 @@ impl Default for ExportPreferences {
   fn default() -> Self {
     Self {
       cursor_effects: cursor_effects::CursorEffectSettings::default(),
-      open_location_after_export: false,
       screenshot_radius_percent: 0.0,
     }
   }
@@ -39,10 +37,6 @@ pub(super) fn load_cursor_effects(app: &AppHandle) -> cursor_effects::CursorEffe
   load_preferences(app)
     .and_then(|preferences| validate_cursor_effects(preferences.cursor_effects).ok())
     .unwrap_or_default()
-}
-
-pub(super) fn load_open_location_after_export(app: &AppHandle) -> bool {
-  load_preferences(app).is_some_and(|preferences| preferences.open_location_after_export)
 }
 
 fn load_preferences(app: &AppHandle) -> Option<ExportPreferences> {
@@ -102,19 +96,5 @@ pub(super) fn remember_cursor_effects(
     .unwrap_or_else(|poisoned| poisoned.into_inner()) = effects;
   let mut preferences = load_preferences(app).unwrap_or_default();
   preferences.cursor_effects = effects;
-  store_preferences(app, &preferences)
-}
-
-pub(super) fn remember_open_location_after_export(
-  app: &AppHandle,
-  open_location_after_export: bool,
-) -> Result<(), String> {
-  *app
-    .state::<ExportState>()
-    .open_location_after_export
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner()) = open_location_after_export;
-  let mut preferences = load_preferences(app).unwrap_or_default();
-  preferences.open_location_after_export = open_location_after_export;
   store_preferences(app, &preferences)
 }

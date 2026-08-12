@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { Region } from "../recording-sources/types";
+export type ScreenshotDestination = "export" | "clipboard" | "both";
 
 export type ScreenshotTarget =
   | { kind: "region"; monitorId: number; region: Region }
@@ -11,19 +12,19 @@ export type ScreenshotTarget =
   | { kind: "window"; windowId: number };
 
 type CaptureStillOptions = {
+  destination: ScreenshotDestination;
   showCursor: boolean;
   target: ScreenshotTarget;
-  toClipboard: boolean;
 };
 
 /** Resolves to the saved file's path, or null when it went to the clipboard. */
 export const captureStill = ({
+  destination,
   showCursor,
   target,
-  toClipboard,
 }: CaptureStillOptions) =>
   invoke<string | null>("capture_still", {
+    destination,
     showCursor,
     target,
-    toClipboard,
   });

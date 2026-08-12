@@ -13,6 +13,7 @@ import { RecordingOptionsWindow } from "./features/recording-inputs/recording-op
 import { RecordingSourceSelectorWindow } from "./features/recording-sources/recording-source-selector-window";
 import { RecordingSourceSync } from "./features/recording-sources/recording-source-sync";
 import { RegionSelectorWindow } from "./features/region-selector/region-selector-window";
+import { SettingsWindow } from "./features/settings/settings-window";
 import { StandaloneListboxSync } from "./features/standalone-listbox/standalone-listbox-sync";
 import { StandaloneListboxWindow } from "./features/standalone-listbox/standalone-listbox-window";
 
@@ -31,6 +32,8 @@ export function App() {
         return <RegionSelectorWindow />;
       case "/recording-options":
         return <RecordingOptionsWindow />;
+      case "/settings":
+        return <SettingsWindow />;
       case "/standalone-listbox":
         return <StandaloneListboxWindow />;
       default:

@@ -16,6 +16,8 @@ mod recording;
 mod recording_inputs;
 mod recording_sources;
 mod screenshots;
+mod settings;
+mod shortcuts;
 
 #[cfg(desktop)]
 mod tray;
@@ -26,8 +28,13 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let builder = tauri::Builder::default()
+    .plugin(tauri_plugin_autostart::init(
+      tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+      None,
+    ))
     .plugin(tauri_plugin_clipboard_manager::init())
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .plugin(
       tauri_plugin_window_state::Builder::default()
         .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
@@ -48,6 +55,8 @@ pub fn run() {
     .manage(exports::recording_preview_player::RecordingPreviewPlayerState::default())
     .manage(permissions::PermissionState::default())
     .manage(recording::RecordingState::default())
+    .manage(settings::GeneralSettingsState::default())
+    .manage(shortcuts::ShortcutSettingsState::default())
     .invoke_handler(tauri::generate_handler![
       audio_preview::start_audio_preview,
       audio_preview::stop_audio_preview,
@@ -101,6 +110,15 @@ pub fn run() {
       recording_sources::resize_window,
       recording_sources::restore_window_border,
       screenshots::capture_still,
+      settings::hide_settings,
+      settings::preferences::browse_default_location,
+      settings::preferences::get_general_settings,
+      settings::preferences::set_general_settings,
+      settings::show_settings,
+      shortcuts::get_shortcut_settings,
+      shortcuts::begin_shortcut_capture,
+      shortcuts::end_shortcut_capture,
+      shortcuts::set_shortcut_binding,
       windows::collapse_recording_source_selector,
       windows::finish_recording_bar_drag,
       windows::dock::finish_recording_dock_drag,
@@ -128,12 +146,25 @@ pub fn run() {
       #[cfg(desktop)]
       tray::initialize(app)?;
 
-      windows::initialize_recording_bar(app.handle())?;
-      windows::initialize_recording_source_selector(app.handle())?;
-      windows::initialize_region_selector(app.handle())?;
-      windows::initialize_recording_options(app.handle())?;
-      windows::initialize_standalone_listbox(app.handle())?;
-      windows::initialize_recording_dock(app.handle())?;
+      settings::initialize(app.handle());
+      let show_recording_bar_on_launch =
+        settings::current(app.handle()).show_recording_bar_on_launch;
+
+      // Converting a hidden macOS webview into an NSPanel can order one stale
+      // compositor frame onscreen. Keep tray-only startup genuinely tray-only:
+      // panels are created lazily by the first explicit show request instead.
+      #[cfg(not(target_os = "macos"))]
+      {
+        windows::initialize_recording_bar(app.handle())?;
+        windows::initialize_recording_source_selector(app.handle())?;
+        windows::initialize_region_selector(app.handle())?;
+        windows::initialize_recording_options(app.handle())?;
+        windows::initialize_standalone_listbox(app.handle())?;
+        windows::initialize_recording_dock(app.handle())?;
+      }
+      if let Some(window) = app.get_webview_window(windows::WindowLabel::Settings.as_str()) {
+        windows::initialize_normal_window(&window)?;
+      }
       if let Some(window) = app.get_webview_window(windows::WindowLabel::Export.as_str()) {
         windows::initialize_export(&window)?;
       }
@@ -144,10 +175,12 @@ pub fn run() {
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::StandaloneListbox);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingDock);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::Export);
+      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::Settings);
       windows::initialize_recording_bar_position(app.handle())?;
       windows::manage_recording_bar_movement(app.handle());
       windows::manage_recording_dock_movement(app.handle());
       exports::initialize(app.handle());
+      shortcuts::initialize(app.handle());
       windows::manage_recording_source_selector_dismissal(app.handle());
 
       #[cfg(target_os = "macos")]
@@ -155,26 +188,28 @@ pub fn run() {
         let snapshot = tauri::async_runtime::block_on(permissions::refresh(app.handle()));
         if !snapshot.has_required_recording_permissions() {
           permissions::show_permissions_window(app.handle())?;
-        } else {
+        } else if show_recording_bar_on_launch {
           windows::show_recording_ui(app.handle())?;
         }
       }
 
       #[cfg(not(target_os = "macos"))]
-      windows::show_recording_ui(app.handle())?;
+      if show_recording_bar_on_launch {
+        windows::show_recording_ui(app.handle())?;
+      }
 
       permissions::start_watcher(app.handle().clone());
 
       #[cfg(target_os = "macos")]
       {
-        // Native window effects finish after `setup` returns and can order the
-        // configured export window onscreen. Its first presentation always
-        // belongs to an actual capture.
+        // Native effects can order ordinary app windows during setup. Their
+        // first presentation always belongs to an explicit user action.
         let app_handle = app.handle().clone();
         app.handle().run_on_main_thread(move || {
-          if let Some(export) = app_handle.get_webview_window(windows::WindowLabel::Export.as_str())
-          {
-            let _ = export.hide();
+          for label in [windows::WindowLabel::Export, windows::WindowLabel::Settings] {
+            if let Some(window) = app_handle.get_webview_window(label.as_str()) {
+              let _ = window.hide();
+            }
           }
         })?;
       }

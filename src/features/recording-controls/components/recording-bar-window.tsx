@@ -39,6 +39,7 @@ import { RecordingError, ScreenshotState } from "../types";
 import { RecordingBar } from "./recording-bar";
 
 const RECORDING_ERROR_EVENT = "recording://error";
+const SHORTCUT_ACTION_EVENT = "global-shortcut://action";
 /** How long the screenshot button holds its outcome before going back to idle. */
 const SCREENSHOT_FEEDBACK_MS = 2000;
 
@@ -91,10 +92,10 @@ export function RecordingBarWindow() {
   const {
     fps,
     inputs,
-    screenshotToClipboard,
+    screenshotDestination,
     setFps,
     setInput,
-    setScreenshotToClipboard,
+    setScreenshotDestination,
   } = useRecordingInputStore((state) => state);
 
   useEffect(() => {
@@ -129,6 +130,38 @@ export function RecordingBarWindow() {
       }
     });
 
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let disposed = false;
+    void listen<"startStopRecording" | "takeScreenshot">(
+      SHORTCUT_ACTION_EVENT,
+      ({ payload }) => {
+        if (payload === "startStopRecording") {
+          startRecording(startRecordingOptions()).catch((error: unknown) => {
+            console.error("Could not start the recording", error);
+          });
+          return;
+        }
+        const target = screenshotTarget();
+        if (!target) return;
+        captureStill({
+          destination: "export",
+          showCursor: useRecordingInputStore.getState().inputs.showCursor,
+          target,
+        }).catch((error: unknown) => {
+          console.error("Could not take the screenshot", error);
+        });
+      },
+    ).then((listener) => {
+      if (disposed) listener();
+      else unlisten = listener;
+    });
     return () => {
       disposed = true;
       unlisten?.();
@@ -213,14 +246,16 @@ export function RecordingBarWindow() {
         window.clearTimeout(screenshotResetRef.current);
         setScreenshotState("pending");
         captureStill({
+          destination: screenshotDestination,
           showCursor: inputs.showCursor,
           target,
-          toClipboard: screenshotToClipboard,
         })
           .then(() => {
             // With the clipboard off the export window opens instead, and its
             // appearance is the feedback; a check would claim a file exists.
-            setScreenshotState(screenshotToClipboard ? "done" : "idle");
+            setScreenshotState(
+              screenshotDestination === "clipboard" ? "done" : "idle",
+            );
           })
           .catch((error: unknown) => {
             console.error("Could not take the screenshot", error);
@@ -232,9 +267,11 @@ export function RecordingBarWindow() {
             }, SCREENSHOT_FEEDBACK_MS);
           });
       }}
-      onScreenshotToClipboardChange={setScreenshotToClipboard}
+      onScreenshotToClipboardChange={(toClipboard) => {
+        setScreenshotDestination(toClipboard ? "clipboard" : "export");
+      }}
       screenshotState={screenshotState}
-      screenshotToClipboard={screenshotToClipboard}
+      screenshotToClipboard={screenshotDestination !== "export"}
       status={status}
     />
   );

@@ -35,6 +35,28 @@
         "visible": false
       },
       {
+        "label": "settings",
+        "title": "Orbit Capture Settings",
+        "url": "/settings",
+        "width": 720,
+        "height": 520,
+        "minWidth": 600,
+        "minHeight": 420,
+        "acceptFirstMouse": true,
+        "alwaysOnTop": false,
+        "decorations": false,
+        "resizable": true,
+        "shadow": true,
+        "skipTaskbar": false,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["underWindowBackground", "mica"],
+          "radius": 10,
+          "state": "active"
+        },
+        "visible": false
+      },
+      {
         "label": "recording-bar",
         "title": "Orbit Capture Recording Bar",
         "url": "/recording-bar",

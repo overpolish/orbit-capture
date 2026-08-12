@@ -64,7 +64,7 @@ pub fn show_region_selector(
 #[tauri::command]
 pub fn hide_region_selector(app: AppHandle) -> tauri::Result<()> {
   if let Some(region) = app.get_webview_window(WindowLabel::RegionSelector.as_str()) {
-    region.hide()?;
+    platform::hide(&region)?;
   }
   set_recording_controls_opacity(app, 1.0)
 }
@@ -153,11 +153,12 @@ pub fn set_region_selector_opacity(app: AppHandle, opacity: f64) -> tauri::Resul
 /// hides the region overlay, which used to put the bar straight back.
 #[tauri::command]
 pub fn set_recording_controls_opacity(app: AppHandle, opacity: f64) -> tauri::Result<()> {
+  if !RECORDING_CONTROLS_VISIBLE.load(Ordering::Relaxed) {
+    return Ok(());
+  }
   if opacity > 0.0 && !crate::recording::is_idle(&app) {
     return Ok(());
   }
-
-  RECORDING_CONTROLS_VISIBLE.store(opacity > 0.0, Ordering::Relaxed);
 
   if let Some(bar) = app.get_webview_window(WindowLabel::RecordingBar.as_str()) {
     platform::set_opacity(&bar, opacity)?;

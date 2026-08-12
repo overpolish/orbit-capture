@@ -13,6 +13,7 @@ const DISCARD_MENU_ID: &str = "discard-recording";
 const OPEN_MENU_ID: &str = "open-orbit-capture";
 const PAUSE_MENU_ID: &str = "pause-recording";
 const QUIT_MENU_ID: &str = "quit-orbit-capture";
+const SETTINGS_MENU_ID: &str = "open-settings";
 const STOP_MENU_ID: &str = "stop-recording";
 const TRAY_ID: &str = "orbit-capture";
 
@@ -70,6 +71,8 @@ fn build_menu(app: &AppHandle, status: RecordingStatus) -> tauri::Result<Menu<Wr
 
   builder
     .separator()
+    .text(SETTINGS_MENU_ID, "Settings…")
+    .separator()
     .text(QUIT_MENU_ID, "Quit Orbit Capture")
     .build()
 }
@@ -88,6 +91,11 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
       OPEN_MENU_ID => show_main_window(app),
       PAUSE_MENU_ID => report("pause", crate::recording::toggle_pause(app)),
       QUIT_MENU_ID => app.exit(0),
+      SETTINGS_MENU_ID => {
+        if let Err(error) = crate::settings::show(app) {
+          eprintln!("Could not open settings from the tray: {error}");
+        }
+      }
       STOP_MENU_ID => report("stop", crate::recording::stop(app)),
       _ => {}
     })

@@ -19,16 +19,18 @@ pub(crate) mod options;
 mod platform;
 pub(crate) mod region;
 
-pub use dock::{
-  hide_recording_dock, initialize_recording_dock, manage_recording_dock_movement,
-  show_recording_dock,
-};
+#[cfg(not(target_os = "macos"))]
+pub use dock::initialize_recording_dock;
+pub use dock::{hide_recording_dock, manage_recording_dock_movement, show_recording_dock};
 use geometry::monitor_with_most_overlap;
 pub use lifecycle::{
-  contain_export, get_or_create, initialize_export, initialize_recording_bar,
-  initialize_recording_bar_position, initialize_recording_options,
-  initialize_recording_source_selector, initialize_region_selector, initialize_standalone_listbox,
-  show,
+  contain_export, contain_normal_window, get_or_create, initialize_export,
+  initialize_normal_window, initialize_recording_bar_position, show, sync_dock_visibility,
+};
+#[cfg(not(target_os = "macos"))]
+pub use lifecycle::{
+  initialize_recording_bar, initialize_recording_options, initialize_recording_source_selector,
+  initialize_region_selector, initialize_standalone_listbox,
 };
 pub use options::hide_recording_options;
 pub use region::{
@@ -43,6 +45,7 @@ pub enum WindowLabel {
   RecordingBar,
   RecordingDock,
   RecordingOptions,
+  Settings,
   RegionSelector,
   RecordingSourceSelector,
   StandaloneListbox,
@@ -57,6 +60,7 @@ impl WindowLabel {
       Self::RecordingBar => "recording-bar",
       Self::RecordingDock => "recording-dock",
       Self::RecordingOptions => "recording-options",
+      Self::Settings => "settings",
       Self::RegionSelector => "region-selector",
       Self::RecordingSourceSelector => "recording-source-selector",
       Self::StandaloneListbox => "standalone-listbox",
@@ -80,7 +84,7 @@ const ANIMATION_STEPS: u64 = 18;
 static SELECTOR_ANIMATION: AtomicU64 = AtomicU64::new(0);
 static SELECTOR_EXPANDED: AtomicBool = AtomicBool::new(false);
 static SELECTOR_VISIBLE: AtomicBool = AtomicBool::new(true);
-static RECORDING_CONTROLS_VISIBLE: AtomicBool = AtomicBool::new(true);
+static RECORDING_CONTROLS_VISIBLE: AtomicBool = AtomicBool::new(false);
 static WINDOW_SELECTOR_ACTIVE: AtomicBool = AtomicBool::new(false);
 static REGION_SELECTOR_EDITING: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
@@ -300,12 +304,10 @@ pub fn toggle_recording_source_selector(
 }
 
 pub fn hide_recording_bar(app: &AppHandle) -> tauri::Result<()> {
-  // Clearing this first matters: anything that raises the recording controls
-  // afterwards - hiding the region overlay, for instance - would otherwise
-  // order the bar straight back on screen.
+  // Clear first so later overlay ordering cannot raise the bar again.
   RECORDING_CONTROLS_VISIBLE.store(false, Ordering::Relaxed);
   if let Some(bar) = app.get_webview_window(WindowLabel::RecordingBar.as_str()) {
-    bar.hide()?;
+    platform::hide(&bar)?;
   }
 
   Ok(())
@@ -526,15 +528,16 @@ pub fn set_recording_source_selector_visible(app: AppHandle, visible: bool) -> t
 
 #[tauri::command]
 pub fn hide_recording_ui(app: AppHandle) -> tauri::Result<()> {
+  RECORDING_CONTROLS_VISIBLE.store(false, Ordering::Relaxed);
   SELECTOR_ANIMATION.fetch_add(1, Ordering::Relaxed);
   SELECTOR_EXPANDED.store(false, Ordering::Relaxed);
   hide_recording_options(app.clone())?;
   if let Some(selector) = app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str()) {
-    selector.hide()?;
+    platform::hide(&selector)?;
   }
   hide_recording_bar(&app)?;
   if let Some(region) = app.get_webview_window(WindowLabel::RegionSelector.as_str()) {
-    region.hide()?;
+    platform::hide(&region)?;
   }
 
   Ok(())
@@ -549,7 +552,7 @@ pub fn show_recording_ui(app: &AppHandle) -> tauri::Result<()> {
   let bar = app
     .get_webview_window(WindowLabel::RecordingBar.as_str())
     .ok_or_else(|| tauri::Error::WindowNotFound)?;
-  show(&bar, false)?;
+  platform::show(&bar)?;
   // Asserted rather than assumed: the bar may have been faded out for region
   // editing, and requests to fade it back in are refused while a recording is
   // on. Coming back to idle is where that is put right.
@@ -566,6 +569,9 @@ pub fn show_recording_ui(app: &AppHandle) -> tauri::Result<()> {
   )
 }
 
+pub fn is_recording_ui_visible() -> bool {
+  RECORDING_CONTROLS_VISIBLE.load(Ordering::Relaxed)
+}
 pub fn hide_instead_of_close(app: &AppHandle, label: WindowLabel) {
   if let Some(window) = app.get_webview_window(label.as_str()) {
     let app = app.clone();
@@ -577,9 +583,11 @@ pub fn hide_instead_of_close(app: &AppHandle, label: WindowLabel) {
           WindowLabel::RecordingOptions => {
             let _ = hide_recording_options(app.clone());
           }
-          // Closing the export window is the same act as cancelling: the
-          // pending capture goes with it rather than lingering unseen.
+          // Closing export cancels its pending capture too.
           WindowLabel::Export => crate::exports::discard(&app),
+          WindowLabel::Settings => {
+            let _ = crate::settings::hide_settings(app.clone());
+          }
           _ => {
             let _ = window_to_hide.hide();
           }

@@ -132,7 +132,6 @@ export type ExportSnapshot = {
   artifact: ExportArtifact | null;
   cursorEffects: CursorEffectSettings;
   directory: string | null;
-  openLocationAfterExport: boolean;
   screenshotRadiusPercent: number;
 };
 
@@ -146,6 +145,5 @@ export const initialExportSnapshot: ExportSnapshot = {
     smoothMovement: true,
   },
   directory: null,
-  openLocationAfterExport: false,
   screenshotRadiusPercent: 0,
 };

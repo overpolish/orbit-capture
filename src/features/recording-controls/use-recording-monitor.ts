@@ -27,7 +27,7 @@ export type RecordingMonitorSnapshot = {
   systemAudioDecibels: number;
 };
 
-export function useRecordingMonitor(): RecordingMonitorSnapshot {
+export function useRecordingMonitor(enabled = true): RecordingMonitorSnapshot {
   const cameraCanvasRef = useRef<HTMLCanvasElement>(null);
   const latestCameraFrameRef = useRef<ImageData | null>(null);
   const [hasCamera, setHasCamera] = useState(false);
@@ -40,6 +40,7 @@ export function useRecordingMonitor(): RecordingMonitorSnapshot {
     useState(SILENCE_DECIBELS);
 
   useEffect(() => {
+    if (!enabled) return;
     let disposed = false;
     let frameRequest = 0;
     const subscriptionId = ++nextSubscriptionId;
@@ -109,7 +110,7 @@ export function useRecordingMonitor(): RecordingMonitorSnapshot {
       latestCameraFrameRef.current = null;
       void stopRecordingMonitor(subscriptionId);
     };
-  }, []);
+  }, [enabled]);
 
   return {
     cameraCanvasRef,

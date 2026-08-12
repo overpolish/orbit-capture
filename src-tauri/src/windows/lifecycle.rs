@@ -62,6 +62,7 @@ pub fn initialize_recording_bar_position(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn initialize_recording_bar(app: &AppHandle) -> tauri::Result<()> {
   if let Some(window) = app.get_webview_window(WindowLabel::RecordingBar.as_str()) {
     platform::initialize_recording_bar(&window)?;
@@ -70,6 +71,7 @@ pub fn initialize_recording_bar(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn initialize_recording_source_selector(app: &AppHandle) -> tauri::Result<()> {
   if let Some(window) = app.get_webview_window(WindowLabel::RecordingSourceSelector.as_str()) {
     platform::initialize_recording_source_selector(&window)?;
@@ -78,6 +80,7 @@ pub fn initialize_recording_source_selector(app: &AppHandle) -> tauri::Result<()
   Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn initialize_region_selector(app: &AppHandle) -> tauri::Result<()> {
   if let Some(window) = app.get_webview_window(WindowLabel::RegionSelector.as_str()) {
     platform::initialize_region_selector(&window)?;
@@ -87,6 +90,7 @@ pub fn initialize_region_selector(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn initialize_recording_options(app: &AppHandle) -> tauri::Result<()> {
   if let Some(window) = app.get_webview_window(WindowLabel::RecordingOptions.as_str()) {
     platform::initialize_recording_options(&window)?;
@@ -95,6 +99,7 @@ pub fn initialize_recording_options(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn initialize_standalone_listbox(app: &AppHandle) -> tauri::Result<()> {
   if let Some(window) = app.get_webview_window(WindowLabel::StandaloneListbox.as_str()) {
     platform::initialize_standalone_listbox(&window)?;
@@ -119,6 +124,11 @@ pub fn initialize_export(window: &WebviewWindow) -> tauri::Result<()> {
   });
 
   Ok(())
+}
+
+pub fn initialize_normal_window(window: &WebviewWindow) -> tauri::Result<()> {
+  platform::initialize_export(window)?;
+  window.hide()
 }
 
 #[cfg(target_os = "macos")]
@@ -164,4 +174,21 @@ fn watch_for_export_mouse_up(app: AppHandle, export: WebviewWindow) {
 
 pub fn contain_export(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()> {
   contain_window_in_work_area(app, window)
+}
+
+pub fn contain_normal_window(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()> {
+  contain_window_in_work_area(app, window)
+}
+
+pub fn sync_dock_visibility(app: &AppHandle) -> tauri::Result<()> {
+  #[cfg(target_os = "macos")]
+  {
+    let visible = [WindowLabel::Export, WindowLabel::Settings]
+      .iter()
+      .filter_map(|label| app.get_webview_window(label.as_str()))
+      .any(|window| window.is_visible().unwrap_or(false));
+    app.set_dock_visibility(visible)?;
+  }
+
+  Ok(())
 }

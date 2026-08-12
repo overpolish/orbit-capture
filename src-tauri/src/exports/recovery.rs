@@ -211,14 +211,6 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
 }
 
 pub fn initialize(app: &AppHandle) {
-  if let Some(directory) = load_directory(app) {
-    *app
-      .state::<ExportState>()
-      .directory
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(directory);
-  }
-
   *app
     .state::<ExportState>()
     .screenshot_radius_percent
@@ -229,11 +221,5 @@ pub fn initialize(app: &AppHandle) {
     .cursor_effects
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_cursor_effects(app);
-  *app
-    .state::<ExportState>()
-    .open_location_after_export
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_open_location_after_export(app);
-
   sweep_orphaned_recordings(app);
 }

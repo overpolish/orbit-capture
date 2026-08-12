@@ -156,6 +156,7 @@ const fn default_fps() -> u32 {
 pub struct RecordingSnapshot {
   pub status: RecordingStatus,
   pub mode: Option<RecordingMode>,
+  pub countdown_seconds_remaining: u8,
   pub started_at_ms: Option<u64>,
   pub accumulated_ms: u64,
   pub paused_at_ms: Option<u64>,

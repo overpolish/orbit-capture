@@ -82,6 +82,7 @@ fn store_recording_dock_offset(app: &AppHandle, offset: RecordingDockOffset) -> 
   Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn initialize_recording_dock(app: &AppHandle) -> tauri::Result<()> {
   load_recording_dock_offset(app);
   if let Some(window) = app.get_webview_window(WindowLabel::RecordingDock.as_str()) {
@@ -147,6 +148,7 @@ fn recording_dock_position(
 }
 
 pub fn show_recording_dock(app: &AppHandle) -> tauri::Result<()> {
+  load_recording_dock_offset(app);
   let dock = app
     .get_webview_window(WindowLabel::RecordingDock.as_str())
     .ok_or_else(|| tauri::Error::WindowNotFound)?;

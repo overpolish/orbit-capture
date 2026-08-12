@@ -38,7 +38,7 @@ use session::{
 };
 #[cfg(test)]
 use state::apply_transition;
-use state::{state, transition};
+use state::{set_countdown, state, transition};
 pub(crate) use types::CameraCaptureMode;
 #[cfg(test)]
 use types::DEFAULT_FPS;
@@ -80,6 +80,7 @@ pub fn start(app: &AppHandle, options: StartRecordingOptions) -> Result<(), Stri
   // disabled button.
   transition(app, RecordingStatus::Starting, Some(options.mode))?;
   let generation = state(app).begin_start();
+  let countdown_seconds = crate::settings::current(app).recording_countdown_seconds;
 
   if let Err(error) = prepare_windows(app, &options) {
     abandon_start(app, &error);
@@ -91,6 +92,14 @@ pub fn start(app: &AppHandle, options: StartRecordingOptions) -> Result<(), Stri
   // macOS-only in this crate, so this is a blocking task the way finalize is -
   // and either way it must not run on the thread that draws.
   tauri::async_runtime::spawn_blocking(move || {
+    for seconds in (1..=countdown_seconds).rev() {
+      if !state(&app).is_current(generation) {
+        return;
+      }
+      set_countdown(&app, seconds);
+      std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    set_countdown(&app, 0);
     if !state(&app).is_current(generation) {
       return;
     }

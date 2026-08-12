@@ -24,8 +24,7 @@ pub fn hide(app: &AppHandle) -> tauri::Result<()> {
     window.hide()?;
   }
 
-  #[cfg(target_os = "macos")]
-  app.set_dock_visibility(false)?;
+  windows::sync_dock_visibility(app)?;
 
   Ok(())
 }

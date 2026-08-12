@@ -109,7 +109,6 @@ pub fn set_export_directory(app: AppHandle, directory: PathBuf) -> Result<(), St
     .directory
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(directory.clone());
-  store_directory(&app, &directory).map_err(|error| error.to_string())?;
   emit_snapshot(&app);
 
   Ok(())
