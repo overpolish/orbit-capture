@@ -151,7 +151,7 @@ fn encode_indexed_png(
   Ok(png)
 }
 
-fn encode_truecolor_png(image: &CapturedImage) -> Result<Vec<u8>, String> {
+pub(crate) fn encode_truecolor_png(image: &CapturedImage) -> Result<Vec<u8>, String> {
   let mut png = Vec::new();
   PngEncoder::new_with_quality(
     Cursor::new(&mut png),

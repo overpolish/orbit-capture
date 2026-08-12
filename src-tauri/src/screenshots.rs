@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-mod encoding;
+pub(crate) mod encoding;
 #[cfg(target_os = "macos")]
 mod platform;
 #[cfg(target_os = "windows")]
@@ -25,6 +25,7 @@ pub use encoding::{encode_png, rounded_corners};
 
 /// A captured still: straight (non-premultiplied) RGBA8, packed rows, top down.
 /// That is what both the clipboard and the PNG encoder want.
+#[derive(Clone)]
 pub struct CapturedImage {
   pub rgba: Vec<u8>,
   pub width: u32,
@@ -98,7 +99,7 @@ pub fn screenshot_directory(app: &AppHandle) -> Result<PathBuf, String> {
   Ok(directory)
 }
 
-async fn capture(
+pub(crate) async fn capture(
   app: &AppHandle,
   target: ScreenshotTarget,
   show_cursor: bool,
@@ -126,6 +127,36 @@ async fn capture(
   }
 }
 
+pub(crate) async fn capture_for_text_recognition(
+  app: &AppHandle,
+  target: ScreenshotTarget,
+  excluded_window_ids: &[u32],
+) -> Result<CapturedImage, String> {
+  let _ = app;
+
+  #[cfg(target_os = "macos")]
+  {
+    let excluded_window_ids = excluded_window_ids.to_vec();
+    tauri::async_runtime::spawn_blocking(move || {
+      platform::capture_for_text_recognition_blocking(target, &excluded_window_ids)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+  }
+
+  #[cfg(target_os = "windows")]
+  {
+    let _ = excluded_window_ids;
+    capture(app, target, false).await
+  }
+
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  {
+    let _ = (target, excluded_window_ids);
+    Err("Text recognition is not available on this platform".to_owned())
+  }
+}
+
 /// Captures a still and either copies it or saves it, returning the path it was
 /// written to when it went to disk.
 #[tauri::command]
@@ -135,6 +166,7 @@ pub async fn capture_still(
   show_cursor: bool,
   destination: ScreenshotDestination,
 ) -> Result<Option<PathBuf>, String> {
+  crate::text_recognition::dismiss(&app);
   let image = capture(&app, target, show_cursor).await?;
 
   if matches!(

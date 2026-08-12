@@ -146,11 +146,14 @@ export function RecordingDock({
         ) : (
           <>
             <LoaderCircle
-              className="transform-gpu animate-spin text-muted"
+              className="animate-spin text-muted"
               size={ICON_SIZE}
             />
             {status === "starting" ? "Starting" : "Finishing"}
           </>
+        )}
+        {status === "starting" && (
+          <DiscardButton isDisabled={false} onDiscard={onDiscard} />
         )}
       </Overlay>
       <div

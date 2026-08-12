@@ -19,6 +19,7 @@ mod screenshots;
 mod settings;
 mod shortcuts;
 
+mod text_recognition;
 #[cfg(desktop)]
 mod tray;
 mod windows;
@@ -57,6 +58,7 @@ pub fn run() {
     .manage(recording::RecordingState::default())
     .manage(settings::GeneralSettingsState::default())
     .manage(shortcuts::ShortcutSettingsState::default())
+    .manage(text_recognition::TextRecognitionState::default())
     .invoke_handler(tauri::generate_handler![
       audio_preview::start_audio_preview,
       audio_preview::stop_audio_preview,
@@ -110,6 +112,11 @@ pub fn run() {
       recording_sources::resize_window,
       recording_sources::restore_window_border,
       screenshots::capture_still,
+      text_recognition::cancel_text_recognition,
+      text_recognition::capture_text_region,
+      text_recognition::copy_recognized_text,
+      text_recognition::recognize_captured_text,
+      text_recognition::start_text_recognition,
       settings::hide_settings,
       settings::preferences::browse_default_location,
       settings::preferences::get_general_settings,

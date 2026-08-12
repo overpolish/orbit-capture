@@ -10,6 +10,7 @@ use tauri::{AppHandle, Manager};
 use crate::windows::{self, WindowLabel};
 
 pub fn show(app: &AppHandle) -> tauri::Result<()> {
+  crate::text_recognition::dismiss(app);
   let window = app
     .get_webview_window(WindowLabel::Settings.as_str())
     .ok_or(tauri::Error::WindowNotFound)?;

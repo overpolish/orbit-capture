@@ -75,6 +75,7 @@ fn abandon_start(app: &AppHandle, error: &str) {
 }
 
 pub fn start(app: &AppHandle, options: StartRecordingOptions) -> Result<(), String> {
+  crate::text_recognition::dismiss(app);
   validate_options(&options)?;
   // A second start while `Starting` is rejected here, not merely by a
   // disabled button.
@@ -106,7 +107,12 @@ pub fn start(app: &AppHandle, options: StartRecordingOptions) -> Result<(), Stri
 
     let (handles, first_frame) = match begin_capture(&app, &options) {
       Ok(started) => started,
-      Err(error) => return abandon_start(&app, &error),
+      Err(error) => {
+        if state(&app).is_current(generation) {
+          abandon_start(&app, &error);
+        }
+        return;
+      }
     };
     // Cancelling while the capture was opening: the handles were never
     // stored, so this is the only place that can still tear them down.

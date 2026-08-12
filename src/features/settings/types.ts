@@ -5,7 +5,8 @@ export type ShortcutAction =
   | "toggleRecordingBar"
   | "startStopRecording"
   | "pauseResumeRecording"
-  | "takeScreenshot";
+  | "takeScreenshot"
+  | "recognizeText";
 
 type ShortcutBinding = {
   action: ShortcutAction;

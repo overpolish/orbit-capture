@@ -72,6 +72,57 @@ pub fn capture_blocking(
     .block_on(capture(target, show_cursor))
 }
 
+pub fn capture_for_text_recognition_blocking(
+  target: ScreenshotTarget,
+  excluded_window_ids: &[u32],
+) -> Result<CapturedImage, String> {
+  tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .map_err(|error| error.to_string())?
+    .block_on(capture_for_text_recognition(target, excluded_window_ids))
+}
+
+async fn capture_for_text_recognition(
+  target: ScreenshotTarget,
+  excluded_window_ids: &[u32],
+) -> Result<CapturedImage, String> {
+  let ScreenshotTarget::Region { monitor_id, region } = target else {
+    return Err("Text recognition requires a region".to_owned());
+  };
+  let content = sc::ShareableContent::current()
+    .await
+    .map_err(|error| error.to_string())?;
+  let displays = content.displays();
+  let display = displays
+    .iter()
+    .find(|display| display.display_id().0 == monitor_id)
+    .ok_or_else(|| "The selected monitor is no longer available".to_owned())?;
+  let excluded = content
+    .windows()
+    .iter()
+    .filter(|window| excluded_window_ids.contains(&window.id()))
+    .map(|window| window.retained())
+    .collect::<Vec<_>>();
+  let excluded = cidre::ns::Array::from_slice_retained(&excluded);
+  let (scale, monitor_width, monitor_height) = monitor_geometry(monitor_id)?;
+  let rect = physical_capture_rect(region, scale, monitor_width, monitor_height)
+    .ok_or_else(|| "The selected region is not on the monitor".to_owned())?;
+  let mut cfg = sc::StreamCfg::new();
+  cfg.set_shows_cursor(false);
+  cfg.set_pixel_format(cv::PixelFormat::_32_BGRA);
+  cfg.set_src_rect(cidre::cg::Rect::new(
+    f64::from(rect.x) / scale,
+    f64::from(rect.y) / scale,
+    f64::from(rect.width) / scale,
+    f64::from(rect.height) / scale,
+  ));
+  cfg.set_width(rect.width as usize);
+  cfg.set_height(rect.height as usize);
+  let filter = sc::ContentFilter::with_display_excluding_windows(display, &excluded);
+  capture_filtered(&filter, &cfg).await
+}
+
 async fn capture(target: ScreenshotTarget, show_cursor: bool) -> Result<CapturedImage, String> {
   let content = sc::ShareableContent::current()
     .await

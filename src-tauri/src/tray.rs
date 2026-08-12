@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuBuilder};
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Wry};
 
@@ -13,6 +13,7 @@ const DISCARD_MENU_ID: &str = "discard-recording";
 const OPEN_MENU_ID: &str = "open-orbit-capture";
 const PAUSE_MENU_ID: &str = "pause-recording";
 const QUIT_MENU_ID: &str = "quit-orbit-capture";
+const RECOGNIZE_TEXT_MENU_ID: &str = "recognize-text";
 const SETTINGS_MENU_ID: &str = "open-settings";
 const STOP_MENU_ID: &str = "stop-recording";
 const TRAY_ID: &str = "orbit-capture";
@@ -67,10 +68,23 @@ fn build_menu(app: &AppHandle, status: RecordingStatus) -> tauri::Result<Menu<Wr
       .text(PAUSE_MENU_ID, pause_label)
       .text(STOP_MENU_ID, "Stop Recording")
       .text(DISCARD_MENU_ID, "Discard Recording");
+  } else if status == RecordingStatus::Starting {
+    builder = builder
+      .separator()
+      .text(DISCARD_MENU_ID, "Cancel Recording");
   }
+
+  let mut recognize_text = MenuItemBuilder::with_id(RECOGNIZE_TEXT_MENU_ID, "Recognize Text");
+  if let Some(shortcut) =
+    crate::shortcuts::shortcut_for(app, crate::shortcuts::ShortcutAction::RecognizeText)
+  {
+    recognize_text = recognize_text.accelerator(shortcut);
+  }
+  let recognize_text = recognize_text.build(app)?;
 
   builder
     .separator()
+    .item(&recognize_text)
     .text(SETTINGS_MENU_ID, "Settings…")
     .separator()
     .text(QUIT_MENU_ID, "Quit Orbit Capture")
@@ -86,18 +100,29 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
     .menu(&menu)
     .show_menu_on_left_click(false)
     .tooltip(status_tooltip(RecordingStatus::Idle))
-    .on_menu_event(|app, event| match event.id().as_ref() {
-      DISCARD_MENU_ID => report("discard", crate::recording::cancel(app)),
-      OPEN_MENU_ID => show_main_window(app),
-      PAUSE_MENU_ID => report("pause", crate::recording::toggle_pause(app)),
-      QUIT_MENU_ID => app.exit(0),
-      SETTINGS_MENU_ID => {
-        if let Err(error) = crate::settings::show(app) {
-          eprintln!("Could not open settings from the tray: {error}");
-        }
+    .on_menu_event(|app, event| {
+      if event.id().as_ref() != RECOGNIZE_TEXT_MENU_ID {
+        crate::text_recognition::dismiss(app);
       }
-      STOP_MENU_ID => report("stop", crate::recording::stop(app)),
-      _ => {}
+      match event.id().as_ref() {
+        DISCARD_MENU_ID => report("discard", crate::recording::cancel(app)),
+        OPEN_MENU_ID => show_main_window(app),
+        PAUSE_MENU_ID => report("pause", crate::recording::toggle_pause(app)),
+        QUIT_MENU_ID => app.exit(0),
+        RECOGNIZE_TEXT_MENU_ID => {
+          if let Err(error) = crate::text_recognition::start(app) {
+            eprintln!("Could not start text recognition: {error}");
+          }
+        }
+        SETTINGS_MENU_ID => {
+          crate::text_recognition::dismiss(app);
+          if let Err(error) = crate::settings::show(app) {
+            eprintln!("Could not open settings from the tray: {error}");
+          }
+        }
+        STOP_MENU_ID => report("stop", crate::recording::stop(app)),
+        _ => {}
+      }
     })
     .on_tray_icon_event(|tray, event| {
       if let TrayIconEvent::Click {
@@ -140,6 +165,10 @@ pub fn apply_recording_status(app: &AppHandle, status: RecordingStatus) {
   });
 }
 
+pub fn refresh(app: &AppHandle) {
+  apply_recording_status(app, crate::recording::snapshot(app).status);
+}
+
 fn report(action: &str, result: Result<(), String>) {
   if let Err(error) = result {
     eprintln!("Could not {action} the recording from the tray: {error}");
@@ -147,6 +176,7 @@ fn report(action: &str, result: Result<(), String>) {
 }
 
 fn show_main_window(app: &AppHandle) {
+  crate::text_recognition::dismiss(app);
   #[cfg(target_os = "macos")]
   if !crate::permissions::has_required_recording_permissions(app) {
     let _ = crate::permissions::show_permissions_window(app);

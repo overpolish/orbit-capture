@@ -16,6 +16,7 @@ import { RegionSelectorWindow } from "./features/region-selector/region-selector
 import { SettingsWindow } from "./features/settings/settings-window";
 import { StandaloneListboxSync } from "./features/standalone-listbox/standalone-listbox-sync";
 import { StandaloneListboxWindow } from "./features/standalone-listbox/standalone-listbox-window";
+import { TextRecognitionWindow } from "./features/text-recognition/text-recognition-window";
 
 export function App() {
   const content = (() => {
@@ -36,6 +37,8 @@ export function App() {
         return <SettingsWindow />;
       case "/standalone-listbox":
         return <StandaloneListboxWindow />;
+      case "/text-recognition":
+        return <TextRecognitionWindow />;
       default:
         return <RecordingBarWindow />;
     }

@@ -46,6 +46,11 @@ const actions: {
     description: "Capture the currently selected screen, region or window.",
     label: "Take screenshot",
   },
+  {
+    action: "recognizeText",
+    description: "Draw around text anywhere on screen and copy it.",
+    label: "Recognize text",
+  },
 ];
 
 export function SettingsWindow() {

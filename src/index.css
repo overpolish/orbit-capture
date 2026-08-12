@@ -71,6 +71,41 @@
   }
 }
 
+@keyframes ocr-shine {
+  to {
+    background-position: 200% 0;
+  }
+}
+
+.ocr-shine-border {
+  position: relative;
+}
+
+.ocr-shine-border::after {
+  position: absolute;
+  inset: 0;
+  padding: 2px;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    var(--color-info),
+    var(--color-cyan-300),
+    var(--color-violet-400),
+    var(--color-info)
+  );
+  background-size: 200% 100%;
+  animation: ocr-shine 1.2s linear infinite;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
 html,
 body {
   margin: 0;

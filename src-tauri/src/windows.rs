@@ -544,6 +544,7 @@ pub fn hide_recording_ui(app: AppHandle) -> tauri::Result<()> {
 }
 
 pub fn show_recording_ui(app: &AppHandle) -> tauri::Result<()> {
+  crate::text_recognition::dismiss(app);
   if !crate::recording::is_idle(app) {
     return Ok(());
   }

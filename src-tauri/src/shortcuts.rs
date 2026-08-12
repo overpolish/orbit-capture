@@ -19,6 +19,7 @@ pub enum ShortcutAction {
   StartStopRecording,
   PauseResumeRecording,
   TakeScreenshot,
+  RecognizeText,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -52,6 +53,10 @@ impl Default for ShortcutSettings {
         },
         ShortcutBinding {
           action: ShortcutAction::TakeScreenshot,
+          shortcut: None,
+        },
+        ShortcutBinding {
+          action: ShortcutAction::RecognizeText,
           shortcut: None,
         },
       ],
@@ -94,6 +99,9 @@ fn store(app: &AppHandle, settings: &ShortcutSettings) -> Result<(), String> {
 }
 
 fn run_action(app: &AppHandle, action: ShortcutAction) {
+  if action != ShortcutAction::RecognizeText {
+    crate::text_recognition::dismiss(app);
+  }
   match action {
     ShortcutAction::ToggleRecordingBar => {
       if crate::recording::is_idle(app) {
@@ -130,8 +138,10 @@ fn run_action(app: &AppHandle, action: ShortcutAction) {
       crate::recording::RecordingStatus::Recording | crate::recording::RecordingStatus::Paused => {
         let _ = crate::recording::stop(app);
       }
-      crate::recording::RecordingStatus::Starting | crate::recording::RecordingStatus::Stopping => {
+      crate::recording::RecordingStatus::Starting => {
+        let _ = crate::recording::cancel(app);
       }
+      crate::recording::RecordingStatus::Stopping => {}
     },
     ShortcutAction::TakeScreenshot => {
       if crate::recording::is_idle(app) {
@@ -142,7 +152,24 @@ fn run_action(app: &AppHandle, action: ShortcutAction) {
         );
       }
     }
+    ShortcutAction::RecognizeText => {
+      if let Err(error) = crate::text_recognition::start(app) {
+        eprintln!("Could not start text recognition: {error}");
+      }
+    }
   }
+}
+
+pub fn shortcut_for(app: &AppHandle, action: ShortcutAction) -> Option<String> {
+  app
+    .state::<ShortcutSettingsState>()
+    .0
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .bindings
+    .iter()
+    .find(|binding| binding.action == action)
+    .and_then(|binding| binding.shortcut.clone())
 }
 
 fn register_binding(app: &AppHandle, action: ShortcutAction, shortcut: &str) -> Result<(), String> {
@@ -173,6 +200,7 @@ pub fn initialize(app: &AppHandle) {
     .0
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner()) = settings;
+  crate::tray::refresh(app);
 }
 
 #[tauri::command]
@@ -273,6 +301,7 @@ pub fn set_shortcut_binding(
     .0
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner()) = settings.clone();
+  crate::tray::refresh(&app);
   Ok(settings)
 }
 
