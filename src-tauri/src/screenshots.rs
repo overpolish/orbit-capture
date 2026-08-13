@@ -29,9 +29,10 @@ pub(crate) use crate::capture_geometry::CaptureRect;
 pub use encoding::encode_png;
 #[cfg(not(target_os = "macos"))]
 pub use encoding::rounded_corners;
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 pub(crate) use mesh::MeshGradientPoint;
 pub use output::{compose_screenshot, ScreenshotOutputSettings};
+#[cfg(target_os = "macos")]
 pub(crate) use output::{output_placement, parse_hex_colour};
 #[cfg(target_os = "macos")]
 pub(crate) use platform::{compose_output_layers, native_canvas, NativeCanvas, StillOverlay};
@@ -45,6 +46,7 @@ pub struct CapturedImage {
   pub height: u32,
 }
 
+#[cfg(target_os = "macos")]
 pub(crate) fn validate_output_settings(
   source_width: u32,
   source_height: u32,

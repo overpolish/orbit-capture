@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use super::*;
 
 fn even_scaled(value: u32, numerator: u16, denominator: u16) -> u32 {

@@ -223,10 +223,10 @@ pub fn compose_screenshot(
     .ok_or_else(|| "The screenshot pixels are not valid".to_owned())?;
   let placement_x = crop_x.round() as i64;
   let placement_y = crop_y.round() as i64;
-  let shadow_margin = f64::from(placement_x.max(0))
-    .min(f64::from(placement_y.max(0)))
-    .min(f64::from(output_width) - f64::from(placement_x) - f64::from(crop_width))
-    .min(f64::from(output_height) - f64::from(placement_y) - f64::from(crop_height))
+  let shadow_margin = (placement_x.max(0) as f64)
+    .min(placement_y.max(0) as f64)
+    .min(f64::from(output_width) - placement_x as f64 - f64::from(crop_width))
+    .min(f64::from(output_height) - placement_y as f64 - f64::from(crop_height))
     .max(0.0);
   if settings.drop_shadow && shadow_margin * 0.45 > 1.0 {
     let sigma = (f64::from(crop_width.min(crop_height)) * 0.042)

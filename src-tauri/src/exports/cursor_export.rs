@@ -27,6 +27,7 @@ mod platform;
 #[path = "cursor_export/platform_unsupported.rs"]
 mod platform;
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(super) struct CursorExportRequest<'a> {
   pub audio_layout: AudioLayout,
   pub audio_source: Option<&'a Path>,

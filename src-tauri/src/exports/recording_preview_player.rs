@@ -40,6 +40,7 @@ pub(super) struct PlayerSources {
   audio_tracks: Vec<RecordingAudioTrack>,
   camera_duration_ms: Option<u64>,
   camera_path: Option<PathBuf>,
+  #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
   cursor: Option<Arc<CursorCompositor>>,
   cursor_settings: Arc<RwLock<CursorEffectSettings>>,
   composition_settings: Option<Arc<RwLock<PreviewCompositionSettings>>>,
@@ -72,6 +73,7 @@ pub(crate) struct PreviewPlayerSettings {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct PreviewCompositionSettings {
   bake_camera: bool,
   camera_overlay: CameraOverlaySettings,

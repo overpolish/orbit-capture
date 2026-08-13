@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use std::{path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};

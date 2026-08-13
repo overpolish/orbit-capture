@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use crate::recording::cursor::{
   self, ButtonState, CursorButton, CursorRecord, CursorSource, CursorStyle,
 };
 use std::path::Path;
 
 mod overlay;
+#[cfg(target_os = "macos")]
 pub(in crate::exports) use overlay::CursorOverlayCache;
 mod raster;
 mod settings;

@@ -23,9 +23,11 @@ pub(crate) mod region;
 pub use dock::initialize_recording_dock;
 pub use dock::{hide_recording_dock, manage_recording_dock_movement, show_recording_dock};
 use geometry::monitor_with_most_overlap;
+#[cfg(target_os = "macos")]
+pub use lifecycle::get_or_create;
 pub use lifecycle::{
-  contain_export, contain_normal_window, get_or_create, initialize_export,
-  initialize_normal_window, initialize_recording_bar_position, show, sync_dock_visibility,
+  contain_export, contain_normal_window, initialize_export, initialize_normal_window,
+  initialize_recording_bar_position, show, sync_dock_visibility,
 };
 #[cfg(not(target_os = "macos"))]
 pub use lifecycle::{

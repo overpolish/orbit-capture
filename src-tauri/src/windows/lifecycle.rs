@@ -14,6 +14,7 @@ use super::{
 
 static EXPORT_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+#[cfg(target_os = "macos")]
 pub fn get_or_create<F>(
   app: &AppHandle,
   label: WindowLabel,
@@ -180,14 +181,14 @@ pub fn contain_normal_window(app: &AppHandle, window: &WebviewWindow) -> tauri::
   contain_window_in_work_area(app, window)
 }
 
-pub fn sync_dock_visibility(app: &AppHandle) -> tauri::Result<()> {
+pub fn sync_dock_visibility(_app: &AppHandle) -> tauri::Result<()> {
   #[cfg(target_os = "macos")]
   {
     let visible = [WindowLabel::Export, WindowLabel::Settings]
       .iter()
-      .filter_map(|label| app.get_webview_window(label.as_str()))
+      .filter_map(|label| _app.get_webview_window(label.as_str()))
       .any(|window| window.is_visible().unwrap_or(false));
-    app.set_dock_visibility(visible)?;
+    _app.set_dock_visibility(visible)?;
   }
 
   Ok(())

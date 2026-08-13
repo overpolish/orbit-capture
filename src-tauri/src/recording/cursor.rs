@@ -26,9 +26,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[cfg(any(test, target_os = "macos"))]
+pub(crate) use self::format::CursorSourceKind;
 pub(crate) use self::format::{
-  read, ButtonState, CursorButton, CursorRecord, CursorSource, CursorSourceKind, CursorStyle,
-  FORMAT_VERSION,
+  read, ButtonState, CursorButton, CursorRecord, CursorSource, CursorStyle, FORMAT_VERSION,
 };
 const MOVEMENT_INTERVAL: Duration = Duration::from_micros(7_500);
 const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
@@ -42,6 +43,7 @@ pub(super) struct CursorAppearance {
   pub width: f64,
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
 pub(super) enum RawCursorEventKind {
   Appearance,

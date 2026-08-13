@@ -67,6 +67,7 @@ pub(crate) fn physical_capture_rect(
 /// NV12/H.264/HEVC encode chroma in two-pixel blocks. Preserve the selected
 /// top-left edge and trim at most one physical pixel from the bottom/right so
 /// the native capture stream and encoder always agree about their dimensions.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) const fn video_capture_rect(mut rect: CaptureRect) -> Option<CaptureRect> {
   rect.width &= !1;
   rect.height &= !1;

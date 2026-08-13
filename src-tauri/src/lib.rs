@@ -49,7 +49,7 @@ pub fn run() {
     .plugin(tauri_plugin_macos_permissions::init())
     .plugin(tauri_nspanel::init());
 
-  let mut app = builder
+  let app = builder
     .manage(audio_preview::AudioPreviewState::default())
     .manage(camera_preview::CameraPreviewState::default())
     .manage(exports::ExportState::default())
@@ -237,6 +237,9 @@ pub fn run() {
     })
     .build(tauri::generate_context!())
     .expect("error while running tauri application");
+
+  #[cfg(target_os = "macos")]
+  let mut app = app;
 
   #[cfg(target_os = "macos")]
   app.set_dock_visibility(false);

@@ -12,7 +12,7 @@ pub fn recognize(rgba: &[u8], width: u32, height: u32) -> Result<Vec<RecognizedL
   writer.WriteBytes(rgba).map_err(|error| error.to_string())?;
   let buffer = writer.DetachBuffer().map_err(|error| error.to_string())?;
   let bitmap = SoftwareBitmap::CreateCopyFromBuffer(
-    buffer,
+    &buffer,
     BitmapPixelFormat::Rgba8,
     width as i32,
     height as i32,
@@ -22,7 +22,7 @@ pub fn recognize(rgba: &[u8], width: u32, height: u32) -> Result<Vec<RecognizedL
   let result = engine
     .RecognizeAsync(&bitmap)
     .map_err(|error| error.to_string())?
-    .get()
+    .join()
     .map_err(|error| error.to_string())?;
   let native_lines = result.Lines().map_err(|error| error.to_string())?;
   let mut lines = Vec::with_capacity(native_lines.Size().unwrap_or_default() as usize);

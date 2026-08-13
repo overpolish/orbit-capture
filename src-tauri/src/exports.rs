@@ -57,6 +57,7 @@ use crate::screenshots::{
   ScreenshotOutputSettings,
 };
 
+#[cfg(target_os = "macos")]
 pub(crate) fn initialize_cursor_artwork() {
   cursor_effects::initialize_artwork();
 }

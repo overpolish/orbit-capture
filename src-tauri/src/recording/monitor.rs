@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 //! Lightweight confidence signals from the active capture session.
 //!
 //! The dock subscribes to this shared boundary; it never opens a second
