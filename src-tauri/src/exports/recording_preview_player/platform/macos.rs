@@ -6,7 +6,7 @@
 //! Playback and stills share one `AVAssetReader` pipeline and one GPU
 //! compositor, so a paused frame is pixel-identical to the playing frame at
 //! that position. Decoded planes stay in Core Video and are presented straight
-//! onto the surface's `CAMetalLayer` panes — nothing crosses IPC.
+//! onto the surface's `CAMetalLayer` panes - nothing crosses IPC.
 
 mod composition;
 mod cursor;

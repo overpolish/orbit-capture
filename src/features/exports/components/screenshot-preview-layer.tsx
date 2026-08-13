@@ -11,7 +11,7 @@ import {
 import { ScreenshotLayoutControl } from "./screenshot-layout-control";
 import { ScreenshotRadiusControl } from "./screenshot-radius-control";
 
-/// The composed image itself is drawn by the platform preview path — a native
+/// The composed image itself is drawn by the platform preview path - a native
 /// pane on macOS, the CPU compositor blitted into a canvas elsewhere. This
 /// layer only carries the on-screen controls that sit above it.
 export function ScreenshotPreviewLayer({

@@ -178,7 +178,7 @@ export function useRecordingPreviewSurface({
               const holes: Hole[] = [];
               for (const { rect } of panes) {
                 // The native panes are clipped to the viewport, so a zoomed
-                // pane must not punch beyond it — that would see through UI
+                // pane must not punch beyond it - that would see through UI
                 // the video never covers.
                 const left = Math.max(rect.x, 0);
                 const top = Math.max(rect.y, 0);

@@ -119,6 +119,25 @@
   pointer-events: none;
 }
 
+/*
+ * Centres a spinner on whole pixels. WebKit re-rasterises a rotating element
+ * that lands on a fractional pixel once per frame, and the snapping makes it
+ * wobble around a point that is not its centre. Flex centring divides the
+ * container in half, so any container that is not a whole number of pixels
+ * wide puts the spinner on a half pixel; rounding the offset keeps it still
+ * whatever the container ends up being. The plain calc() comes first as a
+ * fallback, so centring degrades gracefully rather than collapsing to the
+ * corner if round() is ever unavailable.
+ */
+.spinner-pixel-centered {
+  --spinner-size: 48px;
+  position: absolute;
+  left: calc(50% - var(--spinner-size) / 2);
+  top: calc(50% - var(--spinner-size) / 2);
+  left: round(down, calc(50% - var(--spinner-size) / 2), 1px);
+  top: round(down, calc(50% - var(--spinner-size) / 2), 1px);
+}
+
 html,
 body {
   margin: 0;

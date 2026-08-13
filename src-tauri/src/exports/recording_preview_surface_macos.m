@@ -93,7 +93,7 @@ void *orbit_preview_surface_create(void *host_view) {
     // The panes live directly BELOW the webview: the DOM keeps every control
     // and just mask-punches holes over the pane rects, exactly like FCP
     // layers its on-screen controls above the video surface. The container
-    // must sit immediately under the WKWebView specifically — dropping it to
+    // must sit immediately under the WKWebView specifically - dropping it to
     // the bottom of the window would put it beneath the vibrancy effect view,
     // which shows the video through frosted glass.
     NSView *webview = nil;

@@ -83,7 +83,7 @@ void *orbit_preview_scrubber_copy_frame(void *handle, int64_t milliseconds, int 
     CVPixelBufferRef pixels = NULL;
     CMTime display_time = kCMTimeInvalid;
     // `copyPixelBufferForItemTime:` returns whatever the renderer currently
-    // holds — immediately after a seek that is often still the previous
+    // holds - immediately after a seek that is often still the previous
     // frame. `hasNewPixelBufferForItemTime:` is the signal that the frame
     // for the landed time has actually been rendered, so wait for it. A
     // genuinely new frame is ready on the first poll in practice; a seek

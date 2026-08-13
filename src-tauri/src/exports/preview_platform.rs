@@ -7,7 +7,7 @@
 //!
 //! The export window previews a recording or a screenshot by compositing frames
 //! on the GPU into panes that sit *below* the OS webview. The webview draws only
-//! UI chrome — on-screen controls, backdrop layers with CSS mask holes — so the
+//! UI chrome - on-screen controls, backdrop layers with CSS mask holes - so the
 //! pixels the user is editing never cross IPC.
 //!
 //! Everything platform-specific about that lives behind this module and behind
@@ -36,7 +36,7 @@
 //!    layout ([`RecordingPreviewSurface::begin_layout`] / `layout` /
 //!    `finish_layout`, so a resize is one atomic reposition and never tears
 //!    against the webview), a viewport with an opaque backstop colour
-//!    ([`RecordingPreviewSurface::set_viewport`] — the backstop is what shows
+//!    ([`RecordingPreviewSurface::set_viewport`] - the backstop is what shows
 //!    through the webview's mask holes outside the panes),
 //!    [`RecordingPreviewSurface::hide`], and the present-composed entry points
 //!    below.
@@ -49,7 +49,7 @@
 //!    trips through system memory. A backend that cannot do zero-copy yet may
 //!    implement only `present_composed`.
 //! 3. **A pane decoder and frame scrubber for stills and scrubbing**, plus (4)
-//!    the **playback video path** — both live in
+//!    the **playback video path** - both live in
 //!    [`super::recording_preview_player::platform`], which selects backends the
 //!    same way this module does. The decoder answers "give me the frame at t,
 //!    sized for this pane"; the scrubber keeps a warm long-lived decode context

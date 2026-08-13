@@ -26,8 +26,11 @@ export function WindowSelector({
 }: WindowSelectorProps) {
   if (isLoading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <LoaderCircle className="animate-spin text-muted" size={48} />
+      <div className="relative h-full">
+        <LoaderCircle
+          className="spinner-pixel-centered animate-spin text-muted"
+          size={48}
+        />
       </div>
     );
   }
