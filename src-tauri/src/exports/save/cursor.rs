@@ -13,6 +13,7 @@ pub(super) struct CursorSaveRequest<'a> {
   pub effects: cursor_effects::CursorEffectSettings,
   pub height: u32,
   pub layout: track_selection::AudioLayout,
+  pub output: &'a ScreenshotOutputSettings,
   pub progress_share: f64,
   pub screen: &'a Path,
   pub selection: &'a track_selection::TrackSelection,
@@ -41,9 +42,10 @@ pub(super) fn save_baked(request: CursorSaveRequest<'_>) -> Result<Option<PathBu
   };
   match cursor_export::export(cursor_export::CursorExportRequest {
     audio_layout: request.layout,
+    audio_source: None,
     camera: None,
     cancelled: request.cancelled,
-    cursor: request.cursor,
+    cursor: Some(request.cursor),
     cursor_effects: request.effects,
     destination: &path,
     duration_ms: request.duration_ms,
@@ -51,6 +53,7 @@ pub(super) fn save_baked(request: CursorSaveRequest<'_>) -> Result<Option<PathBu
     on_progress: &mut on_progress,
     screen: request.screen,
     selection: request.selection,
+    output: request.output,
     video: request.video,
     width: request.width,
   })? {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
+use tauri::ipc::{Channel, InvokeResponseBody};
 
 #[tauri::command]
 pub fn get_export_snapshot(app: AppHandle) -> ExportSnapshot {
@@ -59,6 +60,44 @@ pub async fn get_export_preview(app: AppHandle, full: bool) -> Result<Response, 
   Ok(Response::new(bytes))
 }
 
+#[tauri::command]
+pub async fn render_screenshot_output_preview(
+  app: AppHandle,
+  artifact_id: u64,
+  request_id: u32,
+  output: ScreenshotOutputSettings,
+  channel: Channel,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let image = {
+      let state = app.state::<ExportState>();
+      let artifact = state
+        .artifact
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+      let Some(ExportArtifact::Screenshot { id, image, .. }) = artifact.as_ref() else {
+        return Err("There is no screenshot to preview".to_owned());
+      };
+      if *id != artifact_id {
+        return Err("That screenshot is no longer waiting to be exported".to_owned());
+      }
+      image.clone()
+    };
+    let composed = compose_screenshot(&image, &output)?;
+    let mut payload = Vec::with_capacity(12 + composed.rgba.len());
+    payload.extend_from_slice(&request_id.to_le_bytes());
+    payload.extend_from_slice(&composed.width.to_le_bytes());
+    payload.extend_from_slice(&composed.height.to_le_bytes());
+    payload.extend_from_slice(&composed.rgba);
+    channel
+      .send(InvokeResponseBody::Raw(payload))
+      .map_err(|error| error.to_string())
+  })
+  .await
+  .map_err(|error| error.to_string())??;
+  Ok(())
+}
+
 /// A sampled estimate of the file the current export choices would produce.
 /// Video is the expensive unknown; selected AAC sizes are derived from their
 /// actual configured bitrates and added after the sample is extrapolated.
@@ -81,6 +120,7 @@ pub async fn estimate_recording_export(
     include_camera,
     include_primary_video,
     resolution_scale_percent,
+    recording_output,
     screenshot_output: _,
   } = options;
   if compression > 4 || camera_compression > 4 {
@@ -181,40 +221,52 @@ pub async fn estimate_recording_export(
       .compression_estimate_preparation
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let estimate_compression = if (bake_camera || bake_cursor) && compression == 0 {
-      // Original means no intentional quality reduction. Composition still
-      // requires an encode, so it uses the same high-quality step as High
-      // rather than pretending the source can be stream-copied.
-      1
-    } else {
-      compression
-    };
+    let primary_composition =
+      cursor_export::needs_composition(&recording_output.primary, width, height);
+    let camera_composition = camera.as_ref().is_some_and(|camera| {
+      cursor_export::needs_composition(&recording_output.camera, camera.width, camera.height)
+    });
+    let estimate_compression =
+      if (bake_camera || bake_cursor || primary_composition) && compression == 0 {
+        // Original means no intentional quality reduction. Composition still
+        // requires an encode, so it uses the same high-quality step as High
+        // rather than pretending the source can be stream-copied.
+        1
+      } else {
+        compression
+      };
     let key = (
       artifact_id,
       u8::from(bake_camera) * 2 + u8::from(bake_cursor) * 4,
       estimate_compression,
       resolution_scale_percent,
     );
-    let cached = state
-      .compression_estimates
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner())
-      .get(&key)
-      .copied();
+    let cached = if primary_composition {
+      None
+    } else {
+      state
+        .compression_estimates
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&key)
+        .copied()
+    };
     let screen_video = match cached {
       _ if !include_primary_video => 0,
       Some(bytes) => bytes,
       None if !has_video => 0,
-      None if bake_cursor && !bake_camera => cursor_export::estimated_video_bytes(
-        width,
-        height,
-        duration_ms,
-        media_preview::VideoExportOptions {
-          compression: estimate_compression,
-          resolution_scale_percent,
-          source_scale_percent,
-        },
-      ),
+      None if bake_cursor || bake_camera || primary_composition => {
+        cursor_export::estimated_video_bytes(
+          recording_output.primary.width,
+          recording_output.primary.height,
+          duration_ms,
+          media_preview::VideoExportOptions {
+            compression: estimate_compression,
+            resolution_scale_percent: 100,
+            source_scale_percent: 100,
+          },
+        )
+      }
       None
         if !bake_camera
           && !bake_cursor
@@ -254,14 +306,28 @@ pub async fn estimate_recording_export(
         camera_compression,
         camera_resolution_scale_percent,
       );
-      let cached = state
-        .compression_estimates
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&key)
-        .copied();
+      let cached = if camera_composition {
+        None
+      } else {
+        state
+          .compression_estimates
+          .lock()
+          .unwrap_or_else(|poisoned| poisoned.into_inner())
+          .get(&key)
+          .copied()
+      };
       match cached {
         Some(bytes) => bytes,
+        None if camera_composition => cursor_export::estimated_video_bytes(
+          recording_output.camera.width,
+          recording_output.camera.height,
+          camera.duration_ms,
+          media_preview::VideoExportOptions {
+            compression: camera_compression.max(1),
+            resolution_scale_percent: 100,
+            source_scale_percent: 100,
+          },
+        ),
         None if camera_compression == 0 && camera_resolution_scale_percent == 100 => {
           camera.original_size_bytes
         }

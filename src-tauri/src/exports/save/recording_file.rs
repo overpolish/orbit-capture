@@ -15,6 +15,7 @@ pub(in crate::exports) struct PrimaryRecordingSaveRequest<'a> {
   pub duration_ms: u64,
   pub height: u32,
   pub layout: track_selection::AudioLayout,
+  pub output: &'a ScreenshotOutputSettings,
   pub progress_share: f64,
   pub resolution_scale_percent: u16,
   pub screen: &'a Path,
@@ -43,6 +44,7 @@ pub(in crate::exports) fn save_primary_recording(
       effects: request.cursor_effects,
       height: request.height,
       layout: request.layout,
+      output: request.output,
       progress_share: request.progress_share,
       screen: request.screen,
       selection: request.selection,
@@ -50,6 +52,45 @@ pub(in crate::exports) fn save_primary_recording(
       video,
       width: request.width,
     });
+  }
+  if cursor_export::needs_composition(request.output, request.width, request.height) {
+    let path = unique_path(
+      request.directory,
+      request.stem,
+      RECORDING_EXTENSION,
+      &|candidate| candidate.exists(),
+    );
+    let mut on_progress = |processed_ms| {
+      camera_save::emit_progress(
+        request.app,
+        request.artifact_id,
+        "recording",
+        processed_ms,
+        request.duration_ms,
+        0.0,
+        request.progress_share,
+      );
+    };
+    return match cursor_export::export(cursor_export::CursorExportRequest {
+      audio_layout: request.layout,
+      audio_source: None,
+      camera: None,
+      cancelled: request.cancelled,
+      cursor: None,
+      cursor_effects: request.cursor_effects,
+      destination: &path,
+      duration_ms: request.duration_ms,
+      height: request.height,
+      on_progress: &mut on_progress,
+      output: request.output,
+      screen: request.screen,
+      selection: request.selection,
+      video,
+      width: request.width,
+    })? {
+      media_preview::ExportRunResult::Completed => Ok(Some(path)),
+      media_preview::ExportRunResult::Cancelled => Ok(None),
+    };
   }
   if request.compression == 0
     && request.resolution_scale_percent >= request.source_scale_percent

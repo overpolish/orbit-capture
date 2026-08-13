@@ -4,7 +4,10 @@
 import { Button } from "../../../components/base/button/button";
 import { CircularProgressBar } from "../../../components/base/circular-progress-bar/circular-progress-bar";
 import { Overlay } from "../../../components/base/overlay/overlay";
-import { ScreenshotOutputSettings } from "../screenshot-output";
+import {
+  RecordingOutputSettings,
+  ScreenshotOutputSettings,
+} from "../screenshot-output";
 import {
   AudioTrackVolume,
   CameraOverlaySettings,
@@ -60,6 +63,10 @@ type ExportPanelProps = {
   onFileStemChange?: (fileStem: string) => void;
   onMinimize?: () => void;
   onNeedFullResolution?: () => void;
+  onRecordingOutputChange?: (
+    trackId: RecordingVideoTrackId,
+    settings: ScreenshotOutputSettings,
+  ) => void;
   onResolutionScaleChange?: (scale: number) => void;
   onSave?: () => void;
   onScreenshotBackgroundRadiusChange?: (radiusPercent: number) => void;
@@ -70,6 +77,7 @@ type ExportPanelProps = {
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
   onSelectedTrackVolumeChange?: (decibels: number) => void;
   previewUrl?: string | null;
+  recordingOutput?: RecordingOutputSettings;
   recordingPreviewError?: string | null;
   recordingPreviewLayout?: RecordingPreviewLayout;
   recordingPreviewTracks?: PreparedAudioTrack[];
@@ -93,6 +101,7 @@ export function ExportPanel({
   cursorEffects = {
     bake: true,
     clickAnimation: true,
+    clipAtVideoEdge: false,
     motionBlur: true,
     sizePercent: 100,
     smoothMovement: true,
@@ -126,6 +135,7 @@ export function ExportPanel({
   onFileStemChange,
   onMinimize,
   onNeedFullResolution,
+  onRecordingOutputChange,
   onResolutionScaleChange,
   onSave,
   onScreenshotBackgroundRadiusChange,
@@ -136,6 +146,7 @@ export function ExportPanel({
   onSelectedTrackChange,
   onSelectedTrackVolumeChange,
   previewUrl,
+  recordingOutput,
   recordingPreviewError,
   recordingPreviewLayout,
   recordingPreviewTracks,
@@ -175,9 +186,11 @@ export function ExportPanel({
         onCollapseAudioChange={onCollapseAudioChange}
         onCompressionChange={onCompressionChange}
         onCursorEffectsChange={onCursorEffectsChange}
+        onRecordingOutputChange={onRecordingOutputChange}
         onResolutionScaleChange={onResolutionScaleChange}
         onSelectedTrackChange={onSelectedTrackChange}
         onSelectedTrackVolumeChange={onSelectedTrackVolumeChange}
+        recordingOutput={recordingOutput}
         resolutionScalePercent={resolutionScalePercent}
         selectedTrack={selectedTrack}
         selectedTrackVolume={
@@ -190,7 +203,15 @@ export function ExportPanel({
     ) : null;
 
   return (
-    <main className="window-surface relative flex h-screen w-screen flex-col overflow-hidden rounded-[10px] bg-content/92 text-content-fg">
+    <main className="window-surface relative flex h-screen w-screen flex-col overflow-hidden rounded-[10px] text-content-fg">
+      {/* The window background lives on its own layer so the native preview
+          panes below the webview can mask holes through it without also
+          masking the controls rendered above them. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 bg-content/92"
+        data-preview-backdrop
+      />
       <Overlay blur="lg" contained isOpen={isSaving}>
         <div className="flex flex-col items-center gap-3">
           <CircularProgressBar
@@ -263,7 +284,9 @@ export function ExportPanel({
           onCameraOverlayChange={onCameraOverlayChange}
           onEnabledTracksChange={onEnabledTracksChange}
           onEnabledVideoTracksChange={onEnabledVideoTracksChange}
+          onRecordingOutputChange={onRecordingOutputChange}
           onSelectedTrackChange={onSelectedTrackChange}
+          recordingOutput={recordingOutput}
           recordingPreviewError={recordingPreviewError}
           recordingPreviewLayout={recordingPreviewLayout}
           recordingPreviewTracks={recordingPreviewTracks}

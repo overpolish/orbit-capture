@@ -22,7 +22,7 @@ export function ScreenshotCropMagnifier({
   layout: ScreenshotLayout;
   point: { x: number; y: number };
   source: { height: number; width: number };
-  sourceImage: HTMLImageElement;
+  sourceImage: CanvasImageSource;
 }) {
   const direction = edges
     .map((edge, index) =>

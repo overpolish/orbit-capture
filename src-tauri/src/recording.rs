@@ -87,6 +87,14 @@ pub fn start(app: &AppHandle, options: StartRecordingOptions) -> Result<(), Stri
     abandon_start(app, &error);
     return Err(error);
   }
+  // The capture only opens after the countdown, but the dock sizes itself
+  // from the monitor's source flags — announcing the planned inputs now lets
+  // it show the confidence layout (and its width) through the countdown.
+  state(app).monitor.configure(
+    options.system_audio,
+    options.microphone_id.is_some(),
+    options.camera_id.is_some(),
+  );
 
   let app = app.clone();
   // Opening a capture talks to the window server and waits on it. `tokio` is

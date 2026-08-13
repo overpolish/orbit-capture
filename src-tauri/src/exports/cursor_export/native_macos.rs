@@ -17,9 +17,7 @@ static EXPORT_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 
 pub(super) struct CursorLayer {
   pub commands: PathBuf,
-  pub height: u32,
   pub movie: PathBuf,
-  pub width: u32,
 }
 
 impl CursorLayer {
@@ -43,8 +41,10 @@ fn temporary_paths() -> (PathBuf, PathBuf) {
   )
 }
 
-pub(super) fn scaled_size(request: &CursorExportRequest<'_>) -> (u32, u32) {
-  super::output_dimensions(request.width, request.height, request.video)
+pub(super) fn scaled_size(request: &CursorExportRequest<'_>) -> Result<(u32, u32), String> {
+  let placement =
+    crate::screenshots::output_placement(request.width, request.height, request.output)?;
+  Ok((placement.image_width, placement.image_height))
 }
 
 fn finish_layer_encoder(
@@ -72,8 +72,13 @@ fn finish_layer_encoder(
 pub(super) fn render(
   request: &mut CursorExportRequest<'_>,
 ) -> Result<(ExportRunResult, Option<CursorLayer>), String> {
-  let cursor = CursorCompositor::open(request.cursor)?;
-  let (output_width, output_height) = scaled_size(request);
+  let Some(cursor_path) = request.cursor else {
+    return Ok((ExportRunResult::Completed, None));
+  };
+  let cursor = CursorCompositor::open(cursor_path)?;
+  let (output_width, output_height) = scaled_size(request)?;
+  let placement =
+    crate::screenshots::output_placement(request.width, request.height, request.output)?;
   let layer_size = cursor.overlay_size(
     output_width as usize,
     output_height as usize,
@@ -153,7 +158,12 @@ pub(super) fn render(
       &mut cache,
     );
     if previous_position != Some(position) {
-      let (x, y) = position.map_or((-100_000, -100_000), |position| (position.x, position.y));
+      let (x, y) = position.map_or((-100_000, -100_000), |position| {
+        (
+          position.x.saturating_add(placement.image_x.round() as i32),
+          position.y.saturating_add(placement.image_y.round() as i32),
+        )
+      });
       command_text.push_str(&format!(
         "{:.9} overlay@cursor x {x}, overlay@cursor y {y};\n",
         frame_seconds
@@ -188,11 +198,6 @@ pub(super) fn render(
   })?;
   Ok((
     ExportRunResult::Completed,
-    Some(CursorLayer {
-      commands,
-      height: output_height,
-      movie,
-      width: output_width,
-    }),
+    Some(CursorLayer { commands, movie }),
   ))
 }

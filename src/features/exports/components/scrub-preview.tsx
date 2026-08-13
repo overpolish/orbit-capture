@@ -3,6 +3,7 @@
 
 import { ReactNode } from "react";
 
+import { RecordingOutputSettings } from "../screenshot-output";
 import {
   AudioTrackVolume,
   CameraOverlaySettings,
@@ -33,11 +34,16 @@ export type ScrubPreviewProps = {
   onCameraOverlayChange?: (settings: CameraOverlaySettings) => void;
   onEnabledTracksChange?: (streamIndices: number[]) => void;
   onEnabledVideoTracksChange?: (tracks: RecordingVideoTrackId[]) => void;
+  onRecordingOutputChange?: (
+    trackId: RecordingVideoTrackId,
+    settings: RecordingOutputSettings[RecordingVideoTrackId],
+  ) => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
   previewLayout?: RecordingPreviewLayout;
   previewOutputDimensions?: Partial<
     Record<RecordingVideoTrackId, { height: number; width: number }>
   >;
+  recordingOutput?: RecordingOutputSettings;
   selectedTrack?: RecordingTrackId | null;
 };
 

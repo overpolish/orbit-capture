@@ -54,9 +54,9 @@ pub fn run() {
     .manage(camera_preview::CameraPreviewState::default())
     .manage(exports::ExportState::default())
     .manage(exports::recording_preview_player::RecordingPreviewPlayerState::default())
+    .manage(exports::screenshot_preview::ScreenshotPreviewState::default())
     .manage(permissions::PermissionState::default())
     .manage(recording::RecordingState::default())
-    .manage(screenshots::MeshPreviewState::default())
     .manage(settings::GeneralSettingsState::default())
     .manage(shortcuts::ShortcutSettingsState::default())
     .manage(text_recognition::TextRecognitionState::default())
@@ -75,19 +75,28 @@ pub fn run() {
       exports::commands::copy_export_to_clipboard,
       exports::preview::estimate_recording_export,
       exports::preview::get_export_preview,
+      exports::preview::render_screenshot_output_preview,
       exports::preview::get_export_snapshot,
+      exports::preview_platform::preview_capabilities,
       exports::recording_preview::get_recording_preview,
       exports::recording_preview_player::commands::pause_recording_preview,
+      exports::recording_preview_player::surface_commands::layout_recording_preview_surface,
       exports::recording_preview_player::commands::play_recording_preview,
       exports::recording_preview_player::commands::request_recording_preview_full_resolution,
       exports::recording_preview_player::commands::seek_recording_preview,
       exports::recording_preview_player::commands::select_recording_preview_audio,
       exports::recording_preview_player::commands::set_recording_preview_audio_volumes,
       exports::recording_preview_player::commands::set_recording_preview_cursor_effects,
+      exports::recording_preview_player::commands::set_recording_preview_composition,
       exports::recording_preview_player::commands::start_recording_preview_player,
       exports::recording_preview_player::commands::stop_recording_preview_player,
+      exports::recording_preview_player::timeline_thumbnails::copy_recording_preview_source_frame,
       exports::recording_preview_player::timeline_thumbnails::stream_recording_timeline_thumbnails,
       exports::save::save_export,
+      exports::screenshot_preview::layout_screenshot_preview_surface,
+      exports::screenshot_preview::set_screenshot_preview_output,
+      exports::screenshot_preview::start_screenshot_preview,
+      exports::screenshot_preview::stop_screenshot_preview,
       exports::commands::set_export_directory,
       exports::commands::set_screenshot_background_radius,
       exports::commands::set_screenshot_radius,
@@ -114,7 +123,6 @@ pub fn run() {
       recording_sources::resize_window,
       recording_sources::restore_window_border,
       screenshots::capture_still,
-      screenshots::render_mesh_background_preview,
       text_recognition::cancel_text_recognition,
       text_recognition::capture_text_region,
       text_recognition::copy_recognized_text,

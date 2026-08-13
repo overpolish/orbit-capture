@@ -8,25 +8,36 @@ import { RecordingPreviewLayout } from "./types";
 
 export function useRecordingPreviewFrames({
   cameraCanvasRef,
+  cursorCanvasRef,
   onError,
+  onFrameDrawn,
   screenCanvasRef,
 }: {
   cameraCanvasRef: RefObject<HTMLCanvasElement | null>;
+  cursorCanvasRef: RefObject<HTMLCanvasElement | null>;
   onError: (message: string) => void;
   screenCanvasRef: RefObject<HTMLCanvasElement | null>;
+  onFrameDrawn?: () => void;
 }) {
+  const onFrameDrawnRef = useRef(onFrameDrawn);
+  onFrameDrawnRef.current = onFrameDrawn;
   const clearCanvases = useCallback(() => {
-    for (const canvas of [screenCanvasRef.current, cameraCanvasRef.current]) {
+    for (const canvas of [
+      screenCanvasRef.current,
+      cameraCanvasRef.current,
+      cursorCanvasRef.current,
+    ]) {
       canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
     }
-  }, [cameraCanvasRef, screenCanvasRef]);
+  }, [cameraCanvasRef, cursorCanvasRef, screenCanvasRef]);
   const layoutRef = useRef<RecordingPreviewLayout | null>(null);
   const latestFrameRef = useRef<ArrayBuffer | null>(null);
   const displayedFrameRef = useRef<ArrayBuffer | null>(null);
   const displayedTargetsRef = useRef<{
     camera: HTMLCanvasElement | null;
+    cursor: HTMLCanvasElement | null;
     screen: HTMLCanvasElement | null;
-  }>({ camera: null, screen: null });
+  }>({ camera: null, cursor: null, screen: null });
   const displayedFrameRequestRef = useRef(0);
   const [previewLayout, setPreviewLayout] =
     useState<RecordingPreviewLayout | null>(null);
@@ -38,9 +49,11 @@ export function useRecordingPreviewFrames({
     let animation = 0;
     const render = () => {
       const camera = cameraCanvasRef.current;
+      const cursor = cursorCanvasRef.current;
       const screen = screenCanvasRef.current;
       const targetsChanged =
         displayedTargetsRef.current.camera !== camera ||
+        displayedTargetsRef.current.cursor !== cursor ||
         displayedTargetsRef.current.screen !== screen;
       const frame =
         latestFrameRef.current ??
@@ -51,6 +64,7 @@ export function useRecordingPreviewFrames({
         decodeInFlight = true;
         void drawRecordingPreviewFrame({
           camera,
+          cursor,
           frame,
           isCurrentRequest: (requestId) => {
             if (requestId < displayedFrameRequestRef.current) return false;
@@ -63,8 +77,9 @@ export function useRecordingPreviewFrames({
           .then((drawn) => {
             if (!disposed && drawn) {
               displayedFrameRef.current = frame;
-              displayedTargetsRef.current = { camera, screen };
+              displayedTargetsRef.current = { camera, cursor, screen };
               setIsPreparing(false);
+              onFrameDrawnRef.current?.();
             }
           })
           .catch((cause: unknown) => {
@@ -84,13 +99,13 @@ export function useRecordingPreviewFrames({
       disposed = true;
       cancelAnimationFrame(animation);
     };
-  }, [cameraCanvasRef, onError, screenCanvasRef]);
+  }, [cameraCanvasRef, cursorCanvasRef, onError, screenCanvasRef]);
 
   const begin = useCallback(() => {
     displayedFrameRequestRef.current = 0;
     latestFrameRef.current = null;
     displayedFrameRef.current = null;
-    displayedTargetsRef.current = { camera: null, screen: null };
+    displayedTargetsRef.current = { camera: null, cursor: null, screen: null };
     clearCanvases();
     setIsPreparing(true);
   }, [clearCanvases]);
@@ -100,7 +115,7 @@ export function useRecordingPreviewFrames({
   const reset = useCallback(() => {
     latestFrameRef.current = null;
     displayedFrameRef.current = null;
-    displayedTargetsRef.current = { camera: null, screen: null };
+    displayedTargetsRef.current = { camera: null, cursor: null, screen: null };
     clearCanvases();
   }, [clearCanvases]);
   const setLayout = useCallback((next: RecordingPreviewLayout) => {

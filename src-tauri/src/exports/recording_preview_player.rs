@@ -3,12 +3,13 @@
 
 //! Native, bounded playback for the export window.
 //!
-//! Rust owns decode, audio output, seeking and the playback clock, and sends
-//! the UI individual JPEG frames to draw on canvases.
+//! Rust owns decode, audio output, seeking and the playback clock. Native
+//! platform surfaces own video presentation; the webview only supplies layout
+//! and interaction state.
 
 use std::{
   path::PathBuf,
-  sync::{Arc, Mutex, RwLock},
+  sync::{atomic::AtomicBool, atomic::Ordering, Arc, Mutex, RwLock},
 };
 
 use serde::{Deserialize, Serialize};
@@ -17,23 +18,19 @@ use tauri::{ipc::Channel, AppHandle, Manager};
 mod audio;
 pub(crate) mod commands;
 mod layout;
-#[cfg(target_os = "macos")]
-mod still_macos;
+mod platform;
+pub(crate) mod surface_commands;
 pub(crate) mod timeline_thumbnails;
 mod video;
-#[cfg(target_os = "macos")]
-mod video_macos;
 mod worker;
 
-use self::layout::{
-  preview_layout, RecordingPreviewLayout, PREVIEW_HEIGHT, SIDE_BY_SIDE_PREVIEW_HEIGHT,
-};
-#[cfg(target_os = "macos")]
-use self::still_macos::NativeStillDecoder;
+use self::layout::{preview_layout, RecordingPreviewLayout};
 use self::worker::{PlaybackMode, PreviewPlayerWorker};
+use super::preview_platform::RecordingPreviewSurface;
 use super::{
   cursor_effects::{CursorCompositor, CursorEffectSettings},
-  AudioTrackVolume, ExportArtifact, ExportState, RecordingAudioTrack,
+  AudioTrackVolume, CameraOverlaySettings, ExportArtifact, ExportState, RecordingAudioTrack,
+  RecordingOutputSettings,
 };
 use crate::recording::PrimaryRecordingKind;
 pub use commands::stop_all;
@@ -45,24 +42,40 @@ pub(super) struct PlayerSources {
   camera_path: Option<PathBuf>,
   cursor: Option<Arc<CursorCompositor>>,
   cursor_settings: Arc<RwLock<CursorEffectSettings>>,
+  composition_settings: Option<Arc<RwLock<PreviewCompositionSettings>>>,
   duration_ms: u64,
+  /// Zero when OSCs are hidden, one for the primary pane and two for camera.
   layout: RecordingPreviewLayout,
   playback_layout: RecordingPreviewLayout,
+  /// True while real-time playback owns the surface, so a late still decode
+  /// never stomps a playing frame.
+  playing: Arc<AtomicBool>,
+  preview_surface: Option<Arc<RecordingPreviewSurface>>,
   screen_path: PathBuf,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreviewAudioSettings {
   pub audio_track_volumes: Vec<AudioTrackVolume>,
   pub enabled_stream_indices: Vec<usize>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreviewPlayerSettings {
   pub audio: PreviewAudioSettings,
+  pub bake_camera: bool,
+  pub camera_overlay: CameraOverlaySettings,
   pub cursor_effects: CursorEffectSettings,
+  pub recording_output: RecordingOutputSettings,
+}
+
+#[derive(Clone, Debug)]
+struct PreviewCompositionSettings {
+  bake_camera: bool,
+  camera_overlay: CameraOverlaySettings,
+  recording_output: RecordingOutputSettings,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -97,12 +110,16 @@ struct PreviewPlayerManager {
   frame_channel: Option<Channel>,
   is_playing: bool,
   latest_session_id: u64,
+  latest_layout_request: u64,
   latest_seek_request: u64,
+  pane_target_sizes: Vec<(u32, u32)>,
   position_ms: u64,
+  /// The next still seek came from a scrub gesture in progress, so the
+  /// scrubber may land on the cheapest nearby frame for immediacy.
+  rough_seek: bool,
   sources: Option<PlayerSources>,
   session_id: Option<u64>,
-  #[cfg(target_os = "macos")]
-  still_decoder: Option<NativeStillDecoder>,
+  still_decoder: Option<platform::StillDecoder>,
   worker: Option<PreviewPlayerWorker>,
 }
 
@@ -119,6 +136,14 @@ impl PreviewPlayerManager {
       .sources
       .clone()
       .ok_or_else(|| "The recording preview player is not open".to_owned())?;
+    sources
+      .playing
+      .store(matches!(mode, PlaybackMode::Playing), Ordering::Release);
+    if matches!(mode, PlaybackMode::Still) {
+      if let Some(surface) = &sources.preview_surface {
+        surface.hide();
+      }
+    }
     let frame_channel = self
       .frame_channel
       .clone()
@@ -127,39 +152,59 @@ impl PreviewPlayerManager {
       .event_channel
       .clone()
       .ok_or_else(|| "The recording preview event channel is unavailable".to_owned())?;
-    #[cfg(target_os = "macos")]
-    if matches!(mode, PlaybackMode::Still) && !sources.layout.panes.is_empty() {
+    if platform::NATIVE_STILLS
+      && matches!(mode, PlaybackMode::Still | PlaybackMode::InteractiveStill)
+      && !sources.layout.panes.is_empty()
+    {
+      let rough = std::mem::take(&mut self.rough_seek);
       if self.still_decoder.is_none() {
-        self.still_decoder = Some(NativeStillDecoder::spawn(
-          sources,
-          frame_channel,
-          event_channel,
-        )?);
+        self.still_decoder = Some(platform::StillDecoder::spawn(sources, event_channel)?);
       }
       return self
         .still_decoder
         .as_ref()
         .ok_or_else(|| "The native preview decoder is unavailable".to_owned())?
-        .seek(self.position_ms, self.latest_seek_request, false);
+        .seek(
+          self.position_ms,
+          self.latest_seek_request,
+          rough,
+          self.pane_target_sizes.clone(),
+        );
     }
+    self.rough_seek = false;
+    let playback_factors = self.playback_factors(&sources);
     self.worker = Some(PreviewPlayerWorker::spawn(
       sources,
-      PreviewAudioSettings {
-        audio_track_volumes: self.audio_volumes.clone(),
-        enabled_stream_indices: self.audio_indices.clone(),
+      worker::WorkerLaunch {
+        audio: PreviewAudioSettings {
+          audio_track_volumes: self.audio_volumes.clone(),
+          enabled_stream_indices: self.audio_indices.clone(),
+        },
+        mode,
+        playback_factors,
+        request_id: self.latest_seek_request,
+        start_ms: self.position_ms,
       },
-      self.position_ms,
-      self.latest_seek_request,
-      mode,
       frame_channel,
       event_channel,
     )?);
     Ok(())
   }
 
+  /// How much each pane's playback decode shrinks to match the on-screen pane
+  /// size, mirroring what the still decoder presents.
+  fn playback_factors(&self, sources: &PlayerSources) -> Vec<f64> {
+    platform::playback_factors(&self.pane_target_sizes, sources)
+  }
+
   fn stop(&mut self) {
     self.cancel_worker();
-    #[cfg(target_os = "macos")]
+    if let Some(sources) = self.sources.as_ref() {
+      sources.playing.store(false, Ordering::Release);
+      if let Some(surface) = sources.preview_surface.as_ref() {
+        surface.hide();
+      }
+    }
     if let Some(decoder) = self.still_decoder.take() {
       decoder.stop();
     }
@@ -167,6 +212,7 @@ impl PreviewPlayerManager {
     self.event_channel = None;
     self.frame_channel = None;
     self.is_playing = false;
+    self.pane_target_sizes.clear();
     self.sources = None;
     self.session_id = None;
   }
@@ -184,7 +230,7 @@ pub struct RecordingPreviewPlayerState(Mutex<PreviewPlayerManager>);
 fn sources(
   app: &AppHandle,
   artifact_id: u64,
-  cursor_settings: CursorEffectSettings,
+  settings: Option<&PreviewPlayerSettings>,
 ) -> Result<PlayerSources, String> {
   let state = app.state::<ExportState>();
   let artifact = state
@@ -215,15 +261,26 @@ fn sources(
     PrimaryRecordingKind::Camera => Some((*width, *height, layout::PreviewPaneKind::Camera)),
     PrimaryRecordingKind::Audio => None,
   };
-  // Two panes are fitted across the preview rather than down its height. On a
-  // Retina display a 720p backing frame is then visibly enlarged, so retain a
-  // 2x working frame for side-by-side playback and scrubbing. Single-pane
-  // previews keep the lighter 720p path.
-  let playback_height = if camera_size.is_some() {
-    SIDE_BY_SIDE_PREVIEW_HEIGHT
-  } else {
-    PREVIEW_HEIGHT
-  };
+  let preview_surface = app
+    .get_webview_window("export")
+    .map(|window| RecordingPreviewSurface::from_window(&window).map(Arc::new))
+    .transpose()?;
+  let layout = preview_layout(primary_pane, camera_size, *height);
+  // Native playback decodes every source at its own stored resolution. The
+  // presentation surface handles its visual size, so a portrait camera is not
+  // needlessly enlarged to the screen track's height before composition.
+  let mut playback_layout = layout.clone();
+  for pane in &mut playback_layout.panes {
+    pane.width = pane.source_width;
+    pane.height = pane.source_height;
+  }
+  playback_layout.width = playback_layout.panes.iter().map(|pane| pane.width).sum();
+  playback_layout.height = playback_layout
+    .panes
+    .iter()
+    .map(|pane| pane.height)
+    .max()
+    .unwrap_or(0);
   Ok(PlayerSources {
     audio_tracks: audio_tracks.clone(),
     camera_duration_ms: camera.as_ref().map(|value| value.duration_ms),
@@ -232,58 +289,23 @@ fn sources(
       .as_ref()
       .map(|value| CursorCompositor::open(&value.path).map(Arc::new))
       .transpose()?,
-    cursor_settings: Arc::new(RwLock::new(cursor_settings)),
+    composition_settings: settings.map(|settings| {
+      Arc::new(RwLock::new(PreviewCompositionSettings {
+        bake_camera: settings.bake_camera,
+        camera_overlay: settings.camera_overlay,
+        recording_output: settings.recording_output.clone(),
+      }))
+    }),
+    cursor_settings: Arc::new(RwLock::new(
+      settings.map_or_else(CursorEffectSettings::default, |settings| {
+        settings.cursor_effects
+      }),
+    )),
     duration_ms: *duration_ms,
-    layout: preview_layout(primary_pane, camera_size, *height),
-    playback_layout: preview_layout(primary_pane, camera_size, playback_height),
+    layout,
+    playback_layout,
+    playing: Arc::new(AtomicBool::new(false)),
+    preview_surface,
     screen_path: path.clone(),
   })
-}
-
-#[cfg(test)]
-mod tests {
-  use super::layout::PreviewPaneKind;
-  use super::*;
-
-  #[test]
-  fn lays_out_a_screen_as_one_native_preview_pane() {
-    let layout = preview_layout(
-      Some((3_600, 2_338, PreviewPaneKind::Screen)),
-      None,
-      PREVIEW_HEIGHT,
-    );
-
-    assert_eq!(layout.panes.len(), 1);
-    assert!(matches!(layout.panes[0].kind, PreviewPaneKind::Screen));
-    assert_eq!(layout.panes[0].x, 0);
-    assert_eq!(layout.width, layout.panes[0].width);
-  }
-
-  #[test]
-  fn keeps_screen_and_portrait_camera_as_separate_panes() {
-    let layout = preview_layout(
-      Some((3_600, 2_338, PreviewPaneKind::Screen)),
-      Some((1_080, 1_920)),
-      PREVIEW_HEIGHT,
-    );
-
-    assert_eq!(layout.panes.len(), 2);
-    assert!(matches!(layout.panes[0].kind, PreviewPaneKind::Screen));
-    assert!(matches!(layout.panes[1].kind, PreviewPaneKind::Camera));
-    assert_eq!(layout.panes[1].x, layout.panes[0].width);
-    assert_eq!(layout.width, layout.panes[0].width + layout.panes[1].width);
-    assert!(layout.panes[1].width < layout.panes[0].width);
-  }
-
-  #[test]
-  fn lays_out_a_primary_camera_as_a_camera_pane() {
-    let layout = preview_layout(
-      Some((1_920, 1_080, PreviewPaneKind::Camera)),
-      None,
-      PREVIEW_HEIGHT,
-    );
-
-    assert_eq!(layout.panes.len(), 1);
-    assert!(matches!(layout.panes[0].kind, PreviewPaneKind::Camera));
-  }
 }

@@ -10,6 +10,7 @@ import {
   GripVertical,
   LoaderCircle,
   Trash2,
+  X,
 } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 
@@ -137,24 +138,49 @@ export function RecordingDock({
         isOpen={isBusy}
       >
         {status === "starting" && countdownSeconds > 0 ? (
-          <ContentRotate
-            className="text-2xl font-semibold tabular-nums"
-            contentKey={String(countdownSeconds)}
-          >
-            {countdownSeconds}
-          </ContentRotate>
-        ) : (
           <>
-            <LoaderCircle
-              className="animate-spin text-muted"
-              size={ICON_SIZE}
-            />
-            {status === "starting" ? "Starting" : "Finishing"}
+            <ContentRotate
+              className="absolute inset-0 flex items-center justify-center text-2xl font-semibold tabular-nums"
+              contentKey={String(countdownSeconds)}
+            >
+              {countdownSeconds}
+            </ContentRotate>
+            <Button
+              aria-label="Cancel recording countdown"
+              className="absolute right-1 h-9 w-9"
+              onPress={onDiscard}
+              size="sm"
+              variant="ghost"
+            >
+              <X size={ICON_SIZE} />
+            </Button>
           </>
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center gap-2 text-xs font-semibold">
+            <span className="flex transform-gpu">
+              <LoaderCircle
+                className="animate-spin text-muted"
+                size={ICON_SIZE}
+              />
+            </span>
+            {status === "starting" ? "Starting" : "Finishing"}
+          </div>
         )}
-        {status === "starting" && (
-          <DiscardButton isDisabled={false} onDiscard={onDiscard} />
-        )}
+        {countdownSeconds === 0 ? (
+          <Button
+            aria-label={
+              status === "starting"
+                ? "Cancel starting recording"
+                : "Cancel finishing recording"
+            }
+            className="absolute right-1 h-9 w-9"
+            onPress={onDiscard}
+            size="sm"
+            variant="ghost"
+          >
+            <X size={ICON_SIZE} />
+          </Button>
+        ) : null}
       </Overlay>
       <div
         className="flex h-full shrink-0 cursor-grab items-center pl-0.5 text-muted"

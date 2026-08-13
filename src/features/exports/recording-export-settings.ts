@@ -2,21 +2,43 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import {
+  hasOutputComposition,
+  RecordingOutputSettings,
+} from "./screenshot-output";
+import {
+  CursorEffectSettings,
   AudioTrackVolume,
   CameraOverlaySettings,
-  CursorEffectSettings,
   ExportArtifact,
 } from "./types";
 
-export const defaultCameraOverlay = (
-  artifact?: ExportArtifact | null,
-): CameraOverlaySettings => {
-  const recording = artifact?.kind === "recording" ? artifact : null;
-  const camera = recording?.camera;
-  const screenWidth = recording?.width || 16;
-  const screenHeight = recording?.height || 9;
-  const cameraWidth = camera?.width || 16;
-  const cameraHeight = camera?.height || 9;
+export const DEFAULT_COMPRESSION = 2;
+export const DEFAULT_CURSOR_EFFECTS: CursorEffectSettings = {
+  bake: true,
+  clickAnimation: true,
+  clipAtVideoEdge: false,
+  motionBlur: true,
+  sizePercent: 100,
+  smoothMovement: true,
+};
+
+/**
+ * A camera overlay whose crop frame exactly matches the camera image for the
+ * given geometry. Using the real output and camera dimensions matters: static
+ * percentages put the frame outside the camera for other aspect ratios, which
+ * the compositor then has to clamp away from the on-screen controls.
+ */
+export const cameraOverlayForDimensions = ({
+  cameraHeight,
+  cameraWidth,
+  screenHeight,
+  screenWidth,
+}: {
+  cameraHeight: number;
+  cameraWidth: number;
+  screenHeight: number;
+  screenWidth: number;
+}): CameraOverlaySettings => {
   const requestedWidthPercent = 25;
   const requestedHeightPercent =
     ((screenWidth * requestedWidthPercent) / 100) *
@@ -44,6 +66,19 @@ export const defaultCameraOverlay = (
   };
 };
 
+export const defaultCameraOverlay = (
+  artifact?: ExportArtifact | null,
+): CameraOverlaySettings => {
+  const recording = artifact?.kind === "recording" ? artifact : null;
+  const camera = recording?.camera;
+  return cameraOverlayForDimensions({
+    cameraHeight: camera?.height || 9,
+    cameraWidth: camera?.width || 16,
+    screenHeight: recording?.height || 9,
+    screenWidth: recording?.width || 16,
+  });
+};
+
 export type VideoExportSettings = {
   compression: number;
   resolutionScalePercent: number;
@@ -61,6 +96,7 @@ type RecordingSavePlanOptions = {
   enabledStreamIndices: number[];
   includeCamera: boolean;
   includePrimaryVideo: boolean;
+  recordingOutput: RecordingOutputSettings;
   resolutionScalePercent: number;
 };
 
@@ -98,6 +134,7 @@ export const recordingSavePlan = ({
   includeCamera,
   includePrimaryVideo,
   originalResolutionScale,
+  recordingOutput,
   resolutionScalePercent,
 }: {
   artifact: ExportArtifact | null;
@@ -112,6 +149,7 @@ export const recordingSavePlan = ({
   includeCamera: boolean;
   includePrimaryVideo: boolean;
   originalResolutionScale: number;
+  recordingOutput: RecordingOutputSettings;
   resolutionScalePercent: number;
 }): RecordingSavePlan => {
   const selectedIndices = enabledStreamIndices ?? [];
@@ -122,6 +160,13 @@ export const recordingSavePlan = ({
     (selectedIndices.length !== artifact.audioTracks.length ||
       (collapseAudio && selectedIndices.length > 1) ||
       audioTrackVolumes.some((volume) => volume.decibels !== 0));
+  const hasPrimaryComposition =
+    artifact?.kind === "recording" &&
+    hasOutputComposition(recordingOutput.primary, artifact);
+  const hasCameraComposition =
+    artifact?.kind === "recording" &&
+    artifact.camera !== null &&
+    hasOutputComposition(recordingOutput.camera, artifact.camera);
   const hasMeasuredWork =
     artifact?.kind === "recording" &&
     artifact.durationMs > 0 &&
@@ -129,11 +174,13 @@ export const recordingSavePlan = ({
       artifact.primaryKind === "audio" ||
       compression > 0 ||
       (artifact.hasCursorData && cursorEffects.bake) ||
+      hasPrimaryComposition ||
       resolutionScalePercent < originalResolutionScale ||
       (hasCamera &&
         (bakeCamera ||
           camera.compression > 0 ||
           camera.resolutionScalePercent < 100)) ||
+      (hasCamera && hasCameraComposition) ||
       hasAudioChanges);
 
   return {
@@ -149,6 +196,7 @@ export const recordingSavePlan = ({
       enabledStreamIndices: selectedIndices,
       includeCamera: hasCamera,
       includePrimaryVideo,
+      recordingOutput,
       resolutionScalePercent,
     },
     showsMeasuredProgress: hasMeasuredWork || hasCamera,

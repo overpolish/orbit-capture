@@ -12,10 +12,12 @@ mod media_preview;
 mod naming;
 mod preferences;
 pub(crate) mod preview;
+pub(crate) mod preview_platform;
 pub(crate) mod recording_preview;
 pub(crate) mod recording_preview_player;
 mod recovery;
 pub(crate) mod save;
+pub(crate) mod screenshot_preview;
 mod track_selection;
 mod validation;
 
@@ -26,9 +28,9 @@ use commands::set_export_directory;
 use directory::current_directory;
 use naming::sanitize_file_stem;
 use preferences::{
-  load_cursor_effects, load_screenshot_background_radius, load_screenshot_output,
-  load_screenshot_radius, remember_cursor_effects, remember_screenshot_background_radius,
-  remember_screenshot_output, remember_screenshot_radius,
+  load_cursor_effects, load_recording_output, load_screenshot_background_radius,
+  load_screenshot_output, load_screenshot_radius, remember_completed_export,
+  remember_screenshot_background_radius, remember_screenshot_output, remember_screenshot_radius,
 };
 pub use recovery::initialize;
 #[cfg(test)]
@@ -213,7 +215,15 @@ pub struct RecordingExportOptions {
   pub include_camera: bool,
   pub include_primary_video: bool,
   pub resolution_scale_percent: u16,
+  pub recording_output: RecordingOutputSettings,
   pub screenshot_output: ScreenshotOutputSettings,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingOutputSettings {
+  pub camera: ScreenshotOutputSettings,
+  pub primary: ScreenshotOutputSettings,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -251,6 +261,7 @@ pub struct ExportSnapshot {
   pub artifact: Option<ExportArtifactSnapshot>,
   pub cursor_effects: cursor_effects::CursorEffectSettings,
   pub directory: Option<PathBuf>,
+  pub recording_output: Option<RecordingOutputSettings>,
   pub screenshot_radius_percent: f64,
   pub screenshot_background_radius_percent: f64,
   pub screenshot_output: Option<ScreenshotOutputSettings>,
@@ -280,6 +291,7 @@ pub struct ExportState {
   full_preview: Mutex<Option<Vec<u8>>>,
   directory: Mutex<Option<PathBuf>>,
   cursor_effects: Mutex<cursor_effects::CursorEffectSettings>,
+  recording_output: Mutex<Option<RecordingOutputSettings>>,
   screenshot_radius_percent: Mutex<f64>,
   screenshot_background_radius_percent: Mutex<f64>,
   screenshot_output: Mutex<Option<ScreenshotOutputSettings>>,

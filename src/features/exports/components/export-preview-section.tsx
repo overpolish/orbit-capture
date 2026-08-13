@@ -14,6 +14,7 @@ import {
   sourceScalePercent,
 } from "../resolution";
 import {
+  RecordingOutputSettings,
   resetScreenshotLayout,
   ScreenshotOutputSettings,
   screenshotOutputDimensions,
@@ -167,7 +168,9 @@ export function RecordingSection({
   onCameraOverlayChange,
   onEnabledTracksChange,
   onEnabledVideoTracksChange,
+  onRecordingOutputChange,
   onSelectedTrackChange,
+  recordingOutput,
   recordingPreviewError,
   recordingPreviewLayout,
   recordingPreviewTracks,
@@ -189,25 +192,40 @@ export function RecordingSection({
   onCameraOverlayChange?: (settings: CameraOverlaySettings) => void;
   onEnabledTracksChange?: (streamIndices: number[]) => void;
   onEnabledVideoTracksChange?: (tracks: RecordingVideoTrackId[]) => void;
+  onRecordingOutputChange?: (
+    trackId: RecordingVideoTrackId,
+    settings: RecordingOutputSettings[RecordingVideoTrackId],
+  ) => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
+  recordingOutput?: RecordingOutputSettings;
   recordingPreviewError?: string | null;
   recordingPreviewLayout?: RecordingPreviewLayout;
   recordingPreviewTracks?: PreparedAudioTrack[];
   resolutionScalePercent?: number;
   selectedTrack?: RecordingTrackId | null;
 }) {
-  const primaryOutputDimensions = scaledDimensions(
-    artifact,
-    resolutionScalePercent ?? sourceScalePercent(artifact),
-  );
-  const cameraOutputDimensions = artifact.camera
-    ? scaledVideoDimensions({
-        height: artifact.camera.height,
-        scale: cameraResolutionScalePercent ?? 100,
-        sourceScale: 100,
-        width: artifact.camera.width,
-      })
-    : undefined;
+  const primaryOutputDimensions = recordingOutput
+    ? {
+        height: recordingOutput.primary.height,
+        width: recordingOutput.primary.width,
+      }
+    : scaledDimensions(
+        artifact,
+        resolutionScalePercent ?? sourceScalePercent(artifact),
+      );
+  const cameraOutputDimensions = recordingOutput
+    ? {
+        height: recordingOutput.camera.height,
+        width: recordingOutput.camera.width,
+      }
+    : artifact.camera
+      ? scaledVideoDimensions({
+          height: artifact.camera.height,
+          scale: cameraResolutionScalePercent ?? 100,
+          sourceScale: 100,
+          width: artifact.camera.width,
+        })
+      : undefined;
 
   return (
     <div className="flex min-h-0 grow flex-col">
@@ -230,12 +248,14 @@ export function RecordingSection({
         onCameraOverlayChange={onCameraOverlayChange}
         onEnabledTracksChange={onEnabledTracksChange}
         onEnabledVideoTracksChange={onEnabledVideoTracksChange}
+        onRecordingOutputChange={onRecordingOutputChange}
         onSelectedTrackChange={onSelectedTrackChange}
         previewLayout={recordingPreviewLayout}
         previewOutputDimensions={{
           primary: primaryOutputDimensions,
           ...(cameraOutputDimensions ? { camera: cameraOutputDimensions } : {}),
         }}
+        recordingOutput={recordingOutput}
         selectedTrack={selectedTrack}
       />
     </div>

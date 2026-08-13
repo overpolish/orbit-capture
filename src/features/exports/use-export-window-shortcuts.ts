@@ -5,23 +5,6 @@ import { useEffect } from "react";
 
 import { ownsTextEditingKeys } from "./keyboard-target";
 
-const INTERACTIVE_SELECTOR = [
-  "a[href]",
-  "button",
-  "input",
-  "select",
-  "textarea",
-  "[contenteditable='true']",
-  "[role='button']",
-  "[role='checkbox']",
-  "[role='radio']",
-  "[role='slider']",
-  "[role='switch']",
-].join(",");
-
-const hasInteractiveTarget = (target: EventTarget | null) =>
-  target instanceof Element && target.closest(INTERACTIVE_SELECTOR) !== null;
-
 export function useExportWindowShortcuts({
   onToggleCrop,
   onTogglePlayback,
@@ -41,10 +24,12 @@ export function useExportWindowShortcuts({
       )
         return;
 
+      // Space is transport control everywhere except a text field, exactly
+      // like a video editor: clicking a checkbox must not steal playback.
       if (
         event.code === "Space" &&
         onTogglePlayback &&
-        !hasInteractiveTarget(event.target)
+        !ownsTextEditingKeys(event.target)
       ) {
         event.preventDefault();
         onTogglePlayback();
@@ -58,9 +43,19 @@ export function useExportWindowShortcuts({
       }
     };
 
-    window.addEventListener("keydown", onKeyDown);
+    // Focused controls (checkboxes, buttons) activate on space keyup;
+    // suppressing it keeps the toggle from firing after playback handled the
+    // keydown.
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === "Space" && !ownsTextEditingKeys(event.target)) {
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
     };
   }, [onToggleCrop, onTogglePlayback]);
 }

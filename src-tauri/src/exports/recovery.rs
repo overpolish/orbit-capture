@@ -213,6 +213,11 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
 pub fn initialize(app: &AppHandle) {
   *app
     .state::<ExportState>()
+    .recording_output
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_recording_output(app);
+  *app
+    .state::<ExportState>()
     .screenshot_output
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner()) = load_screenshot_output(app);

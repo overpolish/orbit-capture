@@ -18,6 +18,7 @@
   --text-xxs--line-height: calc(1 / 0.6125);
 
   --animate-gradient: gradient 10s ease-in-out infinite;
+  --animate-mesh-drift: mesh-drift 18s ease-in-out infinite alternate;
 
   @keyframes gradient {
     0% {
@@ -28,6 +29,18 @@
     }
     100% {
       background-position: 0% 50%;
+    }
+  }
+
+  @keyframes mesh-drift {
+    0% {
+      transform: translate3d(-1.2%, -0.8%, 0) scale(1.015) rotate(-0.15deg);
+    }
+    45% {
+      transform: translate3d(1%, -1.1%, 0) scale(1.028) rotate(0.12deg);
+    }
+    100% {
+      transform: translate3d(-0.4%, 1.2%, 0) scale(1.02) rotate(-0.08deg);
     }
   }
 

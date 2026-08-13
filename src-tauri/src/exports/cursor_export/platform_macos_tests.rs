@@ -8,6 +8,78 @@ use crate::{
 };
 use std::process::Command;
 
+fn output(width: u32, height: u32) -> crate::screenshots::ScreenshotOutputSettings {
+  crate::screenshots::ScreenshotOutputSettings {
+    background_color: "#000000".to_owned(),
+    background_type: "solid".to_owned(),
+    background_radius_percent: 0.0,
+    drop_shadow: false,
+    height,
+    legacy_mode: None,
+    mesh_colors: Vec::new(),
+    mesh_locked_colors: Vec::new(),
+    mesh_points: Vec::new(),
+    mesh_seed: 0,
+    mesh_warp_percent: 0.0,
+    radius_percent: 0.0,
+    screenshot_crop_height_percent: 100.0,
+    screenshot_crop_width_percent: 100.0,
+    screenshot_crop_x_percent: 0.0,
+    screenshot_crop_y_percent: 0.0,
+    screenshot_image_width_percent: 100.0,
+    screenshot_image_x_percent: 50.0,
+    screenshot_image_y_percent: 50.0,
+    width,
+  }
+}
+
+fn mesh_output(width: u32, height: u32) -> crate::screenshots::ScreenshotOutputSettings {
+  use crate::screenshots::MeshGradientPoint;
+  let mut output = output(width, height);
+  output.background_type = "mesh".to_owned();
+  output.mesh_colors = ["#112240", "#0ea5e9", "#8b5cf6", "#f97316", "#f8fafc"]
+    .map(str::to_owned)
+    .to_vec();
+  output.mesh_points = vec![
+    MeshGradientPoint {
+      radius_x: 78.0,
+      radius_y: 54.0,
+      rotation: 18.0,
+      x: 5.0,
+      y: 12.0,
+    },
+    MeshGradientPoint {
+      radius_x: 64.0,
+      radius_y: 82.0,
+      rotation: -24.0,
+      x: 92.0,
+      y: 10.0,
+    },
+    MeshGradientPoint {
+      radius_x: 72.0,
+      radius_y: 58.0,
+      rotation: 42.0,
+      x: 85.0,
+      y: 92.0,
+    },
+    MeshGradientPoint {
+      radius_x: 55.0,
+      radius_y: 80.0,
+      rotation: -10.0,
+      x: 10.0,
+      y: 88.0,
+    },
+  ];
+  output.mesh_seed = 12_345;
+  output.mesh_warp_percent = 8.0;
+  output.screenshot_crop_height_percent = 84.0;
+  output.screenshot_crop_width_percent = 84.0;
+  output.screenshot_crop_x_percent = 8.0;
+  output.screenshot_crop_y_percent = 8.0;
+  output.screenshot_image_width_percent = 84.0;
+  output
+}
+
 #[test]
 fn exports_composited_cursor_pixels_into_a_real_movie() {
   let directory =
@@ -84,14 +156,16 @@ fn exports_composited_cursor_pixels_into_a_real_movie() {
   let mut progress = Vec::new();
   let result = export(CursorExportRequest {
     audio_layout: AudioLayout::SeparateTracks,
+    audio_source: None,
     camera: None,
     cancelled: &cancelled,
-    cursor: &cursor_path,
+    cursor: Some(&cursor_path),
     cursor_effects: CursorEffectSettings::default(),
     destination: &destination,
     duration_ms: 1_000,
     height: 180,
     on_progress: &mut |position| progress.push(position),
+    output: &output(320, 180),
     screen: &source,
     selection: &TrackSelection::default(),
     video: VideoExportOptions {
@@ -131,7 +205,7 @@ fn exports_composited_cursor_pixels_into_a_real_movie() {
       .output()
       .unwrap();
     assert!(frame.status.success());
-    assert_eq!(frame.stdout.len(), 160 * 90 * 3);
+    assert_eq!(frame.stdout.len(), 320 * 180 * 3);
     assert!(
       frame.stdout.iter().any(|channel| *channel > 200),
       "the frame at {timestamp}s should contain the cursor"
@@ -209,6 +283,7 @@ fn exports_camera_and_cursor_through_the_same_gpu_compositor() {
   let cancelled = AtomicBool::new(false);
   let result = export(CursorExportRequest {
     audio_layout: AudioLayout::SeparateTracks,
+    audio_source: None,
     camera: Some((
       &camera,
       BakedVideoExportOptions {
@@ -234,12 +309,13 @@ fn exports_camera_and_cursor_through_the_same_gpu_compositor() {
       },
     )),
     cancelled: &cancelled,
-    cursor: &cursor_path,
+    cursor: Some(&cursor_path),
     cursor_effects: CursorEffectSettings::default(),
     destination: &destination,
     duration_ms: 1_000,
     height: 180,
     on_progress: &mut |_| {},
+    output: &output(320, 180),
     screen: &source,
     selection: &TrackSelection::default(),
     video: VideoExportOptions {
@@ -347,14 +423,16 @@ fn benchmarks_retina_gpu_cursor_export() {
   let started = std::time::Instant::now();
   let result = export(CursorExportRequest {
     audio_layout: AudioLayout::SeparateTracks,
+    audio_source: None,
     camera: None,
     cancelled: &cancelled,
-    cursor: &cursor_path,
+    cursor: Some(&cursor_path),
     cursor_effects: CursorEffectSettings::default(),
     destination: &destination,
     duration_ms,
     height: 2_338,
     on_progress: &mut |_| {},
+    output: &output(3_600, 2_338),
     screen: &source,
     selection: &TrackSelection::default(),
     video: VideoExportOptions {
@@ -372,4 +450,74 @@ fn benchmarks_retina_gpu_cursor_export() {
     started.elapsed().as_secs_f64(),
     destination.display()
   );
+}
+
+#[test]
+#[ignore = "set ORBIT_GPU_BENCH_SOURCE to a recording"]
+fn benchmarks_animated_mesh_export() {
+  let source = PathBuf::from(std::env::var("ORBIT_GPU_BENCH_SOURCE").unwrap());
+  let duration_ms = std::env::var("ORBIT_GPU_BENCH_DURATION_MS")
+    .ok()
+    .and_then(|value| value.parse().ok())
+    .unwrap_or(30_000);
+  let width = std::env::var("ORBIT_GPU_BENCH_WIDTH")
+    .ok()
+    .and_then(|value| value.parse().ok())
+    .unwrap_or(1_920);
+  let height = std::env::var("ORBIT_GPU_BENCH_HEIGHT")
+    .ok()
+    .and_then(|value| value.parse().ok())
+    .unwrap_or(1_080);
+  let directory = std::env::temp_dir().join(format!(
+    "orbit-mesh-export-benchmark-{}",
+    std::process::id()
+  ));
+  let _ = std::fs::remove_dir_all(&directory);
+  std::fs::create_dir_all(&directory).unwrap();
+  let cancelled = AtomicBool::new(false);
+
+  for (name, output) in [
+    ("solid", {
+      let mut settings = output(width, height);
+      settings.screenshot_crop_height_percent = 84.0;
+      settings.screenshot_crop_width_percent = 84.0;
+      settings.screenshot_crop_x_percent = 8.0;
+      settings.screenshot_crop_y_percent = 8.0;
+      settings.screenshot_image_width_percent = 84.0;
+      settings
+    }),
+    ("mesh", mesh_output(width, height)),
+  ] {
+    let destination = directory.join(format!("{name}.mp4"));
+    let started = std::time::Instant::now();
+    let result = export(CursorExportRequest {
+      audio_layout: AudioLayout::SeparateTracks,
+      audio_source: None,
+      camera: None,
+      cancelled: &cancelled,
+      cursor: None,
+      cursor_effects: CursorEffectSettings::default(),
+      destination: &destination,
+      duration_ms,
+      height,
+      on_progress: &mut |_| {},
+      output: &output,
+      screen: &source,
+      selection: &TrackSelection::default(),
+      video: VideoExportOptions {
+        compression: 2,
+        resolution_scale_percent: 100,
+        source_scale_percent: 100,
+      },
+      width,
+    })
+    .unwrap();
+    assert_eq!(result, ExportRunResult::Completed);
+    eprintln!(
+      "[mesh-export-benchmark] {name}: {:.2}s for {:.2}s, {} bytes",
+      started.elapsed().as_secs_f64(),
+      duration_ms as f64 / 1_000.0,
+      std::fs::metadata(destination).unwrap().len(),
+    );
+  }
 }

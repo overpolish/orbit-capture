@@ -34,6 +34,7 @@ pub async fn save_export(
     include_camera,
     include_primary_video,
     resolution_scale_percent,
+    recording_output,
     screenshot_output,
   } = options;
   if compression > 4 || camera_compression > 4 {
@@ -49,6 +50,8 @@ pub async fn save_export(
   };
   let screenshot_preference =
     matches!(&artifact, ExportArtifact::Screenshot { .. }).then(|| screenshot_output.clone());
+  let recording_preference =
+    matches!(&artifact, ExportArtifact::Recording { .. }).then(|| recording_output.clone());
   let cancelled = Arc::new(AtomicBool::new(false));
   {
     let state = app.state::<ExportState>();
@@ -124,6 +127,8 @@ pub async fn save_export(
             .as_ref()
             .filter(|_| cursor_effects.bake)
             .map(|cursor| cursor.path.as_path());
+          let primary_output = &recording_output.primary;
+          let camera_output = &recording_output.camera;
 
           if !include_primary_video && !include_camera && enabled_stream_indices.is_empty() {
             return Err("Select at least one track to export".to_owned());
@@ -164,6 +169,7 @@ pub async fn save_export(
                 &job_cancellation,
                 camera_compression,
                 camera_resolution_scale_percent,
+                camera_output,
               )?;
               if saved.is_some() {
                 let _ = std::fs::remove_file(working);
@@ -214,6 +220,7 @@ pub async fn save_export(
               camera_overlay,
               (compression, resolution_scale_percent, *source_scale_percent),
               baked_cursor.map(|cursor| (cursor, cursor_effects)),
+              primary_output,
               &progress_app,
               &job_cancellation,
             )?;
@@ -242,6 +249,7 @@ pub async fn save_export(
             duration_ms: *duration_ms,
             height: *height,
             layout,
+            output: primary_output,
             progress_share: screen_progress_share,
             resolution_scale_percent,
             screen: working,
@@ -286,6 +294,7 @@ pub async fn save_export(
               screen_progress_share,
               camera_compression,
               camera_resolution_scale_percent,
+              camera_output,
             )
             .inspect_err(|_| {
               let _ = std::fs::remove_file(&saved);
@@ -365,14 +374,12 @@ pub async fn save_export(
   };
 
   set_export_directory(app.clone(), directory)?;
-  if let Some(output) = screenshot_preference {
-    if let Err(error) = remember_screenshot_output(&app, output) {
-      eprintln!("Could not remember screenshot export settings: {error}");
-    }
-  }
-  if let Err(error) = remember_cursor_effects(&app, cursor_effects) {
-    eprintln!("Could not remember cursor export settings: {error}");
-  }
+  remember_completed_export(
+    &app,
+    cursor_effects,
+    recording_preference,
+    screenshot_preference,
+  );
   // Saving is transactional: keep the native player alive while the artifact
   // may still be restored by Cancel or an export error, then retire it only
   // once the finished files have been published.

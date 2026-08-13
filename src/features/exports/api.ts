@@ -3,9 +3,9 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-import { MeshGradientPoint } from "./screenshot-background";
 import {
   normalizedScreenshotOutput,
+  RecordingOutputSettings,
   ScreenshotOutputSettings,
 } from "./screenshot-output";
 import {
@@ -16,6 +16,35 @@ import {
   RecordingPreviewLayout,
   CursorEffectSettings,
 } from "./types";
+
+const finite = (value: number, fallback: number) =>
+  Number.isFinite(value) ? value : fallback;
+
+const normalizedCameraOverlay = (
+  settings: CameraOverlaySettings,
+): CameraOverlaySettings => ({
+  cameraWidthPercent: finite(settings.cameraWidthPercent, 25),
+  cameraXPercent: finite(settings.cameraXPercent, 85),
+  cameraYPercent: finite(settings.cameraYPercent, 15),
+  frameHeightPercent: finite(settings.frameHeightPercent, 25),
+  frameWidthPercent: finite(settings.frameWidthPercent, 25),
+  frameXPercent: finite(settings.frameXPercent, 72),
+  frameYPercent: finite(settings.frameYPercent, 3),
+  radiusPercent: finite(settings.radiusPercent, 8),
+});
+
+const normalizedCursorEffects = (
+  settings: CursorEffectSettings,
+): CursorEffectSettings => ({
+  ...settings,
+  sizePercent: finite(settings.sizePercent, 100),
+});
+
+const normalizedAudioTrackVolumes = (volumes: AudioTrackVolume[]) =>
+  volumes.map((volume) => ({
+    ...volume,
+    decibels: finite(volume.decibels, 0),
+  }));
 
 export type RecordingPreviewPlayerEvent =
   | { event: "ended" }
@@ -41,28 +70,22 @@ export const getExportSnapshot = () =>
 export const getExportPreview = (full = false) =>
   invoke<ArrayBuffer>("get_export_preview", { full });
 
-export const renderMeshBackgroundPreview = ({
+export const renderScreenshotOutputPreview = ({
+  artifactId,
   channel,
-  colors,
-  height,
-  points,
+  output,
   requestId,
-  seed,
-  warpPercent,
-  width,
 }: {
+  artifactId: number;
   channel: Channel<ArrayBuffer>;
-  colors: string[];
-  height: number;
-  points: MeshGradientPoint[];
+  output: ScreenshotOutputSettings;
   requestId: number;
-  seed: number;
-  warpPercent: number;
-  width: number;
 }) =>
-  invoke<null>("render_mesh_background_preview", {
+  invoke<null>("render_screenshot_output_preview", {
+    artifactId,
     channel,
-    options: { colors, height, points, requestId, seed, warpPercent, width },
+    output: normalizedScreenshotOutput(output),
+    requestId,
   });
 
 export const getRecordingPreview = (artifactId: number) =>
@@ -71,18 +94,24 @@ export const getRecordingPreview = (artifactId: number) =>
 export const startRecordingPreviewPlayer = ({
   artifactId,
   audioTrackVolumes,
+  bakeCamera,
+  cameraOverlay,
   cursorEffects,
   enabledStreamIndices,
   eventChannel,
   frameChannel,
+  recordingOutput,
   sessionId,
 }: {
   artifactId: number;
   audioTrackVolumes: AudioTrackVolume[];
+  bakeCamera: boolean;
+  cameraOverlay: CameraOverlaySettings;
   cursorEffects: CursorEffectSettings;
   enabledStreamIndices: number[];
   eventChannel: Channel<RecordingPreviewPlayerEvent>;
   frameChannel: Channel<ArrayBuffer>;
+  recordingOutput: RecordingOutputSettings;
   sessionId: number;
 }) =>
   invoke<RecordingPreviewPlayerInfo>("start_recording_preview_player", {
@@ -91,8 +120,17 @@ export const startRecordingPreviewPlayer = ({
     frameChannel,
     sessionId,
     settings: {
-      audio: { audioTrackVolumes, enabledStreamIndices },
-      cursorEffects,
+      audio: {
+        audioTrackVolumes: normalizedAudioTrackVolumes(audioTrackVolumes),
+        enabledStreamIndices,
+      },
+      bakeCamera,
+      cameraOverlay: normalizedCameraOverlay(cameraOverlay),
+      cursorEffects: normalizedCursorEffects(cursorEffects),
+      recordingOutput: {
+        camera: normalizedScreenshotOutput(recordingOutput.camera),
+        primary: normalizedScreenshotOutput(recordingOutput.primary),
+      },
     },
   });
 
@@ -102,19 +140,53 @@ export const playRecordingPreview = (sessionId: number) =>
 export const pauseRecordingPreview = (sessionId: number) =>
   invoke<null>("pause_recording_preview", { sessionId });
 
+export const layoutRecordingPreviewSurface = ({
+  backdrop,
+  panes,
+  requestId,
+  scale,
+  sessionId,
+  viewport,
+}: {
+  backdrop: [number, number, number];
+  panes: {
+    index: number;
+    rect: { height: number; width: number; x: number; y: number };
+  }[];
+  requestId: number;
+  scale: number;
+  sessionId: number;
+  viewport: { height: number; width: number; x: number; y: number };
+}) =>
+  invoke<null>("layout_recording_preview_surface", {
+    backdrop,
+    panes,
+    requestId,
+    scale,
+    sessionId,
+    viewport,
+  });
+
 export const requestRecordingPreviewFullResolution = (sessionId: number) =>
   invoke<null>("request_recording_preview_full_resolution", { sessionId });
 
-export const seekRecordingPreview = (
-  positionMs: number,
-  requestId: number,
-  sessionId: number,
-) =>
+export const seekRecordingPreview = ({
+  positionMs,
+  requestId,
+  rough = false,
+  sessionId,
+}: {
+  positionMs: number;
+  requestId: number;
+  sessionId: number;
+  rough?: boolean;
+}) =>
   invoke<null>("seek_recording_preview", {
     positionMs: Number.isFinite(positionMs)
       ? Math.max(0, Math.round(positionMs))
       : 0,
     requestId,
+    rough,
     sessionId,
   });
 
@@ -132,7 +204,7 @@ export const setRecordingPreviewAudioVolumes = (
   sessionId: number,
 ) =>
   invoke<null>("set_recording_preview_audio_volumes", {
-    audioTrackVolumes,
+    audioTrackVolumes: normalizedAudioTrackVolumes(audioTrackVolumes),
     sessionId,
   });
 
@@ -141,9 +213,97 @@ export const setRecordingPreviewCursorEffects = (
   sessionId: number,
 ) =>
   invoke<null>("set_recording_preview_cursor_effects", {
-    cursorEffects,
+    cursorEffects: normalizedCursorEffects(cursorEffects),
     sessionId,
   });
+
+export const setRecordingPreviewComposition = ({
+  bakeCamera,
+  cameraOverlay,
+  recordingOutput,
+  sessionId,
+}: {
+  bakeCamera: boolean;
+  cameraOverlay: CameraOverlaySettings;
+  recordingOutput: RecordingOutputSettings;
+  sessionId: number;
+}) =>
+  invoke<null>("set_recording_preview_composition", {
+    bakeCamera,
+    cameraOverlay: normalizedCameraOverlay(cameraOverlay),
+    recordingOutput: {
+      camera: normalizedScreenshotOutput(recordingOutput.camera),
+      primary: normalizedScreenshotOutput(recordingOutput.primary),
+    },
+    sessionId,
+  });
+
+export const copyRecordingPreviewSourceFrame = ({
+  artifactId,
+  positionMs,
+  track,
+}: {
+  artifactId: number;
+  positionMs: number;
+  track: 0 | 1;
+}) =>
+  invoke<ArrayBuffer>("copy_recording_preview_source_frame", {
+    artifactId,
+    positionMs: Math.max(0, Math.round(positionMs)),
+    track,
+  });
+
+/**
+ * What the backend's preview platform can actually do. Probed instead of
+ * sniffed, so a platform whose native backend lands one piece at a time flips
+ * one flag at a time.
+ */
+export type PreviewCapabilities = {
+  nativeRecordingPreview: boolean;
+  nativeScreenshotPreview: boolean;
+};
+
+export const previewCapabilities = () =>
+  invoke<PreviewCapabilities>("preview_capabilities");
+
+export const startScreenshotPreview = (artifactId: number, sessionId: number) =>
+  invoke<null>("start_screenshot_preview", { artifactId, sessionId });
+
+export const layoutScreenshotPreviewSurface = ({
+  backdrop,
+  panes,
+  scale,
+  sessionId,
+  viewport,
+}: {
+  backdrop: [number, number, number];
+  panes: {
+    index: number;
+    rect: { height: number; width: number; x: number; y: number };
+  }[];
+  scale: number;
+  sessionId: number;
+  viewport: { height: number; width: number; x: number; y: number };
+}) =>
+  invoke<null>("layout_screenshot_preview_surface", {
+    backdrop,
+    panes,
+    scale,
+    sessionId,
+    viewport,
+  });
+
+export const setScreenshotPreviewOutput = (
+  output: ScreenshotOutputSettings,
+  sessionId: number,
+) =>
+  invoke<null>("set_screenshot_preview_output", {
+    output: normalizedScreenshotOutput(output),
+    sessionId,
+  });
+
+export const stopScreenshotPreview = (sessionId: number) =>
+  invoke<null>("stop_screenshot_preview", { sessionId });
 
 export const stopRecordingPreviewPlayer = (sessionId: number) =>
   invoke<null>("stop_recording_preview_player", { sessionId });
@@ -171,6 +331,7 @@ type RecordingProcessingOptions = {
   enabledStreamIndices: number[];
   includeCamera: boolean;
   includePrimaryVideo: boolean;
+  recordingOutput: RecordingOutputSettings;
   resolutionScalePercent: number;
   screenshotOutput: ScreenshotOutputSettings;
 };
@@ -188,6 +349,7 @@ export const estimateRecordingExport = ({
   enabledStreamIndices,
   includeCamera,
   includePrimaryVideo,
+  recordingOutput,
   resolutionScalePercent,
   screenshotOutput,
 }: RecordingProcessingOptions & { artifactId: number }) =>
@@ -205,6 +367,10 @@ export const estimateRecordingExport = ({
       enabledStreamIndices,
       includeCamera,
       includePrimaryVideo,
+      recordingOutput: {
+        camera: normalizedScreenshotOutput(recordingOutput.camera),
+        primary: normalizedScreenshotOutput(recordingOutput.primary),
+      },
       resolutionScalePercent,
       screenshotOutput: normalizedScreenshotOutput(screenshotOutput),
     },
@@ -227,6 +393,7 @@ export const saveExport = ({
   fileStem,
   includeCamera,
   includePrimaryVideo,
+  recordingOutput,
   resolutionScalePercent,
   screenshotOutput,
 }: SaveExportOptions) =>
@@ -244,6 +411,10 @@ export const saveExport = ({
       enabledStreamIndices,
       includeCamera,
       includePrimaryVideo,
+      recordingOutput: {
+        camera: normalizedScreenshotOutput(recordingOutput.camera),
+        primary: normalizedScreenshotOutput(recordingOutput.primary),
+      },
       resolutionScalePercent,
       screenshotOutput: normalizedScreenshotOutput(screenshotOutput),
     },

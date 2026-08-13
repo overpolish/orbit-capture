@@ -7,6 +7,7 @@ use super::*;
 #[serde(default)]
 struct ExportPreferences {
   cursor_effects: cursor_effects::CursorEffectSettings,
+  recording_output: Option<RecordingOutputSettings>,
   screenshot_background_radius_percent: f64,
   screenshot_output: Option<ScreenshotOutputSettings>,
   screenshot_radius_percent: f64,
@@ -16,11 +17,16 @@ impl Default for ExportPreferences {
   fn default() -> Self {
     Self {
       cursor_effects: cursor_effects::CursorEffectSettings::default(),
+      recording_output: None,
       screenshot_background_radius_percent: 0.0,
       screenshot_output: None,
       screenshot_radius_percent: 0.0,
     }
   }
+}
+
+pub(super) fn load_recording_output(app: &AppHandle) -> Option<RecordingOutputSettings> {
+  load_preferences(app).and_then(|preferences| preferences.recording_output)
 }
 
 pub(super) fn load_screenshot_background_radius(app: &AppHandle) -> f64 {
@@ -171,6 +177,43 @@ pub(super) fn remember_cursor_effects(
   store_preferences(app, &preferences)
 }
 
+pub(super) fn remember_recording_output(
+  app: &AppHandle,
+  mut output: RecordingOutputSettings,
+) -> Result<(), String> {
+  output.primary.background_radius_percent = 0.0;
+  output.camera.background_radius_percent = 0.0;
+  *app
+    .state::<ExportState>()
+    .recording_output
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(output.clone());
+  let mut preferences = load_preferences(app).unwrap_or_default();
+  preferences.recording_output = Some(output);
+  store_preferences(app, &preferences)
+}
+
+pub(super) fn remember_completed_export(
+  app: &AppHandle,
+  cursor: cursor_effects::CursorEffectSettings,
+  recording: Option<RecordingOutputSettings>,
+  screenshot: Option<ScreenshotOutputSettings>,
+) {
+  if let Some(output) = screenshot {
+    if let Err(error) = remember_screenshot_output(app, output) {
+      eprintln!("Could not remember screenshot export settings: {error}");
+    }
+  }
+  if let Some(output) = recording {
+    if let Err(error) = remember_recording_output(app, output) {
+      eprintln!("Could not remember recording export settings: {error}");
+    }
+  }
+  if let Err(error) = remember_cursor_effects(app, cursor) {
+    eprintln!("Could not remember cursor export settings: {error}");
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -188,5 +231,6 @@ mod tests {
     assert_eq!(preferences.screenshot_background_radius_percent, 7.5);
     assert_eq!(preferences.screenshot_radius_percent, 12.0);
     assert_eq!(preferences.screenshot_output, None);
+    assert_eq!(preferences.recording_output, None);
   }
 }

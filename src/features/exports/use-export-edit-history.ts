@@ -4,7 +4,10 @@
 import { useCallback, useEffect, useRef } from "react";
 
 import { ownsTextEditingKeys } from "./keyboard-target";
-import { ScreenshotOutputSettings } from "./screenshot-output";
+import {
+  RecordingOutputSettings,
+  ScreenshotOutputSettings,
+} from "./screenshot-output";
 import {
   AudioTrackVolume,
   CameraOverlaySettings,
@@ -27,6 +30,7 @@ export type ExportEditState = {
   collapseAudio: boolean;
   compression: number;
   cursorEffects: CursorEffectSettings;
+  recordingOutput: RecordingOutputSettings;
   resolutionScalePercent: number;
   screenshotOutput: ScreenshotOutputSettings;
   trackSelection: { artifactId: number; streamIndices: number[] } | null;

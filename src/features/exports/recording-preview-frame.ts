@@ -5,7 +5,9 @@ import { RecordingPreviewLayout } from "./types";
 
 const FRAME_HEADER_LENGTH = 16;
 const NATIVE_FRAME_HEADER_LENGTH = 24;
+const NATIVE_FRAME_CURSOR_HEADER_LENGTH = 44;
 const NATIVE_FRAME_MARKER = 0x4650434f;
+const NATIVE_FRAME_VERSION = 2;
 
 const drawRegion = (
   bitmap: ImageBitmap,
@@ -50,6 +52,7 @@ const drawPane = ({
 
 const drawNativeFrame = async ({
   camera,
+  cursor,
   frame,
   isCurrentRequest,
   layout,
@@ -57,6 +60,7 @@ const drawNativeFrame = async ({
   screen,
 }: {
   camera: HTMLCanvasElement | null;
+  cursor: HTMLCanvasElement | null;
   frame: ArrayBuffer;
   isCurrentRequest: (requestId: number) => boolean;
   layout: RecordingPreviewLayout;
@@ -64,14 +68,28 @@ const drawNativeFrame = async ({
   screen: HTMLCanvasElement | null;
 }) => {
   if (frame.byteLength < NATIVE_FRAME_HEADER_LENGTH) return false;
-  const header = new DataView(frame, 0, NATIVE_FRAME_HEADER_LENGTH);
+  const initialHeader = new DataView(frame, 0, NATIVE_FRAME_HEADER_LENGTH);
+  const version = initialHeader.getUint32(4, true);
+  if (version < 1 || version > NATIVE_FRAME_VERSION) return false;
+  const headerLength =
+    version >= 2
+      ? NATIVE_FRAME_CURSOR_HEADER_LENGTH
+      : NATIVE_FRAME_HEADER_LENGTH;
+  if (frame.byteLength < headerLength) return false;
+  const header = new DataView(frame, 0, headerLength);
   const screenLength = header.getUint32(16, true);
   const cameraLength = header.getUint32(20, true);
-  const screenEnd = NATIVE_FRAME_HEADER_LENGTH + screenLength;
+  const cursorLength = version >= 2 ? header.getUint32(24, true) : 0;
+  const cursorX = version >= 2 ? header.getInt32(28, true) : 0;
+  const cursorY = version >= 2 ? header.getInt32(32, true) : 0;
+  const cursorCanvasWidth = version >= 2 ? header.getUint32(36, true) : 0;
+  const cursorCanvasHeight = version >= 2 ? header.getUint32(40, true) : 0;
+  const screenEnd = headerLength + screenLength;
   const cameraEnd = screenEnd + cameraLength;
-  if (screenLength === 0 || cameraEnd > frame.byteLength) return false;
+  const cursorEnd = cameraEnd + cursorLength;
+  if (screenLength === 0 || cursorEnd > frame.byteLength) return false;
   const screenBitmap = await createImageBitmap(
-    new Blob([frame.slice(NATIVE_FRAME_HEADER_LENGTH, screenEnd)], {
+    new Blob([frame.slice(headerLength, screenEnd)], {
       type: "image/jpeg",
     }),
   );
@@ -83,9 +101,16 @@ const drawNativeFrame = async ({
           }),
         )
       : null;
+  const cursorBitmap =
+    cursorLength > 0
+      ? await createImageBitmap(
+          new Blob([frame.slice(cameraEnd, cursorEnd)], { type: "image/png" }),
+        )
+      : null;
   if (!isCurrentRequest(requestId)) {
     screenBitmap.close();
     cameraBitmap?.close();
+    cursorBitmap?.close();
     return false;
   }
   drawPane({
@@ -98,19 +123,45 @@ const drawNativeFrame = async ({
       bitmap: cameraBitmap,
       canvas: camera,
     });
+  if (cursor) {
+    cursor.dataset.sourceHeight = cursorCanvasHeight.toString();
+    cursor.dataset.sourceWidth = cursorCanvasWidth.toString();
+    const context = cursor.getContext("2d");
+    if (cursorBitmap) {
+      if (
+        cursor.width !== cursorBitmap.width ||
+        cursor.height !== cursorBitmap.height
+      ) {
+        cursor.width = cursorBitmap.width;
+        cursor.height = cursorBitmap.height;
+      } else {
+        context?.clearRect(0, 0, cursor.width, cursor.height);
+      }
+      cursor.style.height = `${((cursorBitmap.height / cursorCanvasHeight) * 100).toString()}%`;
+      cursor.style.left = `${((cursorX / cursorCanvasWidth) * 100).toString()}%`;
+      cursor.style.top = `${((cursorY / cursorCanvasHeight) * 100).toString()}%`;
+      cursor.style.width = `${((cursorBitmap.width / cursorCanvasWidth) * 100).toString()}%`;
+      context?.drawImage(cursorBitmap, 0, 0);
+    } else {
+      context?.clearRect(0, 0, cursor.width, cursor.height);
+    }
+  }
   screenBitmap.close();
   cameraBitmap?.close();
+  cursorBitmap?.close();
   return true;
 };
 
 export const drawRecordingPreviewFrame = async ({
   camera,
+  cursor,
   frame,
   isCurrentRequest,
   layout,
   screen,
 }: {
   camera: HTMLCanvasElement | null;
+  cursor: HTMLCanvasElement | null;
   frame: ArrayBuffer;
   isCurrentRequest: (requestId: number) => boolean;
   layout: RecordingPreviewLayout;
@@ -121,9 +172,14 @@ export const drawRecordingPreviewFrame = async ({
   const encodedWidth = header.getUint32(0, true);
   const encodedHeight = header.getUint32(4, true);
   const requestId = Number(header.getBigUint64(8, true));
-  if (encodedWidth === NATIVE_FRAME_MARKER && encodedHeight === 1)
+  // Native packets use this second word for their protocol version, not an
+  // encoded height. Dispatch by the marker and let drawNativeFrame validate
+  // the version so adding packet fields cannot accidentally turn it into a
+  // monolithic JPEG again.
+  if (encodedWidth === NATIVE_FRAME_MARKER)
     return drawNativeFrame({
       camera,
+      cursor,
       frame,
       isCurrentRequest,
       layout,

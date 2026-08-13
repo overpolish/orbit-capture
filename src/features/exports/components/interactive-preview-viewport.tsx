@@ -91,6 +91,12 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
       scale > 0 ? (1 / scale).toString() : "1",
     );
     if (reveal) media.style.opacity = "1";
+    // The native pane layout listens for this and measures synchronously, so
+    // the surface below tracks a pan in the same frame instead of trailing by
+    // an animation-frame of scheduling order.
+    media.dispatchEvent(
+      new Event("orbit-preview-transformed", { bubbles: true }),
+    );
   };
 
   const measureAndApply = () => {
@@ -253,7 +259,8 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
 
   return (
     <div
-      className="relative flex min-h-0 grow touch-none items-center justify-center overflow-hidden overscroll-contain bg-black/5 dark:bg-black/25"
+      className="relative flex min-h-0 grow touch-none items-center justify-center overflow-hidden overscroll-contain"
+      data-recording-preview-viewport
       onDoubleClick={() => {
         measureAndApply();
         reset();
@@ -292,6 +299,11 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
       ref={boxRef}
       style={{ cursor: isPanning ? "grabbing" : "grab" }}
     >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 bg-black/5 dark:bg-black/25"
+        data-preview-backdrop
+      />
       {renderMedia({
         onReady: measureAndApply,
         ref: (element) => {

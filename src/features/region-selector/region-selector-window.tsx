@@ -8,6 +8,7 @@ import { Rnd } from "react-rnd";
 
 import { Button } from "../../components/base/button/button";
 import { AspectRatio } from "../../components/shared/aspect-ratio/aspect-ratio";
+import { TransformControls } from "../../components/shared/canvas-tools/transform-controls";
 import { CheckOnClickButton } from "../../components/shared/check-on-click-button/check-on-click-button";
 import { cn } from "../../lib/styling";
 import {
@@ -148,7 +149,7 @@ export function RegionSelectorWindow() {
       <Rnd
         bounds="parent"
         className={cn(
-          "relative border-2 border-dashed border-white transition-opacity",
+          "relative transition-opacity",
           !isRegionEditing && "invisible opacity-0",
         )}
         dragGrid={[1, 1]}
@@ -193,7 +194,19 @@ export function RegionSelectorWindow() {
         resizeHandleClasses={HANDLE_CLASSES}
         resizeHandleStyles={HANDLE_STYLES}
         size={draft.size}
-      />
+      >
+        {/* The same marquee chrome as the export window's crop controls;
+            react-rnd supplies behaviour through its own invisible handles. */}
+        <TransformControls
+          frame={{
+            height: draft.size.height,
+            width: draft.size.width,
+            x: 0,
+            y: 0,
+          }}
+          inverseScale="1"
+        />
+      </Rnd>
 
       <div
         className={cn(

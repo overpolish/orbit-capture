@@ -511,7 +511,7 @@ fn show_recording_source_selector(app: &AppHandle) -> tauri::Result<()> {
 pub fn set_recording_source_selector_visible(app: AppHandle, visible: bool) -> tauri::Result<()> {
   SELECTOR_VISIBLE.store(visible, Ordering::Relaxed);
   if visible {
-    if RECORDING_CONTROLS_VISIBLE.load(Ordering::Relaxed) {
+    if region::source_selector_may_show() {
       show_recording_source_selector(&app)
     } else {
       Ok(())
@@ -560,7 +560,7 @@ pub fn show_recording_ui(app: &AppHandle) -> tauri::Result<()> {
   platform::set_opacity(&bar, 1.0)?;
   platform::restore_recording_level(&bar)?;
 
-  if SELECTOR_VISIBLE.load(Ordering::Relaxed) {
+  if SELECTOR_VISIBLE.load(Ordering::Relaxed) && region::source_selector_may_show() {
     show_recording_source_selector(app)?;
   }
   app.emit_to(

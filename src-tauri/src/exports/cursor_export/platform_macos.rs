@@ -34,6 +34,31 @@ struct GpuCameraOverlay {
   radius: u32,
 }
 
+#[repr(C)]
+#[derive(Default)]
+struct GpuCanvas {
+  background_color: [f32; 4],
+  background_radius: u32,
+  crop_x: i32,
+  crop_y: i32,
+  crop_width: u32,
+  crop_height: u32,
+  image_x: f32,
+  image_y: f32,
+  image_width: u32,
+  image_height: u32,
+  radius: u32,
+  drop_shadow: u32,
+  mesh_enabled: u32,
+  mesh_seed: u32,
+  mesh_warp_percent: f32,
+  mesh_point_count: u32,
+  mesh_points: [[f32; 8]; 4],
+  mesh_colors: [[f32; 4]; 5],
+  clip_cursor_at_video_edge: u32,
+  transparent_background: u32,
+}
+
 unsafe extern "C" fn gpu_should_cancel(context: *mut c_void) -> bool {
   let callbacks = unsafe { &*(context.cast::<GpuCallbacks<'_>>()) };
   callbacks.cancelled.load(Ordering::Acquire)
@@ -55,6 +80,7 @@ unsafe extern "C" {
     commands_path: *const c_char,
     camera_path: *const c_char,
     camera_overlay: *const GpuCameraOverlay,
+    canvas: *const GpuCanvas,
     output_path: *const c_char,
     source_width: u32,
     source_height: u32,
@@ -85,35 +111,93 @@ fn gpu_video_path() -> PathBuf {
 
 fn render_gpu_video(
   request: &mut CursorExportRequest<'_>,
-  layer: &native_macos::CursorLayer,
+  layer: Option<&native_macos::CursorLayer>,
   path: &Path,
 ) -> Result<ExportRunResult, String> {
+  crate::screenshots::validate_output_settings(request.width, request.height, request.output)?;
   let screen = c_path(request.screen)?;
-  let cursor = c_path(&layer.movie)?;
-  let commands = c_path(&layer.commands)?;
+  let cursor = layer.map(|layer| c_path(&layer.movie)).transpose()?;
+  let commands = layer.map(|layer| c_path(&layer.commands)).transpose()?;
   let camera = request.camera.map(|(path, _)| c_path(path)).transpose()?;
   let camera_overlay = request
     .camera
     .map(|(_, options)| media_preview::bake_geometry(options))
     .transpose()?
     .map(|geometry| {
-      if (geometry.output_width, geometry.output_height) != (layer.width, layer.height) {
-        return Err("The camera and screen export sizes do not match".to_owned());
-      }
-      Ok(GpuCameraOverlay {
+      let scale_x = f64::from(request.output.width) / f64::from(geometry.output_width.max(1));
+      let scale_y = f64::from(request.output.height) / f64::from(geometry.output_height.max(1));
+      let scaled = |value: u32, scale: f64| (f64::from(value) * scale).round() as u32;
+      GpuCameraOverlay {
         crop_x: geometry.crop_x,
         crop_y: geometry.crop_y,
         crop_width: geometry.crop_width,
         crop_height: geometry.crop_height,
-        frame_x: geometry.frame_x,
-        frame_y: geometry.frame_y,
-        frame_width: geometry.frame_width,
-        frame_height: geometry.frame_height,
-        radius: geometry.radius,
-      })
-    })
-    .transpose()?;
+        frame_x: scaled(geometry.frame_x, scale_x),
+        frame_y: scaled(geometry.frame_y, scale_y),
+        frame_width: scaled(geometry.frame_width, scale_x),
+        frame_height: scaled(geometry.frame_height, scale_y),
+        radius: scaled(geometry.radius, scale_x.min(scale_y)),
+      }
+    });
   let output = c_path(path)?;
+  let placement =
+    crate::screenshots::output_placement(request.width, request.height, request.output)?;
+  let colour = crate::screenshots::parse_hex_colour(&request.output.background_color)?;
+  let channel = |value: u8| f32::from(value) / 255.0;
+  let mut canvas = GpuCanvas {
+    background_color: [
+      channel(colour[0]),
+      channel(colour[1]),
+      channel(colour[2]),
+      1.0,
+    ],
+    background_radius: (f64::from(request.output.width.min(request.output.height))
+      * request.output.background_radius_percent
+      / 100.0)
+      .round() as u32,
+    crop_x: placement.crop_x,
+    crop_y: placement.crop_y,
+    crop_width: placement.crop_width,
+    crop_height: placement.crop_height,
+    image_x: placement.image_x as f32,
+    image_y: placement.image_y as f32,
+    image_width: placement.image_width,
+    image_height: placement.image_height,
+    radius: (f64::from(placement.crop_width.min(placement.crop_height))
+      * request.output.radius_percent
+      / 100.0)
+      .round() as u32,
+    drop_shadow: u32::from(request.output.drop_shadow),
+    mesh_enabled: u32::from(request.output.background_type == "mesh"),
+    mesh_seed: request.output.mesh_seed,
+    mesh_warp_percent: request.output.mesh_warp_percent as f32,
+    mesh_point_count: request.output.mesh_points.len() as u32,
+    clip_cursor_at_video_edge: u32::from(request.cursor_effects.clip_at_video_edge),
+    transparent_background: 0,
+    ..Default::default()
+  };
+  for (index, point) in request.output.mesh_points.iter().take(4).enumerate() {
+    let angle = point.rotation.to_radians() as f32;
+    canvas.mesh_points[index] = [
+      point.x as f32 / 100.0,
+      point.y as f32 / 100.0,
+      point.radius_x as f32 / 100.0,
+      point.radius_y as f32 / 100.0,
+      angle.cos(),
+      angle.sin(),
+      0.0,
+      0.0,
+    ];
+  }
+  for (index, value) in request.output.mesh_colors.iter().take(5).enumerate() {
+    let colour = crate::screenshots::parse_hex_colour(value)?;
+    canvas.mesh_colors[index] = [
+      channel(colour[0]),
+      channel(colour[1]),
+      channel(colour[2]),
+      1.0,
+    ];
+  }
   let mut error = vec![0_i8; 2_048];
   let mut callbacks = GpuCallbacks {
     cancelled: request.cancelled,
@@ -123,20 +207,29 @@ fn render_gpu_video(
   let result = unsafe {
     orbit_gpu_composite_cursor(
       screen.as_ptr(),
-      cursor.as_ptr(),
-      commands.as_ptr(),
+      cursor
+        .as_ref()
+        .map_or(std::ptr::null(), |path| path.as_ptr()),
+      commands
+        .as_ref()
+        .map_or(std::ptr::null(), |path| path.as_ptr()),
       camera
         .as_ref()
         .map_or(std::ptr::null(), |path| path.as_ptr()),
       camera_overlay
         .as_ref()
         .map_or(std::ptr::null(), std::ptr::from_ref),
+      &canvas,
       output.as_ptr(),
       request.width,
       request.height,
-      layer.width,
-      layer.height,
-      super::video_bitrate(layer.width, layer.height, request.video.compression),
+      request.output.width,
+      request.output.height,
+      super::video_bitrate(
+        request.output.width,
+        request.output.height,
+        request.video.compression,
+      ),
       (&mut callbacks as *mut GpuCallbacks<'_>).cast(),
       gpu_should_cancel,
       gpu_progress,
@@ -169,7 +262,10 @@ fn mux_gpu_video_args(
     .map(OsString::from)
     .to_vec();
   args.push(video.into());
-  args.extend([OsString::from("-i"), request.screen.into()]);
+  args.extend([
+    OsString::from("-i"),
+    request.audio_source.unwrap_or(request.screen).into(),
+  ]);
   args.extend(
     [
       "-progress",
@@ -211,10 +307,9 @@ fn export_gpu(mut request: CursorExportRequest<'_>) -> Result<ExportRunResult, S
   if !matches!(layer_result, ExportRunResult::Completed) {
     return Ok(layer_result);
   }
-  let layer = layer.ok_or_else(|| "The cursor layer was not created".to_owned())?;
   let result = (|| {
     let video = gpu_video_path();
-    let video_result = render_gpu_video(&mut request, &layer, &video)?;
+    let video_result = render_gpu_video(&mut request, layer.as_ref(), &video)?;
     if !matches!(video_result, ExportRunResult::Completed) {
       let _ = std::fs::remove_file(&video);
       return Ok(video_result);
@@ -240,7 +335,9 @@ fn export_gpu(mut request: CursorExportRequest<'_>) -> Result<ExportRunResult, S
     let _ = std::fs::remove_file(&video);
     result
   })();
-  layer.remove();
+  if let Some(layer) = layer {
+    layer.remove();
+  }
   if request.cancelled.load(Ordering::Acquire) {
     return Ok(ExportRunResult::Cancelled);
   }

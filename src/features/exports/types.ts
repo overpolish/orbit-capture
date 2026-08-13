@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { ScreenshotOutputSettings } from "./screenshot-output";
+import {
+  RecordingOutputSettings,
+  ScreenshotOutputSettings,
+} from "./screenshot-output";
 
 type ExportArtifactBase = {
   extension: string;
@@ -70,6 +73,7 @@ export type RecordingTimelineThumbnails = Record<
 export type CursorEffectSettings = {
   bake: boolean;
   clickAnimation: boolean;
+  clipAtVideoEdge: boolean;
   motionBlur: boolean;
   sizePercent: number;
   smoothMovement: boolean;
@@ -134,6 +138,7 @@ export type ExportSnapshot = {
   artifact: ExportArtifact | null;
   cursorEffects: CursorEffectSettings;
   directory: string | null;
+  recordingOutput: RecordingOutputSettings | null;
   screenshotBackgroundRadiusPercent: number;
   screenshotOutput: ScreenshotOutputSettings | null;
   screenshotRadiusPercent: number;
@@ -144,11 +149,13 @@ export const initialExportSnapshot: ExportSnapshot = {
   cursorEffects: {
     bake: true,
     clickAnimation: true,
+    clipAtVideoEdge: false,
     motionBlur: true,
     sizePercent: 100,
     smoothMovement: true,
   },
   directory: null,
+  recordingOutput: null,
   screenshotBackgroundRadiusPercent: 0,
   screenshotOutput: null,
   screenshotRadiusPercent: 0,

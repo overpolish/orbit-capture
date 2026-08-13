@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::exports::CameraOverlaySettings;
 use tauri::{ipc::Channel, AppHandle, Manager};
 
 use super::*;
@@ -15,7 +16,7 @@ pub async fn start_recording_preview_player(
   event_channel: Channel<RecordingPreviewPlayerEvent>,
   session_id: u64,
 ) -> Result<RecordingPreviewPlayerInfo, String> {
-  let sources = sources(&app, artifact_id, settings.cursor_effects)?;
+  let sources = sources(&app, artifact_id, Some(&settings))?;
   let info = RecordingPreviewPlayerInfo {
     duration_ms: sources.duration_ms,
     layout: sources.layout.clone(),
@@ -34,12 +35,47 @@ pub async fn start_recording_preview_player(
   manager.audio_volumes = settings.audio.audio_track_volumes;
   manager.event_channel = Some(event_channel);
   manager.frame_channel = Some(frame_channel);
+  manager.latest_layout_request = 0;
   manager.latest_seek_request = 0;
   manager.position_ms = 0;
   manager.sources = Some(sources);
   manager.session_id = Some(session_id);
   manager.restart(PlaybackMode::Still)?;
   Ok(info)
+}
+
+#[tauri::command]
+pub fn set_recording_preview_composition(
+  state: tauri::State<'_, RecordingPreviewPlayerState>,
+  bake_camera: bool,
+  camera_overlay: CameraOverlaySettings,
+  recording_output: RecordingOutputSettings,
+  session_id: u64,
+) -> Result<(), String> {
+  let mut manager = state
+    .0
+    .lock()
+    .map_err(|_| "The recording preview player is unavailable".to_owned())?;
+  manager.require_session(session_id)?;
+  let settings = manager
+    .sources
+    .as_ref()
+    .ok_or_else(|| "The recording preview player is not open".to_owned())?
+    .composition_settings
+    .clone()
+    .ok_or_else(|| "The recording preview composition is unavailable".to_owned())?;
+  *settings
+    .write()
+    .map_err(|_| "The recording preview composition is unavailable".to_owned())? =
+    PreviewCompositionSettings {
+      bake_camera,
+      camera_overlay,
+      recording_output,
+    };
+  if !manager.is_playing {
+    manager.restart(PlaybackMode::InteractiveStill)?;
+  }
+  Ok(())
 }
 
 #[tauri::command]
@@ -63,7 +99,7 @@ pub fn set_recording_preview_cursor_effects(
     .write()
     .map_err(|_| "The cursor preview settings are unavailable".to_owned())? = cursor_effects;
   if !manager.is_playing {
-    manager.restart(PlaybackMode::Still)?;
+    manager.restart(PlaybackMode::InteractiveStill)?;
   }
   Ok(())
 }
@@ -99,7 +135,7 @@ pub fn pause_recording_preview(
       position_ms: manager.position_ms,
     });
   }
-  Ok(())
+  manager.restart(PlaybackMode::InteractiveStill)
 }
 
 #[tauri::command]
@@ -116,9 +152,13 @@ pub fn request_recording_preview_full_resolution(
     return Ok(());
   }
   manager.cancel_worker();
-  #[cfg(target_os = "macos")]
   if let Some(decoder) = &manager.still_decoder {
-    return decoder.seek(manager.position_ms, manager.latest_seek_request, true);
+    return decoder.seek(
+      manager.position_ms,
+      manager.latest_seek_request,
+      false,
+      manager.pane_target_sizes.clone(),
+    );
   }
   let mut sources = manager
     .sources
@@ -133,15 +173,19 @@ pub fn request_recording_preview_full_resolution(
     .event_channel
     .clone()
     .ok_or_else(|| "The recording preview event channel is unavailable".to_owned())?;
+  let pane_count = sources.playback_layout.panes.len();
   manager.worker = Some(PreviewPlayerWorker::spawn(
     sources,
-    PreviewAudioSettings {
-      audio_track_volumes: manager.audio_volumes.clone(),
-      enabled_stream_indices: manager.audio_indices.clone(),
+    super::worker::WorkerLaunch {
+      audio: PreviewAudioSettings {
+        audio_track_volumes: manager.audio_volumes.clone(),
+        enabled_stream_indices: manager.audio_indices.clone(),
+      },
+      mode: PlaybackMode::Still,
+      playback_factors: vec![1.0; pane_count],
+      request_id: manager.latest_seek_request,
+      start_ms: manager.position_ms,
     },
-    manager.position_ms,
-    manager.latest_seek_request,
-    PlaybackMode::Still,
     frame_channel,
     event_channel,
   )?);
@@ -153,6 +197,7 @@ pub fn seek_recording_preview(
   state: tauri::State<'_, RecordingPreviewPlayerState>,
   position_ms: u64,
   request_id: u64,
+  rough: bool,
   session_id: u64,
 ) -> Result<(), String> {
   let mut manager = state
@@ -164,6 +209,7 @@ pub fn seek_recording_preview(
     return Ok(());
   }
   manager.latest_seek_request = request_id;
+  manager.rough_seek = rough;
   manager.cancel_worker();
   let duration_ms = manager
     .sources
@@ -171,7 +217,7 @@ pub fn seek_recording_preview(
     .map_or(0, |value| value.duration_ms);
   manager.position_ms = position_ms.min(duration_ms.saturating_sub(1));
   manager.is_playing = false;
-  manager.restart(PlaybackMode::Still)
+  manager.restart(PlaybackMode::InteractiveStill)
 }
 
 #[tauri::command]

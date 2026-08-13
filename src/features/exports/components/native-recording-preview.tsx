@@ -11,7 +11,9 @@ import {
 } from "react";
 
 import { CircularProgressBar } from "../../../components/base/circular-progress-bar/circular-progress-bar";
+import { copyRecordingPreviewSourceFrame } from "../api";
 import { defaultCameraOverlay } from "../recording-export-settings";
+import { defaultRecordingOutput } from "../screenshot-output";
 import { useExportWindowShortcuts } from "../use-export-window-shortcuts";
 import { useRecordingPreviewPlayer } from "../use-recording-preview-player";
 import { useRecordingTimelineThumbnails } from "../use-recording-timeline-thumbnails";
@@ -19,6 +21,8 @@ import { useRecordingTimelineThumbnails } from "../use-recording-timeline-thumbn
 import { AudioVisualizer } from "./audio-visualizer";
 import { BakedCameraPreviewViewport } from "./baked-camera-preview-viewport";
 import { PreviewToolbar } from "./preview-toolbar";
+import { RecordingCropToggle } from "./recording-crop-toggle";
+import { RecordingOutputPreviewViewport } from "./recording-output-preview-viewport";
 import { RecordingPlaybackControls } from "./recording-playback-controls";
 import { RecordingPreviewViewport } from "./recording-preview-viewport";
 import { RecordingTrackLanes } from "./recording-track-lanes";
@@ -41,6 +45,7 @@ export function NativeRecordingPreview({
   cursorEffects = {
     bake: true,
     clickAnimation: true,
+    clipAtVideoEdge: false,
     motionBlur: true,
     sizePercent: 100,
     smoothMovement: true,
@@ -54,21 +59,29 @@ export function NativeRecordingPreview({
   onCameraOverlayChange,
   onEnabledTracksChange,
   onEnabledVideoTracksChange,
+  onRecordingOutputChange,
   onSelectedTrackChange,
   previewLayout,
   previewOutputDimensions,
+  recordingOutput,
   selectedTrack = null,
 }: ScrubPreviewProps & { inspector?: ReactNode }) {
   const screenCanvasRef = useRef<HTMLCanvasElement>(null);
   const cameraCanvasRef = useRef<HTMLCanvasElement>(null);
+  const cursorCanvasRef = useRef<HTMLCanvasElement>(null);
   const totalDurationRef = useRef(durationMs);
   const [playhead] = useState(createPlayhead);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [zoomPercent, setZoomPercent] = useState(100);
+  const [isEditing, setIsEditing] = useState(false);
   const selectedStreamIndices =
     enabledStreamIndices ?? audioTracks.map((track) => track.streamIndex);
   const enabledTracks = new Set(selectedStreamIndices);
   const selectedVideoTracks = new Set(enabledVideoTracks);
+  const activeVideoTrack =
+    selectedTrack === "primary" || selectedTrack === "camera"
+      ? selectedTrack
+      : null;
   const audioVolumeByStream = useMemo(
     () =>
       new Map(
@@ -82,7 +95,10 @@ export function NativeRecordingPreview({
   const player = useRecordingPreviewPlayer({
     artifactId,
     audioTrackVolumes,
+    bakeCamera,
     cameraCanvasRef,
+    cameraOverlay,
+    cursorCanvasRef,
     cursorEffects,
     enabledStreamIndices: selectedStreamIndices,
     isEnabled: previewLayout === undefined,
@@ -90,6 +106,12 @@ export function NativeRecordingPreview({
       const total = totalDurationRef.current;
       playhead.publish(positionMs / 1_000, total > 0 ? positionMs / total : 0);
     },
+    recordingOutput:
+      recordingOutput ??
+      defaultRecordingOutput({
+        camera: previewOutputDimensions?.camera,
+        primary: previewOutputDimensions?.primary ?? { height: 64, width: 64 },
+      }),
     screenCanvasRef,
   });
   const timelineThumbnails = useRecordingTimelineThumbnails({
@@ -152,12 +174,83 @@ export function NativeRecordingPreview({
   }, [isPlaying, pause, play]);
 
   useExportWindowShortcuts({
+    onToggleCrop:
+      visiblePaneEntries.length > 0
+        ? () => {
+            setIsEditing((editing) => !editing);
+          }
+        : undefined,
     onTogglePlayback: layout ? togglePlayback : undefined,
   });
+
+  const canEditActiveTrack =
+    activeVideoTrack !== null && selectedVideoTracks.has(activeVideoTrack);
+  const cropToggle =
+    visiblePaneEntries.length > 0 ? (
+      <RecordingCropToggle
+        activeTrack={activeVideoTrack}
+        bakeCamera={bakeCamera}
+        cameraPane={cameraPane}
+        isEditing={isEditing}
+        isEnabled={canEditActiveTrack}
+        onCameraOverlayReset={onCameraOverlayChange}
+        onChange={onRecordingOutputChange}
+        onEditingChange={setIsEditing}
+        outputs={recordingOutput}
+        screenPane={screenPane}
+      />
+    ) : undefined;
 
   useEffect(() => {
     playhead.publish(0, 0);
   }, [artifactId, playhead]);
+
+  // The native surface owns display, so the DOM canvases carry no pixels.
+  // The crop magnifier samples them directly, so while editing is active the
+  // current source frame is fetched once and drawn into the (invisible)
+  // canvas of the edited pane.
+  const editedTrack = isEditing && !isScrubbing ? activeVideoTrack : null;
+  const getPositionMs = player.getPositionMs;
+  useEffect(() => {
+    if (!editedTrack) return;
+    const isCameraPane = editedTrack === "camera" && !bakeCamera;
+    const targetRef = isCameraPane ? cameraCanvasRef : screenCanvasRef;
+    let cancelled = false;
+    void copyRecordingPreviewSourceFrame({
+      artifactId,
+      positionMs: getPositionMs(),
+      track: isCameraPane ? 1 : 0,
+    })
+      .then(async (bytes) => {
+        const bitmap = await createImageBitmap(
+          new Blob([bytes], { type: "image/jpeg" }),
+        );
+        if (cancelled) return;
+        const canvas = targetRef.current;
+        if (!canvas) return;
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+      // The canvas only exists as the magnifier's pixel source; a stale
+      // frame left behind would be visible in layouts that show the canvas.
+      const canvas = targetRef.current;
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+    };
+  }, [
+    artifactId,
+    bakeCamera,
+    cameraCanvasRef,
+    editedTrack,
+    getPositionMs,
+    screenCanvasRef,
+  ]);
 
   const seek = (ratio: number, phase: "end" | "move" | "start") => {
     if (phase === "start") setIsScrubbing(true);
@@ -171,7 +264,12 @@ export function NativeRecordingPreview({
     <div className="flex min-h-0 grow flex-col">
       <div className="grid min-h-0 grow grid-cols-[clamp(240px,23vw,300px)_minmax(0,1fr)]">
         {inspector}
-        <section className="flex min-h-0 min-w-0 flex-col bg-black/5 dark:bg-black/25">
+        <section className="relative flex min-h-0 min-w-0 flex-col">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 -z-10 bg-black/5 dark:bg-black/25"
+            data-preview-backdrop
+          />
           {visibleLayout && visibleLayout.panes.length > 0 ? (
             <PreviewToolbar
               badges={visibleLayout.panes.map((pane, index) => {
@@ -183,6 +281,7 @@ export function NativeRecordingPreview({
                   width: outputDimensions?.width ?? pane.sourceWidth,
                 };
               })}
+              center={cropToggle}
               onZoomChange={setZoomPercent}
               zoomPercent={zoomPercent}
             />
@@ -201,9 +300,13 @@ export function NativeRecordingPreview({
             ) : canPreviewBakedCamera && screenPane && cameraPane ? (
               <div className="flex min-h-0 min-w-0 grow flex-col">
                 <BakedCameraPreviewViewport
-                  cameraCanvasRef={cameraCanvasRef}
                   cameraPane={cameraPane}
-                  controlsVisible={!isPlaying && !isScrubbing}
+                  controlsVisible={
+                    isEditing &&
+                    activeVideoTrack === "camera" &&
+                    !isPlaying &&
+                    !isScrubbing
+                  }
                   isBusy={
                     previewLayout === undefined &&
                     (player.isPreparing || isPreparingPreview)
@@ -211,11 +314,58 @@ export function NativeRecordingPreview({
                   onInteractionEnd={cameraHistory.endGesture}
                   onInteractionStart={cameraHistory.beginGesture}
                   onNeedFullResolution={player.requestFullResolution}
+                  onOutputChange={(settings) =>
+                    onRecordingOutputChange?.("primary", settings)
+                  }
                   onSettingsChange={cameraHistory.change}
                   onZoomChange={setZoomPercent}
+                  outputEditing={
+                    isEditing &&
+                    activeVideoTrack === "primary" &&
+                    !isPlaying &&
+                    !isScrubbing
+                  }
+                  outputSettings={
+                    recordingOutput?.primary ?? {
+                      backgroundColor: "#171717",
+                      backgroundRadiusPercent: 0,
+                      backgroundType: "solid",
+                      dropShadow: true,
+                      height: screenPane.height,
+                      meshColors: [],
+                      meshLockedColors: [],
+                      meshPoints: [],
+                      meshSeed: 0,
+                      meshWarpPercent: 0,
+                      radiusPercent: 0,
+                      screenshotCropHeightPercent: 100,
+                      screenshotCropWidthPercent: 100,
+                      screenshotCropXPercent: 0,
+                      screenshotCropYPercent: 0,
+                      screenshotImageWidthPercent: 100,
+                      screenshotImageXPercent: 50,
+                      screenshotImageYPercent: 50,
+                      width: screenPane.width,
+                    }
+                  }
                   screenCanvasRef={screenCanvasRef}
                   screenPane={screenPane}
                   settings={cameraOverlay}
+                  zoomPercent={zoomPercent}
+                />
+              </div>
+            ) : visibleLayout &&
+              visibleLayout.panes.length > 0 &&
+              recordingOutput ? (
+              <div className="flex min-h-0 min-w-0 grow flex-col">
+                <RecordingOutputPreviewViewport
+                  activeTrack={activeVideoTrack}
+                  entries={visiblePaneEntries}
+                  isEditing={isEditing && !isPlaying && !isScrubbing}
+                  onChange={onRecordingOutputChange}
+                  onNeedFullResolution={player.requestFullResolution}
+                  onZoomChange={setZoomPercent}
+                  outputs={recordingOutput}
                   zoomPercent={zoomPercent}
                 />
               </div>

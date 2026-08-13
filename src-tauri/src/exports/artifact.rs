@@ -83,10 +83,16 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
     .cursor_effects
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner());
+  let recording_output = state
+    .recording_output
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .clone();
   ExportSnapshot {
     artifact,
     cursor_effects,
     directory: current_directory(app),
+    recording_output,
     screenshot_radius_percent,
     screenshot_background_radius_percent,
     screenshot_output,

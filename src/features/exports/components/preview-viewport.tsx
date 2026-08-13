@@ -7,9 +7,11 @@ import {
   ScreenshotOutputSettings,
   screenshotOutputDimensions,
 } from "../screenshot-output";
+import { usePreviewCapabilities } from "../use-preview-capabilities";
+import { useScreenshotPreviewSurface } from "../use-screenshot-preview-surface";
 
 import { InteractivePreviewViewport } from "./interactive-preview-viewport";
-import { MeshBackgroundPreview } from "./mesh-background-preview";
+import { NativeOutputPreview } from "./native-output-preview";
 import { ScreenshotPreviewLayer } from "./screenshot-preview-layer";
 import { ScreenshotRadiusControl } from "./screenshot-radius-control";
 
@@ -51,14 +53,19 @@ export function PreviewViewport({
   zoomPercent,
 }: PreviewViewportProps) {
   const outputRef = useRef<HTMLDivElement | null>(null);
+  const composedCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const output = screenshotOutput
     ? screenshotOutputDimensions(screenshotOutput)
     : { height: naturalHeight, width: naturalWidth };
-  const outputRadius = screenshotOutput
-    ? (Math.min(output.width, output.height) *
-        screenshotOutput.backgroundRadiusPercent) /
-      100
-    : 0;
+  // `undefined` until the capability probe resolves: neither preview path is
+  // rendered before then, so the viewport never flashes the wrong one.
+  const nativePane = usePreviewCapabilities()?.nativeScreenshotPreview;
+  useScreenshotPreviewSurface({
+    artifactId,
+    canvasRef: composedCanvasRef,
+    isEnabled: nativePane === true && screenshotOutput !== undefined,
+    output: screenshotOutput,
+  });
   return (
     <InteractivePreviewViewport<HTMLDivElement>
       getMediaSize={() => output}
@@ -80,26 +87,25 @@ export function PreviewViewport({
             width: `${output.width.toString()}px`,
           }}
         >
-          <div
-            className="absolute inset-0 overflow-hidden bg-transparent"
-            style={{
-              background:
-                screenshotOutput?.backgroundType === "solid"
-                  ? screenshotOutput.backgroundColor
-                  : "transparent",
-              clipPath: `inset(0 round ${outputRadius.toString()}px)`,
-            }}
-          >
-            {screenshotOutput?.backgroundType === "mesh" ? (
-              <MeshBackgroundPreview
-                colors={screenshotOutput.meshColors}
-                points={screenshotOutput.meshPoints}
-                seed={screenshotOutput.meshSeed}
-                size={output}
-                warpPercent={screenshotOutput.meshWarpPercent}
+          <div className="absolute inset-0 overflow-visible bg-transparent">
+            {screenshotOutput && nativePane === true ? (
+              // A geometry marker: the composed screenshot renders on the
+              // native pane surface below the webview, positioned to this
+              // element's rect by the layout hook.
+              <canvas
+                aria-label="Composed output preview"
+                className="absolute inset-0 size-full max-w-none opacity-0"
+                ref={composedCanvasRef}
+                role="img"
               />
-            ) : null}
-            {!screenshotOutput && previewUrl ? (
+            ) : screenshotOutput && nativePane === false ? (
+              <NativeOutputPreview
+                artifactId={artifactId}
+                canvasRef={composedCanvasRef}
+                onReady={onReady}
+                output={screenshotOutput}
+              />
+            ) : previewUrl && screenshotOutput === undefined ? (
               <img
                 alt={alt}
                 className="absolute inset-0 size-full"
@@ -111,13 +117,10 @@ export function PreviewViewport({
           </div>
           {screenshotOutput ? (
             <ScreenshotPreviewLayer
-              alt={alt}
-              canvasRadius={outputRadius}
               isEditing={isEditing}
               onOutputChange={onOutputChange}
               onRadiusChange={onRadiusChange}
               onRadiusChangeEnd={onRadiusChangeEnd}
-              onReady={onReady}
               output={output}
               outputRef={outputRef}
               previewUrl={previewUrl}

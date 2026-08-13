@@ -36,6 +36,7 @@ export function ScreenshotLayoutControl({
   onChange,
   onChangeEnd,
   output,
+  previewSourceRef,
   previewUrl,
   settings,
   source,
@@ -46,6 +47,7 @@ export function ScreenshotLayoutControl({
   source: { height: number; width: number };
   onChange?: (settings: ScreenshotOutputSettings) => void;
   onChangeEnd?: (settings: ScreenshotOutputSettings) => void;
+  previewSourceRef?: RefObject<HTMLCanvasElement | null>;
   previewUrl?: string | null;
 }) {
   const activeRef = useRef<{
@@ -76,6 +78,7 @@ export function ScreenshotLayoutControl({
     image.src = previewUrl;
   }, [previewUrl]);
   const layout = screenshotLayout(source, output, draft);
+  const magnifierSource = previewSourceRef?.current ?? imageRef.current;
   const inverseScale = "var(--preview-inverse-scale, 1)";
   const ringExtent = Math.min(layout.crop.width, layout.crop.height) * 0.38;
 
@@ -321,14 +324,14 @@ export function ScreenshotLayoutControl({
         }}
       />
       <AnimatePresence>
-        {activeEdges && imageRef.current ? (
+        {activeEdges && magnifierSource ? (
           <ScreenshotCropMagnifier
             edges={activeEdges}
             inverseScale={inverseScale}
             layout={layout}
             point={magnifierPoint}
             source={source}
-            sourceImage={imageRef.current}
+            sourceImage={magnifierSource}
           />
         ) : null}
       </AnimatePresence>

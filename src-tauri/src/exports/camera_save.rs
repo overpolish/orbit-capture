@@ -71,6 +71,7 @@ pub(super) fn save_baked_recording(
   overlay: CameraOverlaySettings,
   video_settings: (u8, u16, u16),
   cursor: Option<(&Path, cursor_effects::CursorEffectSettings)>,
+  output: &ScreenshotOutputSettings,
   progress_app: &AppHandle,
   cancelled: &AtomicBool,
 ) -> Result<Option<PathBuf>, String> {
@@ -92,44 +93,35 @@ pub(super) fn save_baked_recording(
     camera_height: camera.height,
     camera_width: camera.width,
     overlay,
-    screen_height: screen_size.1,
-    screen_width: screen_size.0,
+    screen_height: output.height,
+    screen_width: output.width,
     video: media_preview::VideoExportOptions {
       compression: video_settings.0,
-      resolution_scale_percent: video_settings.1,
-      source_scale_percent: video_settings.2,
+      resolution_scale_percent: 100,
+      source_scale_percent: 100,
     },
   };
-  let result = if let Some((cursor, cursor_effects)) = cursor {
-    cursor_export::export(cursor_export::CursorExportRequest {
-      audio_layout: layout,
-      camera: Some((&camera.path, baked)),
-      cancelled,
-      cursor,
-      cursor_effects,
-      destination: &path,
-      duration_ms,
-      height: screen_size.1,
-      on_progress: &mut on_progress,
-      screen,
-      selection,
-      video: baked.video,
-      width: screen_size.0,
-    })?
-  } else {
-    let exporter = media_preview::baked_recording_exporter()
-      .ok_or_else(|| "FFmpeg is required to bake in the camera recording".to_owned())?;
-    exporter(
-      screen,
-      &camera.path,
-      &path,
-      selection,
-      layout,
-      baked,
-      cancelled,
-      &mut on_progress,
-    )?
-  };
+  let (cursor_path, cursor_effects) = cursor.map_or(
+    (None, cursor_effects::CursorEffectSettings::default()),
+    |(path, settings)| (Some(path), settings),
+  );
+  let result = cursor_export::export(cursor_export::CursorExportRequest {
+    audio_layout: layout,
+    audio_source: None,
+    camera: Some((&camera.path, baked)),
+    cancelled,
+    cursor: cursor_path,
+    cursor_effects,
+    destination: &path,
+    duration_ms,
+    height: screen_size.1,
+    on_progress: &mut on_progress,
+    output,
+    screen,
+    selection,
+    video: baked.video,
+    width: screen_size.0,
+  })?;
   match result {
     media_preview::ExportRunResult::Completed => {
       emit_progress(
@@ -162,6 +154,7 @@ pub(super) fn save_camera_copy(
   progress_start: f64,
   compression: u8,
   resolution_scale_percent: u16,
+  output: &ScreenshotOutputSettings,
 ) -> Result<Option<PathBuf>, String> {
   let camera_stem = format!("{stem} Camera");
   let empty_selection = track_selection::TrackSelection::default();
@@ -177,6 +170,39 @@ pub(super) fn save_camera_copy(
     );
   };
 
+  if cursor_export::needs_composition(output, camera.width, camera.height) {
+    let path = unique_path(directory, &camera_stem, RECORDING_EXTENSION, &|candidate| {
+      candidate.exists()
+    });
+    let result = cursor_export::export(cursor_export::CursorExportRequest {
+      audio_layout: track_selection::AudioLayout::SeparateTracks,
+      audio_source: None,
+      camera: None,
+      cancelled,
+      cursor: None,
+      cursor_effects: cursor_effects::CursorEffectSettings::default(),
+      destination: &path,
+      duration_ms: camera.duration_ms,
+      height: camera.height,
+      on_progress: &mut on_progress,
+      output,
+      screen: &camera.path,
+      selection: &empty_selection,
+      video: media_preview::VideoExportOptions {
+        compression,
+        resolution_scale_percent: 100,
+        source_scale_percent: 100,
+      },
+      width: camera.width,
+    })?;
+    return match result {
+      media_preview::ExportRunResult::Completed => {
+        let _ = std::fs::remove_file(&camera.path);
+        Ok(Some(path))
+      }
+      media_preview::ExportRunResult::Cancelled => Ok(None),
+    };
+  }
   let exporter = media_preview::selected_recording_exporter();
   if exporter.is_none() && (compression > 0 || resolution_scale_percent < 100) {
     return Err("FFmpeg is required to compress the camera recording".to_owned());
@@ -226,7 +252,48 @@ pub(super) fn save_camera_as_primary(
   cancelled: &AtomicBool,
   compression: u8,
   resolution_scale_percent: u16,
+  output: &ScreenshotOutputSettings,
 ) -> Result<Option<PathBuf>, String> {
+  if cursor_export::needs_composition(output, camera.width, camera.height) {
+    let path = unique_path(directory, stem, RECORDING_EXTENSION, &|candidate| {
+      candidate.exists()
+    });
+    let mut on_progress = |processed_ms| {
+      emit_progress(
+        progress_app,
+        artifact_id,
+        "camera",
+        processed_ms,
+        camera.duration_ms,
+        0.0,
+        99.0,
+      );
+    };
+    return match cursor_export::export(cursor_export::CursorExportRequest {
+      audio_layout: layout,
+      audio_source: Some(audio_source),
+      camera: None,
+      cancelled,
+      cursor: None,
+      cursor_effects: cursor_effects::CursorEffectSettings::default(),
+      destination: &path,
+      duration_ms: camera.duration_ms,
+      height: camera.height,
+      on_progress: &mut on_progress,
+      output,
+      screen: &camera.path,
+      selection,
+      video: media_preview::VideoExportOptions {
+        compression,
+        resolution_scale_percent: 100,
+        source_scale_percent: 100,
+      },
+      width: camera.width,
+    })? {
+      media_preview::ExportRunResult::Completed => Ok(Some(path)),
+      media_preview::ExportRunResult::Cancelled => Ok(None),
+    };
+  }
   let exporter = media_preview::camera_recording_exporter()
     .ok_or_else(|| "FFmpeg is required to export the camera track on its own".to_owned())?;
   let path = unique_path(directory, stem, RECORDING_EXTENSION, &|candidate| {

@@ -33,6 +33,12 @@ pub fn show_region_selector(
   let region = app
     .get_webview_window(WindowLabel::RegionSelector.as_str())
     .ok_or_else(|| tauri::Error::WindowNotFound)?;
+  // Persisting a resize rehydrates every window's shared source store. The
+  // overlay is already covering this monitor, so do not run native show/order
+  // choreography again merely because its React geometry changed.
+  if region.is_visible()? && region.outer_position()? == position && region.outer_size()? == size {
+    return apply_region_selector_interactivity(&app);
+  }
   region.set_size(size)?;
   region.set_position(position)?;
   platform::set_opacity(&region, 1.0)?;
@@ -93,6 +99,25 @@ fn raise_recording_controls(app: &AppHandle) -> tauri::Result<()> {
 /// source selector must not be raised over it.
 const fn recording_controls_may_raise(controls_visible: bool, region_editing: bool) -> bool {
   controls_visible && !region_editing
+}
+
+/// Region editing owns the screen until the user explicitly finishes it.
+/// Persisting resize geometry rehydrates the recording bar's source store,
+/// which can legitimately re-assert that region mode has a source selector.
+/// That synchronization must update the desired idle state without ordering
+/// the selector back on screen in the middle of the edit gesture.
+const fn source_selector_visibility_allows_show(
+  controls_visible: bool,
+  region_editing: bool,
+) -> bool {
+  controls_visible && !region_editing
+}
+
+pub(super) fn source_selector_may_show() -> bool {
+  source_selector_visibility_allows_show(
+    RECORDING_CONTROLS_VISIBLE.load(Ordering::Relaxed),
+    REGION_SELECTOR_EDITING.load(Ordering::Relaxed),
+  )
 }
 
 /// The region overlay may take clicks only while the user is actively editing
@@ -190,6 +215,7 @@ pub fn set_recording_controls_opacity(app: AppHandle, opacity: f64) -> tauri::Re
 mod tests {
   use super::{
     recording_controls_may_raise, region_selector_is_interactive, region_selector_may_show,
+    source_selector_visibility_allows_show,
   };
 
   #[test]
@@ -197,6 +223,13 @@ mod tests {
     assert!(recording_controls_may_raise(true, false));
     assert!(!recording_controls_may_raise(true, true));
     assert!(!recording_controls_may_raise(false, false));
+  }
+
+  #[test]
+  fn region_editing_keeps_the_source_selector_hidden_during_store_sync() {
+    assert!(source_selector_visibility_allows_show(true, false));
+    assert!(!source_selector_visibility_allows_show(true, true));
+    assert!(!source_selector_visibility_allows_show(false, false));
   }
 
   #[test]

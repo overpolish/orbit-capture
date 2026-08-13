@@ -238,30 +238,6 @@ impl CursorCompositor {
     })
   }
 
-  pub fn composite_bgra(
-    &self,
-    pixels: &mut [u8],
-    width: usize,
-    height: usize,
-    stride: usize,
-    position_ms: u64,
-    settings: CursorEffectSettings,
-  ) {
-    if !settings.bake || width == 0 || height == 0 || stride < width * 4 {
-      return;
-    }
-    let Some(output) = self.output_cursor(position_ms, width, height, settings) else {
-      return;
-    };
-    let mut frame = raster::FrameMut {
-      height,
-      pixels,
-      stride,
-      width,
-    };
-    self.draw_output(&mut frame, output, output.x, output.y, settings);
-  }
-
   fn output_cursor(
     &self,
     position_ms: u64,

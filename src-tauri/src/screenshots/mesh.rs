@@ -38,7 +38,7 @@ pub(super) fn mesh_canvas(
   super::mesh_gpu::render(width, height, &parsed, points, seed, warp_percent)
 }
 
-fn validate_mesh(
+pub(crate) fn validate_mesh(
   colors: &[String],
   points: &[MeshGradientPoint],
   warp_percent: f64,

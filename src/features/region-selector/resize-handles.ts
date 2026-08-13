@@ -4,12 +4,17 @@
 import { CSSProperties } from "react";
 import { HandleClasses, HandleStyles } from "react-rnd";
 
+// The visual language comes from the shared TransformControls marquee (an
+// 8px solid white dot on a 2px dashed border); these are react-rnd's hit
+// areas, drawing the same dot inside a larger invisible box so the grab
+// target stays comfortable. The offsets below centre the dot exactly on the
+// marquee border given re-resizable's default handle anchors (edges at -5px,
+// corners at -10px).
 const HANDLE_STYLE: CSSProperties = {
-  background: "var(--color-content)",
-  border: "solid 1px white",
-  borderRadius: "100%",
-  height: 12,
-  width: 12,
+  background: "radial-gradient(circle, white 0 4px, transparent 4.5px)",
+  filter: "drop-shadow(0 0 2px rgb(0 0 0 / 50%))",
+  height: 16,
+  width: 16,
 };
 
 export const HANDLE_STYLES: HandleStyles = {
@@ -17,45 +22,45 @@ export const HANDLE_STYLES: HandleStyles = {
     ...HANDLE_STYLE,
     cursor: "ns-resize",
     left: "50%",
-    transform: "translateY(2px) translateX(-50%)",
+    transform: "translateY(2.5px) translateX(-50%)",
   },
   bottomLeft: {
     ...HANDLE_STYLE,
     cursor: "nesw-resize",
-    transform: "translateX(3px) translateY(-3px)",
+    transform: "translateX(2.5px) translateY(-2.5px)",
   },
   bottomRight: {
     ...HANDLE_STYLE,
     cursor: "nwse-resize",
-    transform: "translateX(-3px) translateY(-3px)",
+    transform: "translateX(-2.5px) translateY(-2.5px)",
   },
   left: {
     ...HANDLE_STYLE,
     cursor: "ew-resize",
     top: "50%",
-    transform: "translateX(-2px) translateY(-50%)",
+    transform: "translateX(-2.5px) translateY(-50%)",
   },
   right: {
     ...HANDLE_STYLE,
     cursor: "ew-resize",
     top: "50%",
-    transform: "translateX(2px) translateY(-50%)",
+    transform: "translateX(2.5px) translateY(-50%)",
   },
   top: {
     ...HANDLE_STYLE,
     cursor: "ns-resize",
     left: "50%",
-    transform: "translateY(-2px) translateX(-50%)",
+    transform: "translateY(-2.5px) translateX(-50%)",
   },
   topLeft: {
     ...HANDLE_STYLE,
     cursor: "nwse-resize",
-    transform: "translateX(3px) translateY(3px)",
+    transform: "translateX(2.5px) translateY(2.5px)",
   },
   topRight: {
     ...HANDLE_STYLE,
     cursor: "nesw-resize",
-    transform: "translateX(-3px) translateY(3px)",
+    transform: "translateX(-2.5px) translateY(2.5px)",
   },
 };
 

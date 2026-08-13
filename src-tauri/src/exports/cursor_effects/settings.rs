@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 pub struct CursorEffectSettings {
   pub bake: bool,
   pub click_animation: bool,
+  #[serde(default)]
+  pub clip_at_video_edge: bool,
   pub motion_blur: bool,
   pub smooth_movement: bool,
   pub size_percent: f64,
@@ -18,6 +20,7 @@ impl Default for CursorEffectSettings {
     Self {
       bake: true,
       click_animation: true,
+      clip_at_video_edge: false,
       motion_blur: true,
       smooth_movement: true,
       size_percent: 100.0,

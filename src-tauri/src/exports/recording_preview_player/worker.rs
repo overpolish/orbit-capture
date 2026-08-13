@@ -13,19 +13,25 @@ use std::{
 };
 
 use tauri::ipc::Channel;
-#[cfg(not(target_os = "macos"))]
-use tauri::ipc::InvokeResponseBody;
 
 use super::{
-  audio, video, AudioTrackVolume, PlayerSources, PreviewAudioSettings, RecordingPreviewPlayerEvent,
+  audio, platform, video, AudioTrackVolume, PlayerSources, PreviewAudioSettings,
+  RecordingPreviewPlayerEvent,
 };
-#[cfg(target_os = "macos")]
-use super::{still_macos, video_macos};
 
 #[derive(Clone, Copy)]
 pub(super) enum PlaybackMode {
+  InteractiveStill,
   Playing,
   Still,
+}
+
+pub(super) struct WorkerLaunch {
+  pub audio: PreviewAudioSettings,
+  pub mode: PlaybackMode,
+  pub playback_factors: Vec<f64>,
+  pub request_id: u64,
+  pub start_ms: u64,
 }
 
 pub(super) struct PreviewPlayerWorker {
@@ -49,25 +55,11 @@ fn stop_child(child: &Arc<Mutex<Option<Child>>>) {
 
 fn send_frame(
   channel: &Channel,
-  _sources: &PlayerSources,
+  sources: &PlayerSources,
   request_id: u64,
-  payload: video::VideoFramePayload,
+  payload: platform::VideoFramePayload,
 ) -> bool {
-  match payload {
-    #[cfg(not(target_os = "macos"))]
-    video::VideoFramePayload::Composite(bytes) => {
-      let mut payload = Vec::with_capacity(16 + bytes.len());
-      payload.extend_from_slice(&_sources.playback_layout.width.to_le_bytes());
-      payload.extend_from_slice(&_sources.playback_layout.height.to_le_bytes());
-      payload.extend_from_slice(&request_id.to_le_bytes());
-      payload.extend_from_slice(&bytes);
-      channel.send(InvokeResponseBody::Raw(payload)).is_ok()
-    }
-    #[cfg(target_os = "macos")]
-    video::VideoFramePayload::Native { screen, camera } => {
-      still_macos::send_frame(channel, request_id, &screen, camera.as_deref())
-    }
-  }
+  platform::send_frame(channel, sources, request_id, payload)
 }
 
 fn send_error(channel: &Channel<RecordingPreviewPlayerEvent>, message: String) {
@@ -81,6 +73,7 @@ struct RunContext {
   event_channel: Channel<RecordingPreviewPlayerEvent>,
   frame_channel: Channel,
   mode: PlaybackMode,
+  playback_factors: Vec<f64>,
   position_ms: Arc<AtomicU64>,
   request_id: u64,
   selected_audio: Arc<RwLock<Vec<usize>>>,
@@ -99,6 +92,7 @@ fn run(context: RunContext) {
     frame_channel,
     event_channel,
     cancelled,
+    playback_factors,
     position_ms,
     request_id,
     video_child,
@@ -119,13 +113,11 @@ fn run(context: RunContext) {
     });
   }
   let (frame_tx, frame_rx) = mpsc::sync_channel(3);
-  #[cfg(target_os = "macos")]
-  let video_result = video_macos::spawn(&sources, start_ms, Arc::clone(&cancelled), frame_tx);
-  #[cfg(not(target_os = "macos"))]
-  let video_result = video::spawn(
+  let video_result = platform::spawn_video(
     &sources,
+    &playback_factors,
     start_ms,
-    matches!(mode, PlaybackMode::Still),
+    matches!(mode, PlaybackMode::Still | PlaybackMode::InteractiveStill),
     Arc::clone(&cancelled),
     Arc::clone(&video_child),
     frame_tx,
@@ -138,7 +130,7 @@ fn run(context: RunContext) {
     }
   };
 
-  if matches!(mode, PlaybackMode::Still) {
+  if matches!(mode, PlaybackMode::Still | PlaybackMode::InteractiveStill) {
     if let Ok(frame) = frame_rx.recv() {
       if !cancelled.load(Ordering::Acquire)
         && send_frame(&frame_channel, &sources, request_id, frame.payload)
@@ -237,13 +229,17 @@ fn run(context: RunContext) {
 impl PreviewPlayerWorker {
   pub(super) fn spawn(
     sources: PlayerSources,
-    audio: PreviewAudioSettings,
-    start_ms: u64,
-    request_id: u64,
-    mode: PlaybackMode,
+    launch: WorkerLaunch,
     frame_channel: Channel,
     event_channel: Channel<RecordingPreviewPlayerEvent>,
   ) -> Result<Self, String> {
+    let WorkerLaunch {
+      audio,
+      mode,
+      playback_factors,
+      request_id,
+      start_ms,
+    } = launch;
     let cancelled = Arc::new(AtomicBool::new(false));
     let position_ms = Arc::new(AtomicU64::new(start_ms));
     let video_child = Arc::new(Mutex::new(None));
@@ -266,6 +262,7 @@ impl PreviewPlayerWorker {
             event_channel,
             frame_channel,
             mode,
+            playback_factors,
             position_ms,
             request_id,
             selected_audio,

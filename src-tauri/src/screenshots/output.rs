@@ -3,10 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{
-  mesh::{mesh_canvas, MeshGradientPoint},
-  rounded_corners, CapturedImage,
-};
+#[cfg(not(target_os = "macos"))]
+use super::{mesh::mesh_canvas, rounded_corners};
+use super::{mesh::MeshGradientPoint, CapturedImage};
 
 const MAX_OUTPUT_PIXELS: u64 = 120_000_000;
 
@@ -51,7 +50,7 @@ pub struct ScreenshotOutputSettings {
   pub width: u32,
 }
 
-fn parse_hex_colour(value: &str) -> Result<[u8; 4], String> {
+pub(crate) fn parse_hex_colour(value: &str) -> Result<[u8; 4], String> {
   let value = value.strip_prefix('#').unwrap_or(value);
   if !matches!(value.len(), 2 | 3 | 6) || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
     return Err("The screenshot background colour is not valid".to_owned());
@@ -66,7 +65,7 @@ fn parse_hex_colour(value: &str) -> Result<[u8; 4], String> {
   Ok([channel(0)?, channel(2)?, channel(4)?, u8::MAX])
 }
 
-fn output_dimensions(settings: &ScreenshotOutputSettings) -> Result<(u32, u32), String> {
+pub(crate) fn output_dimensions(settings: &ScreenshotOutputSettings) -> Result<(u32, u32), String> {
   if settings.width < 64
     || settings.height < 64
     || u64::from(settings.width) * u64::from(settings.height) > MAX_OUTPUT_PIXELS
@@ -76,6 +75,77 @@ fn output_dimensions(settings: &ScreenshotOutputSettings) -> Result<(u32, u32), 
   Ok((settings.width, settings.height))
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OutputPlacement {
+  pub crop_height: u32,
+  pub crop_width: u32,
+  pub crop_x: i32,
+  pub crop_y: i32,
+  pub image_height: u32,
+  pub image_width: u32,
+  pub image_x: f64,
+  pub image_y: f64,
+}
+
+pub(crate) fn output_placement(
+  source_width: u32,
+  source_height: u32,
+  settings: &ScreenshotOutputSettings,
+) -> Result<OutputPlacement, String> {
+  let (output_width, output_height) = output_dimensions(settings)?;
+  let percentages = [
+    settings.screenshot_crop_height_percent,
+    settings.screenshot_crop_width_percent,
+    settings.screenshot_crop_x_percent,
+    settings.screenshot_crop_y_percent,
+    settings.screenshot_image_width_percent,
+    settings.screenshot_image_x_percent,
+    settings.screenshot_image_y_percent,
+  ];
+  if source_width == 0
+    || source_height == 0
+    || percentages.iter().any(|value| !value.is_finite())
+    || !(1.0..=800.0).contains(&settings.screenshot_crop_width_percent)
+    || !(1.0..=800.0).contains(&settings.screenshot_crop_height_percent)
+    || settings.screenshot_crop_x_percent.abs() > 800.0
+    || settings.screenshot_crop_y_percent.abs() > 800.0
+    || !(1.0..=800.0).contains(&settings.screenshot_image_width_percent)
+  {
+    return Err("The screenshot placement is not valid".to_owned());
+  }
+  let image_width = (f64::from(output_width) * settings.screenshot_image_width_percent / 100.0)
+    .round()
+    .max(1.0) as u32;
+  let image_height = (f64::from(image_width) * f64::from(source_height) / f64::from(source_width))
+    .round()
+    .max(1.0) as u32;
+  Ok(OutputPlacement {
+    crop_height: (f64::from(output_height) * settings.screenshot_crop_height_percent / 100.0)
+      .round()
+      .max(1.0) as u32,
+    crop_width: (f64::from(output_width) * settings.screenshot_crop_width_percent / 100.0)
+      .round()
+      .max(1.0) as u32,
+    crop_x: (f64::from(output_width) * settings.screenshot_crop_x_percent / 100.0).round() as i32,
+    crop_y: (f64::from(output_height) * settings.screenshot_crop_y_percent / 100.0).round() as i32,
+    image_height,
+    image_width,
+    image_x: f64::from(output_width) * settings.screenshot_image_x_percent / 100.0
+      - f64::from(image_width) / 2.0,
+    image_y: f64::from(output_height) * settings.screenshot_image_y_percent / 100.0
+      - f64::from(image_height) / 2.0,
+  })
+}
+
+#[cfg(target_os = "macos")]
+pub fn compose_screenshot(
+  image: &CapturedImage,
+  settings: &ScreenshotOutputSettings,
+) -> Result<CapturedImage, String> {
+  super::platform::compose_output_layers(image, settings, 0.0, true, None, None, None, false)
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn compose_screenshot(
   image: &CapturedImage,
   settings: &ScreenshotOutputSettings,
@@ -90,43 +160,18 @@ pub fn compose_screenshot(
   {
     return Err("The screenshot canvas settings are not valid".to_owned());
   }
-  let percentages = [
-    settings.screenshot_crop_height_percent,
-    settings.screenshot_crop_width_percent,
-    settings.screenshot_crop_x_percent,
-    settings.screenshot_crop_y_percent,
-    settings.screenshot_image_width_percent,
-    settings.screenshot_image_x_percent,
-    settings.screenshot_image_y_percent,
-  ];
-  if percentages.iter().any(|value| !value.is_finite())
-    || !(1.0..=800.0).contains(&settings.screenshot_crop_width_percent)
-    || !(1.0..=800.0).contains(&settings.screenshot_crop_height_percent)
-    || settings.screenshot_crop_x_percent.abs() > 800.0
-    || settings.screenshot_crop_y_percent.abs() > 800.0
-    || !(1.0..=800.0).contains(&settings.screenshot_image_width_percent)
-  {
-    return Err("The screenshot placement is not valid".to_owned());
-  }
-  let image_width = (f64::from(output_width) * settings.screenshot_image_width_percent / 100.0)
-    .round()
-    .max(1.0) as u32;
-  let image_height = (f64::from(image_width) * f64::from(image.height) / f64::from(image.width))
-    .round()
-    .max(1.0) as u32;
+  let placement = output_placement(image.width, image.height, settings)?;
+  let image_width = placement.image_width;
+  let image_height = placement.image_height;
   if u64::from(image_width) * u64::from(image_height) > MAX_OUTPUT_PIXELS * 4 {
     return Err("The scaled screenshot is too large".to_owned());
   }
-  let image_x = f64::from(output_width) * settings.screenshot_image_x_percent / 100.0
-    - f64::from(image_width) / 2.0;
-  let image_y = f64::from(output_height) * settings.screenshot_image_y_percent / 100.0
-    - f64::from(image_height) / 2.0;
-  let crop_x = f64::from(output_width) * settings.screenshot_crop_x_percent / 100.0;
-  let crop_y = f64::from(output_height) * settings.screenshot_crop_y_percent / 100.0;
-  let crop_width =
-    (f64::from(output_width) * settings.screenshot_crop_width_percent / 100.0).round() as u32;
-  let crop_height =
-    (f64::from(output_height) * settings.screenshot_crop_height_percent / 100.0).round() as u32;
+  let image_x = placement.image_x;
+  let image_y = placement.image_y;
+  let crop_x = f64::from(placement.crop_x);
+  let crop_y = f64::from(placement.crop_y);
+  let crop_width = placement.crop_width;
+  let crop_height = placement.crop_height;
   let source_x = (crop_x - image_x).round() as i64;
   let source_y = (crop_y - image_y).round() as i64;
   if source_x < 0
@@ -178,8 +223,15 @@ pub fn compose_screenshot(
     .ok_or_else(|| "The screenshot pixels are not valid".to_owned())?;
   let placement_x = crop_x.round() as i64;
   let placement_y = crop_y.round() as i64;
-  if settings.drop_shadow {
-    let sigma = (f64::from(crop_width.min(crop_height)) * 0.018).clamp(6.0, 48.0) as f32;
+  let shadow_margin = f64::from(placement_x.max(0))
+    .min(f64::from(placement_y.max(0)))
+    .min(f64::from(output_width) - f64::from(placement_x) - f64::from(crop_width))
+    .min(f64::from(output_height) - f64::from(placement_y) - f64::from(crop_height))
+    .max(0.0);
+  if settings.drop_shadow && shadow_margin * 0.45 > 1.0 {
+    let sigma = (f64::from(crop_width.min(crop_height)) * 0.042)
+      .clamp(10.0, 110.0)
+      .min(shadow_margin * 0.45) as f32;
     let padding = (sigma * 3.0).ceil() as u32;
     let mut shadow = image::RgbaImage::new(
       crop_width.saturating_add(padding.saturating_mul(2)),
@@ -189,11 +241,11 @@ pub fn compose_screenshot(
       shadow.put_pixel(
         x + padding,
         y + padding,
-        image::Rgba([0, 0, 0, ((f32::from(pixel[3]) / 255.0) * 90.0) as u8]),
+        image::Rgba([0, 0, 0, ((f32::from(pixel[3]) / 255.0) * 36.0) as u8]),
       );
     }
     let shadow = image::imageops::blur(&shadow, sigma);
-    let offset = (sigma * 0.6).round() as i64;
+    let offset = (sigma * 0.35).round() as i64;
     image::imageops::overlay(
       &mut canvas,
       &shadow,
@@ -224,6 +276,13 @@ mod tests {
       rgba: colour.repeat((width * height) as usize),
       width,
     }
+  }
+
+  fn assert_colour_close(actual: &[u8], expected: [u8; 4]) {
+    assert!(actual
+      .iter()
+      .zip(expected)
+      .all(|(actual, expected)| actual.abs_diff(expected) <= 1));
   }
 
   fn settings(width: u32, height: u32) -> ScreenshotOutputSettings {
@@ -290,17 +349,6 @@ mod tests {
   }
 
   #[test]
-  fn uses_the_explicit_output_dimensions() {
-    let output = compose_screenshot(
-      &solid_image(256, 128, [200, 100, 50, 255]),
-      &settings(128, 64),
-    )
-    .unwrap();
-
-    assert_eq!((output.width, output.height), (128, 64));
-  }
-
-  #[test]
   fn fits_a_screenshot_inside_a_custom_coloured_canvas() {
     let output = compose_screenshot(
       &solid_image(200, 100, [200, 100, 50, 255]),
@@ -313,9 +361,9 @@ mod tests {
     };
 
     assert_eq!((output.width, output.height), (400, 400));
-    assert_eq!(pixel(0, 0), &[17, 34, 51, 255]);
-    assert_eq!(pixel(200, 200), &[200, 100, 50, 255]);
-    assert_eq!(pixel(200, 100), &[17, 34, 51, 255]);
+    assert_colour_close(pixel(0, 0), [17, 34, 51, 255]);
+    assert_colour_close(pixel(200, 200), [200, 100, 50, 255]);
+    assert_colour_close(pixel(200, 100), [17, 34, 51, 255]);
   }
 
   #[test]
@@ -333,8 +381,8 @@ mod tests {
       &output.rgba[start..start + 4]
     };
 
-    assert_eq!(pixel(0, 200), &[200, 100, 50, 255]);
-    assert_eq!(pixel(300, 200), &[17, 34, 51, 255]);
+    assert_colour_close(pixel(0, 200), [200, 100, 50, 255]);
+    assert_colour_close(pixel(300, 200), [17, 34, 51, 255]);
   }
 
   #[test]

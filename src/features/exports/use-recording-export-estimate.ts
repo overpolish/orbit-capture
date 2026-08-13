@@ -6,7 +6,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { estimateRecordingExport } from "./api";
 import { mixSignature, VideoExportSettings } from "./recording-export-settings";
-import { defaultScreenshotOutput } from "./screenshot-output";
+import {
+  defaultScreenshotOutput,
+  RecordingOutputSettings,
+} from "./screenshot-output";
 import {
   AudioTrackVolume,
   CameraOverlaySettings,
@@ -28,6 +31,7 @@ export function useRecordingExportEstimate({
   enabledStreamIndices,
   includeCamera,
   includePrimaryVideo,
+  recordingOutput,
   resolutionScalePercent,
 }: {
   artifact: ExportArtifact | null;
@@ -41,6 +45,7 @@ export function useRecordingExportEstimate({
   enabledStreamIndices: number[] | null;
   includeCamera: boolean;
   includePrimaryVideo: boolean;
+  recordingOutput: RecordingOutputSettings;
   resolutionScalePercent: number;
 }) {
   const cacheRef = useRef(new Map<string, number>());
@@ -80,6 +85,7 @@ export function useRecordingExportEstimate({
           cameraOverlay.frameXPercent,
           cameraOverlay.frameYPercent,
           cameraOverlay.radiusPercent,
+          JSON.stringify(recordingOutput),
           collapseAudio ? "mix" : "separate",
           audioTrackVolumes
             .map(
@@ -134,6 +140,7 @@ export function useRecordingExportEstimate({
         enabledStreamIndices: streamIndices,
         includeCamera,
         includePrimaryVideo,
+        recordingOutput,
         resolutionScalePercent,
         screenshotOutput: defaultScreenshotOutput(1, 1),
       })
@@ -170,6 +177,7 @@ export function useRecordingExportEstimate({
     includeCamera,
     includePrimaryVideo,
     resolutionScalePercent,
+    recordingOutput,
     signature,
   ]);
 

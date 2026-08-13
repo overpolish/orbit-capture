@@ -7,11 +7,8 @@ use crate::exports::{AudioTrackKind, RecordingAudioTrack};
 
 #[test]
 fn decodes_tracks_into_independent_pcm_channels() {
-  let layout = super::super::preview_layout(
-    Some((1_920, 1_080, PreviewPaneKind::Screen)),
-    None,
-    super::super::PREVIEW_HEIGHT,
-  );
+  let layout =
+    super::super::preview_layout(Some((1_920, 1_080, PreviewPaneKind::Screen)), None, 720);
   let sources = PlayerSources {
     audio_tracks: vec![
       RecordingAudioTrack {
@@ -27,11 +24,14 @@ fn decodes_tracks_into_independent_pcm_channels() {
     ],
     camera_duration_ms: None,
     camera_path: None,
+    composition_settings: None,
     cursor: None,
     cursor_settings: Default::default(),
     duration_ms: 1_000,
     layout: layout.clone(),
     playback_layout: layout,
+    playing: Default::default(),
+    preview_surface: None,
     screen_path: "/tmp/recording.mov".into(),
   };
   let config = StreamConfig {

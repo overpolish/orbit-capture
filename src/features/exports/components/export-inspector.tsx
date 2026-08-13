@@ -22,6 +22,10 @@ import {
   scaledVideoDimensions,
 } from "../resolution";
 import {
+  RecordingOutputSettings,
+  ScreenshotOutputSettings,
+} from "../screenshot-output";
+import {
   ExportArtifact,
   CursorEffectSettings,
   recordingAudioStreamIndex,
@@ -30,10 +34,12 @@ import {
   RecordingVideoTrackId,
 } from "../types";
 
+import { CursorEffectControls } from "./cursor-effect-controls";
 import {
   RecordingSizeEstimate,
   VideoExportSettings,
 } from "./recording-export-options";
+import { ScreenshotOutputControls } from "./screenshot-inspector";
 
 type RecordingArtifact = Extract<ExportArtifact, { kind: "recording" }>;
 
@@ -94,9 +100,11 @@ export function ExportInspector({
   onCollapseAudioChange,
   onCompressionChange,
   onCursorEffectsChange,
+  onRecordingOutputChange,
   onResolutionScaleChange,
   onSelectedTrackChange,
   onSelectedTrackVolumeChange,
+  recordingOutput,
   resolutionScalePercent,
   selectedTrack,
   selectedTrackVolume = 0,
@@ -121,9 +129,14 @@ export function ExportInspector({
   onCollapseAudioChange?: (collapse: boolean) => void;
   onCompressionChange?: (compression: number) => void;
   onCursorEffectsChange?: (settings: CursorEffectSettings) => void;
+  onRecordingOutputChange?: (
+    trackId: RecordingVideoTrackId,
+    settings: ScreenshotOutputSettings,
+  ) => void;
   onResolutionScaleChange?: (scale: number) => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
   onSelectedTrackVolumeChange?: (decibels: number) => void;
+  recordingOutput?: RecordingOutputSettings;
   resolutionScalePercent?: number;
   selectedTrackVolume?: number;
 }) {
@@ -140,9 +153,6 @@ export function ExportInspector({
     videoSelection.has("primary") && videoSelection.has("camera");
   const tabs = trackTabs(artifact);
   const effectiveSelectedTrack = selectedTrack ?? tabs[0].id;
-  const cursorSizePercent = Number.isFinite(cursorEffects.sizePercent)
-    ? cursorEffects.sizePercent
-    : 100;
 
   return (
     <aside className="flex min-h-0 min-w-0 flex-col border-r border-muted/15 bg-content/35">
@@ -199,86 +209,11 @@ export function ExportInspector({
           ) : null}
 
           {inspectorTab === "cursor" && artifact.hasCursorData ? (
-            <div className="flex flex-col gap-4">
-              <Checkbox
-                isDisabled={isSaving}
-                isSelected={cursorEffects.bake}
-                onChange={(bake) => {
-                  onCursorEffectsChange?.({ ...cursorEffects, bake });
-                }}
-                size="sm"
-              >
-                <span className="flex flex-col">
-                  <span className="text-xs">Bake cursor into recording</span>
-                  <span className="text-xxs text-muted">
-                    Dynamic Orbit Capture cursor
-                  </span>
-                </span>
-              </Checkbox>
-
-              <Checkbox
-                isDisabled={isSaving || !cursorEffects.bake}
-                isSelected={cursorEffects.smoothMovement}
-                onChange={(smoothMovement) => {
-                  onCursorEffectsChange?.({
-                    ...cursorEffects,
-                    smoothMovement,
-                  });
-                }}
-                size="sm"
-              >
-                <span className="flex flex-col">
-                  <span className="text-xs">Smooth movement</span>
-                  <span className="text-xxs text-muted">
-                    Adds natural smoothing and momentum.
-                  </span>
-                </span>
-              </Checkbox>
-
-              <Slider
-                isDisabled={isSaving || !cursorEffects.bake}
-                label="Cursor size"
-                maxValue={500}
-                minValue={50}
-                onChange={(sizePercent) => {
-                  onCursorEffectsChange?.({
-                    ...cursorEffects,
-                    sizePercent,
-                  });
-                }}
-                renderValue={(value) => `${value.toString()}%`}
-                step={5}
-                value={cursorSizePercent}
-              />
-
-              <Checkbox
-                isDisabled={isSaving || !cursorEffects.bake}
-                isSelected={cursorEffects.motionBlur}
-                onChange={(motionBlur) => {
-                  onCursorEffectsChange?.({
-                    ...cursorEffects,
-                    motionBlur,
-                  });
-                }}
-                size="sm"
-              >
-                <span className="text-xs">Motion blur</span>
-              </Checkbox>
-
-              <Checkbox
-                isDisabled={isSaving || !cursorEffects.bake}
-                isSelected={cursorEffects.clickAnimation}
-                onChange={(clickAnimation) => {
-                  onCursorEffectsChange?.({
-                    ...cursorEffects,
-                    clickAnimation,
-                  });
-                }}
-                size="sm"
-              >
-                <span className="text-xs">Click animation</span>
-              </Checkbox>
-            </div>
+            <CursorEffectControls
+              isSaving={Boolean(isSaving)}
+              onChange={onCursorEffectsChange}
+              settings={cursorEffects}
+            />
           ) : null}
 
           {tabs.length > 0 ? (
@@ -294,36 +229,68 @@ export function ExportInspector({
               />
 
               {effectiveSelectedTrack === "primary" ? (
-                <VideoExportSettings
-                  compression={compression}
-                  isDisabled={!artifact.canCompress || isSaving}
-                  onCompressionChange={onCompressionChange}
-                  onResolutionScaleChange={onResolutionScaleChange}
-                  resolutionDimensions={(scale) =>
-                    scaledDimensions(artifact, scale)
-                  }
-                  resolutionScale={effectiveResolutionScale}
-                  resolutionScales={availableResolutionScales}
-                />
+                <div className="flex flex-col gap-4">
+                  <VideoExportSettings
+                    compression={compression}
+                    isDisabled={!artifact.canCompress || isSaving}
+                    onCompressionChange={onCompressionChange}
+                    onResolutionScaleChange={onResolutionScaleChange}
+                    resolutionDimensions={(scale) =>
+                      scaledDimensions(artifact, scale)
+                    }
+                    resolutionScale={effectiveResolutionScale}
+                    resolutionScales={
+                      recordingOutput ? [] : availableResolutionScales
+                    }
+                  />
+                  {recordingOutput ? (
+                    <ScreenshotOutputControls
+                      className=""
+                      isSaving={isSaving}
+                      onChange={(settings) => {
+                        onRecordingOutputChange?.("primary", settings);
+                      }}
+                      settings={recordingOutput.primary}
+                      sourceHeight={artifact.height}
+                      sourceWidth={artifact.width}
+                    />
+                  ) : null}
+                </div>
               ) : null}
 
               {effectiveSelectedTrack === "camera" && artifact.camera ? (
-                <VideoExportSettings
-                  compression={cameraCompression}
-                  isDisabled={!artifact.canCompress || isSaving}
-                  onCompressionChange={onCameraCompressionChange}
-                  onResolutionScaleChange={onCameraResolutionScaleChange}
-                  resolutionDimensions={(scale) =>
-                    scaledVideoDimensions({
-                      height: artifact.camera?.height ?? 0,
-                      scale,
-                      sourceScale: 100,
-                      width: artifact.camera?.width ?? 0,
-                    })
-                  }
-                  resolutionScale={cameraResolutionScalePercent}
-                  resolutionScales={cameraResolutionScales}
-                />
+                <div className="flex flex-col gap-4">
+                  <VideoExportSettings
+                    compression={cameraCompression}
+                    isDisabled={!artifact.canCompress || isSaving}
+                    onCompressionChange={onCameraCompressionChange}
+                    onResolutionScaleChange={onCameraResolutionScaleChange}
+                    resolutionDimensions={(scale) =>
+                      scaledVideoDimensions({
+                        height: artifact.camera?.height ?? 0,
+                        scale,
+                        sourceScale: 100,
+                        width: artifact.camera?.width ?? 0,
+                      })
+                    }
+                    resolutionScale={cameraResolutionScalePercent}
+                    resolutionScales={
+                      recordingOutput ? [] : cameraResolutionScales
+                    }
+                  />
+                  {recordingOutput ? (
+                    <ScreenshotOutputControls
+                      className=""
+                      isSaving={isSaving}
+                      onChange={(settings) => {
+                        onRecordingOutputChange?.("camera", settings);
+                      }}
+                      settings={recordingOutput.camera}
+                      sourceHeight={artifact.camera.height}
+                      sourceWidth={artifact.camera.width}
+                    />
+                  ) : null}
+                </div>
               ) : null}
 
               {selectedAudioTrack ? (

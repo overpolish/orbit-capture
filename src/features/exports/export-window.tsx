@@ -17,19 +17,23 @@ import {
 import { ExportPanel } from "./components/export-panel";
 import {
   cameraExportSettings,
+  DEFAULT_COMPRESSION,
+  DEFAULT_CURSOR_EFFECTS,
   defaultCameraOverlay,
   recordingSavePlan,
 } from "./recording-export-settings";
 import { sourceScalePercent } from "./resolution";
 import {
+  defaultRecordingOutput,
   defaultScreenshotOutput,
+  RecordingOutputSettings,
   resetScreenshotLayout,
+  restoredRecordingOutput,
   ScreenshotOutputSettings,
 } from "./screenshot-output";
 import { selectArtifact, selectDirectory, useExportStore } from "./store";
 import {
   AudioTrackVolume,
-  CursorEffectSettings,
   recordingAudioStreamIndex,
   recordingAudioTrackId,
   RecordingTrackId,
@@ -44,31 +48,18 @@ import { useExportProgress } from "./use-export-progress";
 import { useRecordingExportEstimate } from "./use-recording-export-estimate";
 import { useRecordingExportPreview } from "./use-recording-export-preview";
 
-const DEFAULT_COMPRESSION = 2;
 const EMPTY_AUDIO_TRACK_VOLUMES: AudioTrackVolume[] = [];
-const DEFAULT_CURSOR_EFFECTS: CursorEffectSettings = {
-  bake: true,
-  clickAnimation: true,
-  motionBlur: true,
-  sizePercent: 100,
-  smoothMovement: true,
-};
 
 export function ExportWindow() {
   const artifact = useExportStore(selectArtifact);
   const directory = useExportStore(selectDirectory);
-  const persistedScreenshotRadius = useExportStore(
-    (state) => state.snapshot.screenshotRadiusPercent,
-  );
-  const persistedScreenshotBackgroundRadius = useExportStore(
-    (state) => state.snapshot.screenshotBackgroundRadiusPercent,
-  );
-  const persistedScreenshotOutput = useExportStore(
-    (state) => state.snapshot.screenshotOutput,
-  );
-  const persistedCursorEffects = useExportStore(
-    (state) => state.snapshot.cursorEffects,
-  );
+  const {
+    cursorEffects: persistedCursorEffects,
+    recordingOutput: persistedRecordingOutput,
+    screenshotBackgroundRadiusPercent: persistedScreenshotBackgroundRadius,
+    screenshotOutput: persistedScreenshotOutput,
+    screenshotRadiusPercent: persistedScreenshotRadius,
+  } = useExportStore((state) => state.snapshot);
   const [fileStem, setFileStem] = useState("");
   const [collapseAudio, setCollapseAudio] = useState(false);
   const [compression, setCompression] = useState(DEFAULT_COMPRESSION);
@@ -83,6 +74,10 @@ export function ExportWindow() {
   const [screenshotRadiusPercent, setScreenshotRadiusPercent] = useState(0);
   const [screenshotOutput, setScreenshotOutput] =
     useState<ScreenshotOutputSettings>(() => defaultScreenshotOutput(1, 1));
+  const [recordingOutput, setRecordingOutput] =
+    useState<RecordingOutputSettings>(() =>
+      defaultRecordingOutput({ primary: { height: 1, width: 1 } }),
+    );
   const [isSaving, setIsSaving] = useState(false);
   const [isCancelingSave, setIsCancelingSave] = useState(false);
   const [trackSelection, setTrackSelection] = useState<{
@@ -105,7 +100,6 @@ export function ExportWindow() {
   const screenshotBackgroundRadiusRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
 
-  const suggestedFileStem = artifact?.suggestedFileStem ?? "";
   // Keyed on the capture rather than the object, so a replacement always
   // refetches - including the full-resolution copy, whose cached URL belongs to
   // the previous capture's pixels.
@@ -199,6 +193,7 @@ export function ExportWindow() {
       collapseAudio,
       compression,
       cursorEffects,
+      recordingOutput,
       resolutionScalePercent,
       screenshotOutput,
       trackSelection,
@@ -213,6 +208,7 @@ export function ExportWindow() {
       collapseAudio,
       compression,
       cursorEffects,
+      recordingOutput,
       resolutionScalePercent,
       screenshotOutput,
       trackSelection,
@@ -229,6 +225,7 @@ export function ExportWindow() {
     setCompression(next.compression);
     setCursorEffects(next.cursorEffects);
     setResolutionScalePercent(next.resolutionScalePercent);
+    setRecordingOutput(next.recordingOutput);
     screenshotRadiusRef.current = next.screenshotOutput.radiusPercent;
     screenshotBackgroundRadiusRef.current =
       next.screenshotOutput.backgroundRadiusPercent;
@@ -255,6 +252,7 @@ export function ExportWindow() {
     enabledStreamIndices,
     includeCamera,
     includePrimaryVideo,
+    recordingOutput,
     resolutionScalePercent,
   });
 
@@ -280,6 +278,16 @@ export function ExportWindow() {
     setCameraCompression(canCompress ? DEFAULT_COMPRESSION : 0);
     setCameraResolutionScalePercent(100);
     setResolutionScalePercent(originalResolutionScale);
+    setRecordingOutput(
+      restoredRecordingOutput({
+        camera: artifact?.kind === "recording" ? artifact.camera : undefined,
+        persisted: persistedRecordingOutput,
+        primary: {
+          height: artifact?.height ?? 1,
+          width: artifact?.width ?? 1,
+        },
+      }),
+    );
     screenshotRadiusRef.current = persistedScreenshotRadius;
     screenshotBackgroundRadiusRef.current = persistedScreenshotBackgroundRadius;
     setScreenshotRadiusPercent(persistedScreenshotRadius);
@@ -317,10 +325,10 @@ export function ExportWindow() {
   // name follows the new suggestion rather than keeping the old capture's.
   useEffect(() => {
     // eslint-disable-next-line @eslint-react/set-state-in-effect
-    setFileStem(suggestedFileStem);
+    setFileStem(artifact?.suggestedFileStem ?? "");
     // eslint-disable-next-line @eslint-react/set-state-in-effect
     setError(null);
-  }, [suggestedFileStem]);
+  }, [artifact?.suggestedFileStem]);
 
   const report = (action: string) => (cause: unknown) => {
     console.error(`Could not ${action} the export`, cause);
@@ -419,6 +427,13 @@ export function ExportWindow() {
           });
       }}
       onNeedFullResolution={loadFullPreview}
+      onRecordingOutputChange={(trackId, settings) => {
+        setRecordingOutput((current) => ({
+          ...current,
+          [trackId]: { ...settings, backgroundRadiusPercent: 0 },
+        }));
+        setError(null);
+      }}
       onResolutionScaleChange={(scale) => {
         setResolutionScalePercent(scale);
         if (scale < originalResolutionScale && compression === 0) {
@@ -440,6 +455,7 @@ export function ExportWindow() {
           includeCamera,
           includePrimaryVideo,
           originalResolutionScale,
+          recordingOutput,
           resolutionScalePercent,
         });
         setIsSaving(true);
@@ -520,6 +536,7 @@ export function ExportWindow() {
         setAudioTrackVolumes({ artifactId, values: next });
       }}
       previewUrl={previewUrl}
+      recordingOutput={recordingOutput}
       recordingPreviewError={recordingPreviewError}
       recordingPreviewTracks={recordingPreviewTracks}
       resolutionScalePercent={resolutionScalePercent}

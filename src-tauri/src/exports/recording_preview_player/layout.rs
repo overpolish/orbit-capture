@@ -3,9 +3,6 @@
 
 use serde::Serialize;
 
-pub(super) const PREVIEW_HEIGHT: u32 = 720;
-pub(super) const SIDE_BY_SIDE_PREVIEW_HEIGHT: u32 = PREVIEW_HEIGHT * 2;
-
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PreviewPaneKind {
@@ -76,5 +73,44 @@ pub(super) fn preview_layout(
     height,
     width: panes.iter().map(|pane| pane.width).sum(),
     panes,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn lays_out_a_screen_as_one_native_preview_pane() {
+    let layout = preview_layout(Some((3_600, 2_338, PreviewPaneKind::Screen)), None, 720);
+
+    assert_eq!(layout.panes.len(), 1);
+    assert!(matches!(layout.panes[0].kind, PreviewPaneKind::Screen));
+    assert_eq!(layout.panes[0].x, 0);
+    assert_eq!(layout.width, layout.panes[0].width);
+  }
+
+  #[test]
+  fn keeps_screen_and_portrait_camera_as_separate_panes() {
+    let layout = preview_layout(
+      Some((3_600, 2_338, PreviewPaneKind::Screen)),
+      Some((1_080, 1_920)),
+      720,
+    );
+
+    assert_eq!(layout.panes.len(), 2);
+    assert!(matches!(layout.panes[0].kind, PreviewPaneKind::Screen));
+    assert!(matches!(layout.panes[1].kind, PreviewPaneKind::Camera));
+    assert_eq!(layout.panes[1].x, layout.panes[0].width);
+    assert_eq!(layout.width, layout.panes[0].width + layout.panes[1].width);
+    assert!(layout.panes[1].width < layout.panes[0].width);
+  }
+
+  #[test]
+  fn lays_out_a_primary_camera_as_a_camera_pane() {
+    let layout = preview_layout(Some((1_920, 1_080, PreviewPaneKind::Camera)), None, 720);
+
+    assert_eq!(layout.panes.len(), 1);
+    assert!(matches!(layout.panes[0].kind, PreviewPaneKind::Camera));
   }
 }
