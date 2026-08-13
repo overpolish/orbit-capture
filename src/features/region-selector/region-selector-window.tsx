@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { Channel } from "@tauri-apps/api/core";
-import { Check, SquareDot } from "lucide-react";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { Check, ImageDown, SquareDot } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Rnd } from "react-rnd";
 
@@ -20,15 +21,25 @@ import {
   takeMonitorScreenshot,
 } from "../recording-sources/api";
 import { useRecordingSourceStore } from "../recording-sources/store";
+import { Region } from "../recording-sources/types";
+import { ShortcutAction } from "../settings/types";
 
 import { Magnifier } from "./magnifier";
 import { fitRegion, wholePixel, wholePixelSize } from "./region-geometry";
 import { HANDLE_CLASSES, HANDLE_STYLES } from "./resize-handles";
+import {
+  beginScreenshotCapture,
+  captureScreenshotRegion,
+  endScreenshotCapture,
+} from "./screenshot-session";
 import { ResizeDirection } from "./types";
+
+const SHORTCUT_ACTION_EVENT = "global-shortcut://action";
 
 export function RegionSelectorWindow() {
   const {
     isRegionEditing,
+    isScreenshotCapture,
     recordingMode,
     region,
     selectedMonitor,
@@ -42,8 +53,13 @@ export function RegionSelectorWindow() {
   const [screenshot, setScreenshot] = useState<ArrayBuffer | null>(null);
   const activeHandleRef = useRef<HTMLElement | null>(null);
 
-  const persistDraft = useCallback(() => {
-    setRegion({
+  // The overlay is the screenshot shortcut's own surface as well as the
+  // recording region's, so it shows for either reason.
+  const activeMonitor =
+    recordingMode === "region" || isScreenshotCapture ? selectedMonitor : null;
+
+  const persistDraft = useCallback((): Region => {
+    const persisted = {
       position: {
         x: wholePixel(draft.position.x),
         y: wholePixel(draft.position.y),
@@ -52,7 +68,10 @@ export function RegionSelectorWindow() {
         height: wholePixelSize(draft.size.height),
         width: wholePixelSize(draft.size.width),
       },
-    });
+    };
+    setRegion(persisted);
+
+    return persisted;
   }, [draft, setRegion]);
 
   useEffect(() => {
@@ -62,25 +81,63 @@ export function RegionSelectorWindow() {
   }, [region]);
 
   useEffect(() => {
-    if (recordingMode !== "region" || !selectedMonitor) {
+    let unlisten: UnlistenFn | undefined;
+    let disposed = false;
+
+    // Emitting to a window does not scope delivery: `listen` registers for any
+    // target, so every window sees every shortcut action and each listener has
+    // to match the one it owns exactly.
+    void listen<ShortcutAction>(SHORTCUT_ACTION_EVENT, ({ payload }) => {
+      if (payload !== "takeScreenshot") return;
+      beginScreenshotCapture().catch((error: unknown) => {
+        console.error("Could not open the region for a screenshot", error);
+      });
+    }).then((listener) => {
+      if (disposed) listener();
+      else unlisten = listener;
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isScreenshotCapture) return;
+
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      void endScreenshotCapture();
+    };
+
+    window.addEventListener("keydown", cancel);
+
+    return () => {
+      window.removeEventListener("keydown", cancel);
+    };
+  }, [isScreenshotCapture]);
+
+  useEffect(() => {
+    if (!activeMonitor) {
       void hideRegionSelector();
       return;
     }
 
     const fitted = fitRegion(
       region,
-      selectedMonitor.size.width,
-      selectedMonitor.size.height,
+      activeMonitor.size.width,
+      activeMonitor.size.height,
     );
     // The overlay keeps a local draft so dragging does not write storage per frame.
     // eslint-disable-next-line @eslint-react/set-state-in-effect
     setDraft(fitted);
     if (JSON.stringify(fitted) !== JSON.stringify(region)) setRegion(fitted);
-    void showRegionSelector(selectedMonitor);
-  }, [recordingMode, region, selectedMonitor, setRegion]);
+    void showRegionSelector(activeMonitor);
+  }, [activeMonitor, region, setRegion]);
 
   useEffect(() => {
-    if (recordingMode !== "region" || !selectedMonitor) return;
+    if (!activeMonitor) return;
 
     void setRegionSelectorPassthrough(!isRegionEditing);
     void setRecordingControlsOpacity(isRegionEditing ? 0 : 1);
@@ -93,27 +150,27 @@ export function RegionSelectorWindow() {
     setScreenshot(null);
     void setRegionSelectorOpacity(0).then(async () => {
       try {
-        await takeMonitorScreenshot(selectedMonitor.id, channel);
+        await takeMonitorScreenshot(activeMonitor.id, channel);
       } finally {
         await setRegionSelectorOpacity(1);
       }
     });
-  }, [isRegionEditing, recordingMode, selectedMonitor]);
+  }, [activeMonitor, isRegionEditing]);
 
   const center = () => {
-    if (!selectedMonitor) return;
+    if (!activeMonitor) return;
     const centered = {
       ...draft,
       position: {
-        x: wholePixel((selectedMonitor.size.width - draft.size.width) / 2),
-        y: wholePixel((selectedMonitor.size.height - draft.size.height) / 2),
+        x: wholePixel((activeMonitor.size.width - draft.size.width) / 2),
+        y: wholePixel((activeMonitor.size.height - draft.size.height) / 2),
       },
     };
     setDraft(centered);
     setRegion(centered);
   };
 
-  if (recordingMode !== "region" || !selectedMonitor) return null;
+  if (!activeMonitor) return null;
 
   const showActions = isRegionEditing && !resizeDirection && !isDragging;
   const isMac = navigator.userAgent.includes("Mac");
@@ -250,21 +307,29 @@ export function RegionSelectorWindow() {
           <Button
             color="success"
             onPress={() => {
+              if (isScreenshotCapture) {
+                captureScreenshotRegion(activeMonitor.id, persistDraft());
+                return;
+              }
               persistDraft();
               setRegionEditing(false);
             }}
             showFocus={false}
             size="sm"
           >
-            <Check aria-hidden size={18} />
-            Finish
+            {isScreenshotCapture ? (
+              <ImageDown aria-hidden size={18} />
+            ) : (
+              <Check aria-hidden size={18} />
+            )}
+            {isScreenshotCapture ? "Capture" : "Finish"}
           </Button>
         </div>
       </div>
 
       {screenshot ? (
         <Magnifier
-          monitor={selectedMonitor}
+          monitor={activeMonitor}
           regionRect={{
             height: draft.size.height,
             width: draft.size.width,

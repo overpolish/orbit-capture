@@ -158,6 +158,19 @@ export function GeneralSettingsPanel({
         />
       </SettingRow>
       <SettingRow
+        description="Keep Orbit Capture's own windows, like the recording bar, in recordings and screenshots."
+        label="Record Orbit Capture's windows"
+      >
+        <Checkbox
+          isDisabled={isSaving}
+          isSelected={settings.recordOrbitWindows}
+          onChange={(recordOrbitWindows) => {
+            update({ recordOrbitWindows });
+          }}
+          size="sm"
+        />
+      </SettingRow>
+      <SettingRow
         description="Start Orbit Capture when you sign in."
         label="Launch at login"
       >

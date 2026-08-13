@@ -31,6 +31,7 @@ import {
 } from "../../recording-sources/api";
 import { useRecordingSourceStore } from "../../recording-sources/store";
 import { captureStill } from "../../screenshots/api";
+import { ShortcutAction } from "../../settings/types";
 import { startRecording } from "../api";
 import { screenshotTarget, startRecordingOptions } from "../recording-request";
 import { selectStatus, useRecordingStore } from "../store";
@@ -50,6 +51,9 @@ const synchronizeRecordingUi = async (
   // A rehydrate mid-recording must not re-show the chrome that starting the
   // recording deliberately hid.
   if (useRecordingStore.getState().snapshot.status !== "idle") return;
+  // Nor may one take the region overlay away from a screenshot session, which
+  // borrows it regardless of the recording mode.
+  if (useRecordingSourceStore.getState().isScreenshotCapture) return;
 
   const hasSourceSelector = !["audio", "camera"].includes(mode);
 
@@ -87,7 +91,7 @@ export function RecordingBarWindow() {
     selectedMonitor,
     selectedWindow,
     setRecordingMode,
-    setRegionEditing,
+    setScreenshotCapture,
   } = useRecordingSourceStore((state) => state);
   const {
     fps,
@@ -99,8 +103,10 @@ export function RecordingBarWindow() {
   } = useRecordingInputStore((state) => state);
 
   useEffect(() => {
-    setRegionEditing(false);
-  }, [setRegionEditing]);
+    // Editing, and any screenshot session that outlived a previous run, belong
+    // to a window that is gone.
+    setScreenshotCapture(false);
+  }, [setScreenshotCapture]);
 
   useEffect(
     () => () => {
@@ -139,26 +145,15 @@ export function RecordingBarWindow() {
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
     let disposed = false;
-    void listen<"startStopRecording" | "takeScreenshot">(
-      SHORTCUT_ACTION_EVENT,
-      ({ payload }) => {
-        if (payload === "startStopRecording") {
-          startRecording(startRecordingOptions()).catch((error: unknown) => {
-            console.error("Could not start the recording", error);
-          });
-          return;
-        }
-        const target = screenshotTarget();
-        if (!target) return;
-        captureStill({
-          destination: "export",
-          showCursor: useRecordingInputStore.getState().inputs.showCursor,
-          target,
-        }).catch((error: unknown) => {
-          console.error("Could not take the screenshot", error);
-        });
-      },
-    ).then((listener) => {
+    // Emitting to a window does not scope delivery: `listen` registers for any
+    // target, so every window sees every shortcut action and each listener has
+    // to match the one it owns exactly.
+    void listen<ShortcutAction>(SHORTCUT_ACTION_EVENT, ({ payload }) => {
+      if (payload !== "startStopRecording") return;
+      startRecording(startRecordingOptions()).catch((error: unknown) => {
+        console.error("Could not start the recording", error);
+      });
+    }).then((listener) => {
       if (disposed) listener();
       else unlisten = listener;
     });

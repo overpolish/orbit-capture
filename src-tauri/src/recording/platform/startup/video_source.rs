@@ -3,7 +3,7 @@
 
 use super::super::*;
 use crate::capture_geometry::{physical_capture_rect, video_capture_rect};
-use crate::capture_kit::our_windows;
+use crate::capture_kit::windows_to_exclude;
 use crate::recording::cursor::{CursorSource, CursorSourceKind};
 use crate::recording::Region;
 
@@ -53,6 +53,7 @@ fn window_cursor_source(
 fn display_video(
   content: &sc::ShareableContent,
   fps: u32,
+  include_own_windows: bool,
   monitor_id: u32,
   region: Option<Region>,
   show_cursor: bool,
@@ -98,6 +99,7 @@ fn display_video(
       f64::from(height) / scale,
     )
   });
+  let excluded = windows_to_exclude(content, include_own_windows);
 
   Ok(PrimaryVideo {
     cursor_source: CursorSource {
@@ -114,7 +116,7 @@ fn display_video(
       x: monitor_x + logical_rect.origin.x,
       y: monitor_y + logical_rect.origin.y,
     },
-    filter: sc::ContentFilter::with_display_excluding_windows(display, &our_windows(content)),
+    filter: sc::ContentFilter::with_display_excluding_windows(display, &excluded),
     fps,
     height,
     is_window: false,
@@ -160,6 +162,7 @@ fn window_video(
 
 pub(super) fn resolve(
   content: &sc::ShareableContent,
+  include_own_windows: bool,
   primary: &PrimaryCaptureSource,
 ) -> Result<Option<PrimaryVideo>, String> {
   match primary {
@@ -167,13 +170,29 @@ pub(super) fn resolve(
       fps,
       monitor_id,
       show_cursor,
-    } => display_video(content, *fps, *monitor_id, None, *show_cursor).map(Some),
+    } => display_video(
+      content,
+      *fps,
+      include_own_windows,
+      *monitor_id,
+      None,
+      *show_cursor,
+    )
+    .map(Some),
     PrimaryCaptureSource::Region {
       fps,
       monitor_id,
       region,
       show_cursor,
-    } => display_video(content, *fps, *monitor_id, Some(*region), *show_cursor).map(Some),
+    } => display_video(
+      content,
+      *fps,
+      include_own_windows,
+      *monitor_id,
+      Some(*region),
+      *show_cursor,
+    )
+    .map(Some),
     PrimaryCaptureSource::Window {
       fps,
       show_cursor,

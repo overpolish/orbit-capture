@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize};
@@ -10,6 +10,8 @@ use super::{
   collapse_recording_source_selector, platform, WindowLabel, RECORDING_CONTROLS_VISIBLE,
   REGION_SELECTOR_EDITING, SELECTOR_VISIBLE,
 };
+
+static SCREENSHOT_REGION_SESSION: AtomicBool = AtomicBool::new(false);
 
 pub fn is_region_selector_visible(app: &AppHandle) -> bool {
   app
@@ -26,6 +28,7 @@ pub fn show_region_selector(
   if !region_selector_may_show(
     crate::recording::is_idle(&app),
     RECORDING_CONTROLS_VISIBLE.load(Ordering::Relaxed),
+    SCREENSHOT_REGION_SESSION.load(Ordering::Relaxed),
   ) {
     return Ok(());
   }
@@ -132,8 +135,25 @@ const fn region_selector_is_interactive(is_editing: bool, is_recording_idle: boo
 /// takes over and hides that UI, a delayed frontend synchronization must not
 /// bring the overlay back by itself. An active recording may keep its existing
 /// boundary visible after the controls have gone.
-const fn region_selector_may_show(is_recording_idle: bool, controls_visible: bool) -> bool {
-  !is_recording_idle || controls_visible
+///
+/// A screenshot session is the exception: the screenshot shortcut draws the
+/// overlay on its own, with the recording controls deliberately left wherever
+/// the user had them.
+const fn region_selector_may_show(
+  is_recording_idle: bool,
+  controls_visible: bool,
+  screenshot_session: bool,
+) -> bool {
+  !is_recording_idle || controls_visible || screenshot_session
+}
+
+/// Marks the overlay as belonging to a shortcut-initiated screenshot.
+///
+/// The frontend owns the session: it turns this on before asking for the
+/// overlay and off once the still is taken or the session is abandoned.
+#[tauri::command]
+pub fn set_screenshot_region_session(active: bool) {
+  SCREENSHOT_REGION_SESSION.store(active, Ordering::Relaxed);
 }
 
 /// Re-asserts that invariant against the window.
@@ -242,8 +262,14 @@ mod tests {
 
   #[test]
   fn a_hidden_recording_ui_cannot_resurrect_only_its_region_overlay() {
-    assert!(region_selector_may_show(true, true));
-    assert!(region_selector_may_show(false, false));
-    assert!(!region_selector_may_show(true, false));
+    assert!(region_selector_may_show(true, true, false));
+    assert!(region_selector_may_show(false, false, false));
+    assert!(!region_selector_may_show(true, false, false));
+  }
+
+  #[test]
+  fn a_screenshot_session_shows_the_overlay_without_the_recording_ui() {
+    assert!(region_selector_may_show(true, false, true));
+    assert!(region_selector_may_show(true, true, true));
   }
 }

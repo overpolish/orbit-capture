@@ -10,6 +10,11 @@ const STORE_NAME = "orbit-capture-recording-source";
 
 type RecordingSourceStore = {
   isRegionEditing: boolean;
+  /**
+   * A shortcut-initiated screenshot borrows the region overlay, whatever the
+   * recording mode happens to be, and hands the region straight to a capture.
+   */
+  isScreenshotCapture: boolean;
   recordingMode: RecordingMode;
   region: Region;
   selectedMonitor: MonitorDetails | null;
@@ -17,6 +22,7 @@ type RecordingSourceStore = {
   setRecordingMode: (mode: RecordingMode) => void;
   setRegion: (region: Region) => void;
   setRegionEditing: (editing: boolean) => void;
+  setScreenshotCapture: (capturing: boolean) => void;
   setSelectedMonitor: (monitor: MonitorDetails) => void;
   setSelectedWindow: (window: WindowDetails | null) => void;
 };
@@ -25,6 +31,7 @@ export const useRecordingSourceStore = create<RecordingSourceStore>()(
   persist(
     (set) => ({
       isRegionEditing: false,
+      isScreenshotCapture: false,
       recordingMode: "screen",
       region: {
         position: { x: 160, y: 90 },
@@ -44,6 +51,12 @@ export const useRecordingSourceStore = create<RecordingSourceStore>()(
       },
       setRegionEditing: (isRegionEditing) => {
         set({ isRegionEditing });
+      },
+      // A screenshot session is nothing but region editing that ends in a
+      // capture, so it carries the editing flag with it and leaves the
+      // recording mode the user chose alone.
+      setScreenshotCapture: (isScreenshotCapture) => {
+        set({ isRegionEditing: isScreenshotCapture, isScreenshotCapture });
       },
       setSelectedMonitor: (selectedMonitor) => {
         set({ selectedMonitor });

@@ -149,6 +149,7 @@ pub fn run() {
       windows::set_recording_source_selector_visible,
       windows::region::set_region_selector_opacity,
       windows::region::set_region_selector_passthrough,
+      windows::region::set_screenshot_region_session,
       windows::region::show_region_selector,
       windows::options::show_standalone_listbox,
       windows::monitor_capture::take_monitor_screenshot,

@@ -56,6 +56,20 @@ pub fn our_windows(content: &sc::ShareableContent) -> arc::R<ns::Array<sc::Windo
   ns::Array::from_slice_retained(&ours)
 }
 
+/// The exclusion list a display filter should carry. Recording a demo of Orbit
+/// Capture is the one case where its own windows belong in the shot, so the
+/// list is simply empty and every window on the display is captured.
+pub fn windows_to_exclude(
+  content: &sc::ShareableContent,
+  include_own_windows: bool,
+) -> arc::R<ns::Array<sc::Window>> {
+  if include_own_windows {
+    ns::Array::new()
+  } else {
+    our_windows(content)
+  }
+}
+
 /// Resolves the stable bundle identifiers stored by the UI against a fresh
 /// ScreenCaptureKit snapshot. One application can own several processes, so
 /// every matching entry is retained rather than stopping at the first.

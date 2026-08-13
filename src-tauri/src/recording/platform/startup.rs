@@ -20,6 +20,7 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
   let CaptureStartupConfig {
     camera,
     camera_path,
+    include_own_windows,
     microphone_id,
     monitor,
     on_failure,
@@ -49,7 +50,7 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
   };
   let primary_video = content
     .as_deref()
-    .map(|content| video_source::resolve(content, &primary))
+    .map(|content| video_source::resolve(content, include_own_windows, &primary))
     .transpose()?
     .flatten();
   let cursor_source = primary_video

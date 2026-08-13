@@ -43,7 +43,7 @@ const actions: {
   },
   {
     action: "takeScreenshot",
-    description: "Capture the currently selected screen, region or window.",
+    description: "Pick a region on screen, then capture it.",
     label: "Take screenshot",
   },
   {

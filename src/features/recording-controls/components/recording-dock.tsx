@@ -157,13 +157,22 @@ export function RecordingDock({
           </>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center gap-2 text-xs font-semibold">
-            <span className="flex transform-gpu">
-              <LoaderCircle
-                className="animate-spin text-muted"
-                size={ICON_SIZE}
-              />
+            <LoaderCircle
+              className="animate-spin text-muted"
+              size={ICON_SIZE}
+            />
+            {/*
+             * Fixed-width label, so the centred row is a whole number of pixels
+             * wide and the spinner lands on a whole pixel. WebKit re-rasterises
+             * a rotating element sitting on a fractional pixel once per frame,
+             * and the snapping makes it wobble by about half a pixel; Chromium
+             * does not, which is why this only ever showed up in the app. The
+             * width also has to stay independent of the text, since measured
+             * glyph widths differ per engine.
+             */}
+            <span className="w-14 text-center">
+              {status === "starting" ? "Starting" : "Finishing"}
             </span>
-            {status === "starting" ? "Starting" : "Finishing"}
           </div>
         )}
         {countdownSeconds === 0 ? (

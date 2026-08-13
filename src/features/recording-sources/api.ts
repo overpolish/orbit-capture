@@ -63,6 +63,9 @@ export const setRegionSelectorPassthrough = (passthrough: boolean) =>
 export const setRegionSelectorOpacity = (opacity: number) =>
   invoke<null>("set_region_selector_opacity", { opacity });
 
+export const setScreenshotRegionSession = (active: boolean) =>
+  invoke<null>("set_screenshot_region_session", { active });
+
 export const setRecordingControlsOpacity = (opacity: number) =>
   invoke<null>("set_recording_controls_opacity", { opacity });
 

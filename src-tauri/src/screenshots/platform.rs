@@ -4,7 +4,7 @@
 use cidre::{cv, sc};
 use std::ffi::c_char;
 
-use crate::capture_kit::{display_scale, monitor_geometry, our_windows};
+use crate::capture_kit::{display_scale, monitor_geometry, windows_to_exclude};
 use crate::screenshots::{
   output_placement, parse_hex_colour, physical_capture_rect, CapturedImage,
   ScreenshotOutputSettings, ScreenshotTarget,
@@ -247,13 +247,14 @@ async fn capture_filtered(
 /// pixels travel back out.
 pub fn capture_blocking(
   target: ScreenshotTarget,
+  include_own_windows: bool,
   show_cursor: bool,
 ) -> Result<CapturedImage, String> {
   tokio::runtime::Builder::new_current_thread()
     .enable_all()
     .build()
     .map_err(|error| error.to_string())?
-    .block_on(capture(target, show_cursor))
+    .block_on(capture(target, include_own_windows, show_cursor))
 }
 
 pub fn capture_for_text_recognition_blocking(
@@ -282,6 +283,9 @@ async fn capture_for_text_recognition(
     .iter()
     .find(|display| display.display_id().0 == monitor_id)
     .ok_or_else(|| "The selected monitor is no longer available".to_owned())?;
+  // Only the recognition overlays are hidden, whatever the "record Orbit
+  // Capture's windows" setting says: their selection marquee sits over the very
+  // text being read, so letting it into the image would corrupt the result.
   let excluded = content
     .windows()
     .iter()
@@ -307,7 +311,11 @@ async fn capture_for_text_recognition(
   capture_filtered(&filter, &cfg).await
 }
 
-async fn capture(target: ScreenshotTarget, show_cursor: bool) -> Result<CapturedImage, String> {
+async fn capture(
+  target: ScreenshotTarget,
+  include_own_windows: bool,
+  show_cursor: bool,
+) -> Result<CapturedImage, String> {
   let content = sc::ShareableContent::current()
     .await
     .map_err(|error| error.to_string())?;
@@ -326,8 +334,10 @@ async fn capture(target: ScreenshotTarget, show_cursor: bool) -> Result<Captured
       cfg.set_width(width as usize);
       cfg.set_height(height as usize);
 
-      let filter =
-        sc::ContentFilter::with_display_excluding_windows(display, &our_windows(&content));
+      let filter = sc::ContentFilter::with_display_excluding_windows(
+        display,
+        &windows_to_exclude(&content, include_own_windows),
+      );
       capture_filtered(&filter, &cfg).await
     }
     ScreenshotTarget::Region { monitor_id, region } => {
@@ -351,8 +361,10 @@ async fn capture(target: ScreenshotTarget, show_cursor: bool) -> Result<Captured
       cfg.set_width(rect.width as usize);
       cfg.set_height(rect.height as usize);
 
-      let filter =
-        sc::ContentFilter::with_display_excluding_windows(display, &our_windows(&content));
+      let filter = sc::ContentFilter::with_display_excluding_windows(
+        display,
+        &windows_to_exclude(&content, include_own_windows),
+      );
       capture_filtered(&filter, &cfg).await
     }
     ScreenshotTarget::Window { window_id } => {

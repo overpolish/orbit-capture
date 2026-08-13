@@ -142,17 +142,21 @@ pub(crate) async fn capture(
   target: ScreenshotTarget,
   show_cursor: bool,
 ) -> Result<CapturedImage, String> {
-  let _ = app;
+  // Read as the shutter fires, the same way a recording reads it as it starts.
+  let include_own_windows = crate::settings::current(app).record_orbit_windows;
 
   #[cfg(target_os = "macos")]
   {
-    tauri::async_runtime::spawn_blocking(move || platform::capture_blocking(target, show_cursor))
-      .await
-      .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+      platform::capture_blocking(target, include_own_windows, show_cursor)
+    })
+    .await
+    .map_err(|error| error.to_string())?
   }
 
   #[cfg(target_os = "windows")]
   {
+    let _ = include_own_windows;
     tauri::async_runtime::spawn_blocking(move || platform_windows::capture(target, show_cursor))
       .await
       .map_err(|error| error.to_string())?
@@ -160,7 +164,7 @@ pub(crate) async fn capture(
 
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
-    let _ = (target, show_cursor);
+    let _ = (include_own_windows, target, show_cursor);
     Err("Screenshots are not available on this platform".to_owned())
   }
 }
