@@ -152,10 +152,7 @@ export function ExportWindow() {
     videoTrackSelection?.artifactId === artifact.id
       ? videoTrackSelection.tracks
       : defaultVideoTracks;
-  const enabledVideoTracks =
-    defaultVideoTracks.length > 0 && selectedVideoTracks.length === 0
-      ? defaultVideoTracks.slice(0, 1)
-      : selectedVideoTracks;
+  const enabledVideoTracks = selectedVideoTracks;
   const includePrimaryVideo = enabledVideoTracks.includes("primary");
   const includeCamera = enabledVideoTracks.includes("camera");
   const effectiveBakeCamera =
@@ -421,7 +418,7 @@ export function ExportWindow() {
       onCursorEffectsChange={setCursorEffects}
       onEnabledTracksChange={onEnabledTracksChange}
       onEnabledVideoTracksChange={(tracks) => {
-        if (artifactId === undefined || tracks.length === 0) return;
+        if (artifactId === undefined) return;
         setVideoTrackSelection({ artifactId, tracks });
       }}
       onFileStemChange={(value) => {

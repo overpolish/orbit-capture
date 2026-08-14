@@ -29,6 +29,10 @@ pub(super) struct RunContext {
   pub(super) start_ms: u64,
 }
 
+const fn plays_audio(mode: PlaybackMode) -> bool {
+  matches!(mode, PlaybackMode::Playing)
+}
+
 pub(super) fn run(context: RunContext) {
   let RunContext {
     audio_child,
@@ -42,7 +46,7 @@ pub(super) fn run(context: RunContext) {
     sources,
     start_ms,
   } = context;
-  if matches!(mode, PlaybackMode::Still) {
+  if !plays_audio(mode) {
     position_ms.store(start_ms, Ordering::Release);
     let _ = event_channel.send(RecordingPreviewPlayerEvent::Ready {
       position_ms: start_ms,
@@ -61,6 +65,12 @@ pub(super) fn run(context: RunContext) {
     Ok(audio) => audio,
     Err(error) => return send_error(&event_channel, error),
   };
+  if cancelled.load(Ordering::Acquire) {
+    stop_child(&audio_child);
+    drop(audio.stream);
+    let _ = audio.thread.join();
+    return;
+  }
   let _ = event_channel.send(RecordingPreviewPlayerEvent::Playing {
     position_ms: start_ms,
   });
@@ -84,5 +94,17 @@ pub(super) fn run(context: RunContext) {
   if position_ms.load(Ordering::Acquire) >= sources.duration_ms.saturating_sub(50) {
     position_ms.store(sources.duration_ms, Ordering::Release);
     let _ = event_channel.send(RecordingPreviewPlayerEvent::Ended);
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{plays_audio, PlaybackMode};
+
+  #[test]
+  fn paused_and_scrubbed_audio_only_previews_do_not_play() {
+    assert!(!plays_audio(PlaybackMode::Still));
+    assert!(!plays_audio(PlaybackMode::InteractiveStill));
+    assert!(plays_audio(PlaybackMode::Playing));
   }
 }

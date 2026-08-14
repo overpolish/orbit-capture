@@ -26,6 +26,7 @@ use artifact::{emit_snapshot, full_preview_png, snapshot, take_artifact};
 use camera_save::validate_camera_overlay;
 use commands::set_export_directory;
 use directory::current_directory;
+pub(crate) use media_preview::ffmpeg_path;
 use naming::sanitize_file_stem;
 use preferences::{
   load_cursor_effects, load_recording_output, load_screenshot_background_radius,

@@ -3,7 +3,6 @@
 
 pub(crate) mod cursor;
 mod encoding;
-#[cfg(target_os = "macos")]
 mod microphone;
 mod monitor;
 #[cfg(target_os = "macos")]

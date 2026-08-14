@@ -62,6 +62,7 @@ export function useRecordingPreviewPlayer({
   screenCanvasRef: RefObject<HTMLCanvasElement | null>;
 }) {
   const isPlayingRef = useRef(false);
+  const wantsPlaybackRef = useRef(false);
   const resumeAfterSeekRef = useRef(false);
   const scrubFinishedRef = useRef(true);
   const onPositionRef = useRef(onPosition);
@@ -150,6 +151,7 @@ export function useRecordingPreviewPlayer({
         return;
       }
       if (event.event === "ended") {
+        wantsPlaybackRef.current = false;
         updatePlaying(false);
         positionRef.current = durationRef.current;
         onPositionRef.current(durationRef.current);
@@ -166,8 +168,10 @@ export function useRecordingPreviewPlayer({
           settleRequestRef.current = null;
           resumeAfterSeekRef.current = false;
           scrubFinishedRef.current = true;
+          wantsPlaybackRef.current = true;
           void playRecordingPreview(sessionIdRef.current).catch(
             (cause: unknown) => {
+              wantsPlaybackRef.current = false;
               updatePlaying(false);
               setError(String(cause));
             },
@@ -185,9 +189,13 @@ export function useRecordingPreviewPlayer({
       positionRef.current = event.data.positionMs;
       onPositionRef.current(event.data.positionMs);
       if (event.event === "playing") {
-        updatePlaying(true);
+        // Starting audio has a short native prebuffer. If Pause won during
+        // that interval, its cancelled worker can still report that startup
+        // reached Playing; the latest UI intent remains authoritative.
+        if (wantsPlaybackRef.current) updatePlaying(true);
       }
-      if (event.event === "paused") updatePlaying(false);
+      if (event.event === "paused" && !wantsPlaybackRef.current)
+        updatePlaying(false);
     };
     void startRecordingPreviewPlayer({
       artifactId,
@@ -260,6 +268,7 @@ export function useRecordingPreviewPlayer({
       pendingResumeRequestRef.current = null;
       settleRequestRef.current = null;
       resumeAfterSeekRef.current = false;
+      wantsPlaybackRef.current = false;
       scrubFinishedRef.current = true;
       void stopRecordingPreviewPlayer(sessionId).catch(() => undefined);
     };
@@ -269,6 +278,7 @@ export function useRecordingPreviewPlayer({
   const play = useCallback(() => {
     if (!isEnabled) return;
     resumeAfterSeekRef.current = false;
+    wantsPlaybackRef.current = true;
     scrubFinishedRef.current = true;
     lastSentSeekRef.current = null;
     setError(null);
@@ -285,6 +295,7 @@ export function useRecordingPreviewPlayer({
         }
         await playRecordingPreview(sessionIdRef.current);
       } catch (cause) {
+        wantsPlaybackRef.current = false;
         updatePlaying(false);
         setError(String(cause));
       }
@@ -293,6 +304,7 @@ export function useRecordingPreviewPlayer({
   const pause = useCallback(() => {
     if (!isEnabled) return;
     resumeAfterSeekRef.current = false;
+    wantsPlaybackRef.current = false;
     pendingResumeRequestRef.current = null;
     settleRequestRef.current = null;
     scrubFinishedRef.current = true;
@@ -315,6 +327,7 @@ export function useRecordingPreviewPlayer({
     const normalized = Math.max(0, Math.round(positionMs));
     if (phase === "start") {
       resumeAfterSeekRef.current = isPlayingRef.current;
+      wantsPlaybackRef.current = false;
       scrubFinishedRef.current = false;
     }
     positionRef.current = normalized;

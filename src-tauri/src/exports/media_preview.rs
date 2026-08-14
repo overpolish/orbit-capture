@@ -50,7 +50,7 @@ pub(in crate::exports) use windows::recording_info;
 pub(in crate::exports) use estimate::export_crf;
 use estimate::resolution_filter;
 use output::{holds_bytes, plays_from_start_to_end, EXPORT_MP4_OUTPUT, OUTPUT_ERROR_DETAIL};
-pub(in crate::exports) use tools::ffmpeg_path;
+pub(crate) use tools::ffmpeg_path;
 use tools::ffprobe_path;
 
 use super::{AudioTrackKind, RecordingAudioTrack};

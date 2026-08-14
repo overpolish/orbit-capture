@@ -75,7 +75,10 @@ export function RecordingTrackLanes({
             const trackId: RecordingVideoTrackId =
               index === 0 ? "primary" : "camera";
             const enabled = enabledVideoTracks.has(trackId);
-            const mustRemainEnabled = enabled && enabledVideoTracks.size === 1;
+            const mustRemainEnabled =
+              enabled &&
+              enabledVideoTracks.size === 1 &&
+              enabledTracks.size === 0;
             return (
               <div className="flex items-center gap-2" key={trackId}>
                 <div
@@ -95,7 +98,7 @@ export function RecordingTrackLanes({
                     onChange={() => {
                       const next = new Set(enabledVideoTracks);
                       if (next.has(trackId)) {
-                        if (next.size === 1) return;
+                        if (next.size === 1 && enabledTracks.size === 0) return;
                         next.delete(trackId);
                       } else next.add(trackId);
                       onEnabledVideoTracksChange(next);
@@ -125,6 +128,7 @@ export function RecordingTrackLanes({
             <ScrubAudioTracks
               audioTracks={audioTracks}
               enabledTracks={enabledTracks}
+              hasEnabledVideo={enabledVideoTracks.size > 0}
               onEnabledTracksChange={onEnabledTracksChange}
               onSelectTrack={(streamIndex) => {
                 onSelectedTrackChange(recordingAudioTrackId(streamIndex));

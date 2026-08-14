@@ -12,6 +12,7 @@ import { Waveform } from "./scrub-timeline";
 export function ScrubAudioTracks({
   audioTracks,
   enabledTracks,
+  hasEnabledVideo,
   onEnabledTracksChange,
   onSelectTrack,
   selectedTrack,
@@ -19,6 +20,7 @@ export function ScrubAudioTracks({
 }: {
   audioTracks: PreparedAudioTrack[];
   enabledTracks: Set<number>;
+  hasEnabledVideo: boolean;
   onEnabledTracksChange: (tracks: Set<number>) => void;
   onSelectTrack: (streamIndex: number) => void;
   selectedTrack: number | null;
@@ -28,6 +30,8 @@ export function ScrubAudioTracks({
     <div className="flex flex-col gap-0.5">
       {audioTracks.map((track) => {
         const enabled = enabledTracks.has(track.streamIndex);
+        const mustRemainEnabled =
+          enabled && enabledTracks.size === 1 && !hasEnabledVideo;
         const Icon = track.kind === "microphone" ? Mic : Volume2;
         return (
           <div className="flex items-center gap-2" key={track.streamIndex}>
@@ -38,13 +42,19 @@ export function ScrubAudioTracks({
               }}
             >
               <Checkbox
-                aria-label={`${enabled ? "Exclude" : "Include"} ${track.label}`}
+                aria-label={
+                  mustRemainEnabled
+                    ? `${track.label} must remain included`
+                    : `${enabled ? "Exclude" : "Include"} ${track.label}`
+                }
+                isDisabled={mustRemainEnabled}
                 isSelected={enabled}
                 onChange={() => {
                   const next = new Set(enabledTracks);
-                  if (next.has(track.streamIndex))
+                  if (next.has(track.streamIndex)) {
+                    if (mustRemainEnabled) return;
                     next.delete(track.streamIndex);
-                  else next.add(track.streamIndex);
+                  } else next.add(track.streamIndex);
                   onEnabledTracksChange(next);
                 }}
                 size="xs"

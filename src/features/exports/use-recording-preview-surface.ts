@@ -143,6 +143,35 @@ export function useRecordingPreviewSurface({
       value: Parameters<typeof layoutRecordingPreviewSurface>[0];
     } | null = null;
     let requestId = 0;
+    const queueLayout = (
+      value: Parameters<typeof layoutRecordingPreviewSurface>[0],
+      acknowledgeTransform = false,
+    ) => {
+      const nextLayout = JSON.stringify(value);
+      if (nextLayout === lastLayout) {
+        if (acknowledgeTransform) {
+          queueMicrotask(() => {
+            if (!disposed) {
+              window.dispatchEvent(
+                new Event("orbit-preview-transform-committed"),
+              );
+            }
+          });
+        }
+        return;
+      }
+      lastLayout = nextLayout;
+      pendingLayout = {
+        acknowledgeTransform:
+          acknowledgeTransform ||
+          (pendingLayout?.acknowledgeTransform ?? false),
+        value: {
+          ...value,
+          requestId: ++requestId,
+        },
+      };
+      flush();
+    };
     const flush = () => {
       if (disposed || inFlight || !pendingLayout) return;
       const next = pendingLayout;
@@ -170,6 +199,21 @@ export function useRecordingPreviewSurface({
             ({ canvas }) =>
               canvas?.isConnected && canvas.getBoundingClientRect().width > 0,
           );
+        if (connected.length === 0) {
+          clearBackdropMasks();
+          queueLayout(
+            {
+              backdrop: effectiveBackdrop(),
+              panes: [],
+              requestId: 0,
+              scale: window.devicePixelRatio || 1,
+              sessionId: sessionIdRef.current,
+              viewport: { height: 0, width: 0, x: 0, y: 0 },
+            },
+            acknowledgeTransform,
+          );
+          return;
+        }
         const viewport = connected[0]?.canvas?.closest<HTMLElement>(
           "[data-recording-preview-viewport]",
         );
@@ -228,38 +272,20 @@ export function useRecordingPreviewSurface({
             y: viewportRect.top,
           };
           const scale = window.devicePixelRatio || 1;
-          const nextLayout = JSON.stringify({ panes, scale, viewportSurface });
-          if (nextLayout !== lastLayout) {
-            lastLayout = nextLayout;
-            // One native layout may be in flight at a time. Intermediate DOM
-            // positions are replaced by the newest one, and the Rust side also
-            // rejects an older request if IPC completion order ever differs.
-            pendingLayout = {
-              acknowledgeTransform:
-                acknowledgeTransform ||
-                (pendingLayout?.acknowledgeTransform ?? false),
-              value: {
-                backdrop: effectiveBackdrop(),
-                panes,
-                requestId: ++requestId,
-                scale,
-                sessionId: sessionIdRef.current,
-                viewport: viewportSurface,
-              },
-            };
-            flush();
-          } else if (acknowledgeTransform) {
-            // A rounded DOM transform can measure to the already committed
-            // native rectangle. Defer the acknowledgement until the event
-            // dispatcher has marked this transform as claimed.
-            queueMicrotask(() => {
-              if (!disposed) {
-                window.dispatchEvent(
-                  new Event("orbit-preview-transform-committed"),
-                );
-              }
-            });
-          }
+          // One native layout may be in flight at a time. Intermediate DOM
+          // positions are replaced by the newest one, and the Rust side also
+          // rejects an older request if IPC completion order ever differs.
+          queueLayout(
+            {
+              backdrop: effectiveBackdrop(),
+              panes,
+              requestId: 0,
+              scale,
+              sessionId: sessionIdRef.current,
+              viewport: viewportSurface,
+            },
+            acknowledgeTransform,
+          );
         }
       }
     };
