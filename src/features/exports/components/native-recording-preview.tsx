@@ -11,7 +11,10 @@ import {
 } from "react";
 
 import { CircularProgressBar } from "../../../components/base/circular-progress-bar/circular-progress-bar";
-import { copyRecordingPreviewSourceFrame } from "../api";
+import {
+  copyRecordingPreviewFrameToClipboard,
+  copyRecordingPreviewSourceFrame,
+} from "../api";
 import { defaultCameraOverlay } from "../recording-export-settings";
 import { defaultRecordingOutput } from "../screenshot-output";
 import { useExportWindowShortcuts } from "../use-export-window-shortcuts";
@@ -74,6 +77,10 @@ export function NativeRecordingPreview({
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [zoomPercent, setZoomPercent] = useState(100);
   const [isEditing, setIsEditing] = useState(false);
+  const [copyState, setCopyState] = useState<"copying" | "done" | "idle">(
+    "idle",
+  );
+  const [copyError, setCopyError] = useState<string | null>(null);
   const selectedStreamIndices =
     enabledStreamIndices ?? audioTracks.map((track) => track.streamIndex);
   const enabledTracks = new Set(selectedStreamIndices);
@@ -92,6 +99,12 @@ export function NativeRecordingPreview({
       ),
     [audioTrackVolumes],
   );
+  const effectiveRecordingOutput =
+    recordingOutput ??
+    defaultRecordingOutput({
+      camera: previewOutputDimensions?.camera,
+      primary: previewOutputDimensions?.primary ?? { height: 64, width: 64 },
+    });
   const player = useRecordingPreviewPlayer({
     artifactId,
     audioTrackVolumes,
@@ -106,12 +119,7 @@ export function NativeRecordingPreview({
       const total = totalDurationRef.current;
       playhead.publish(positionMs / 1_000, total > 0 ? positionMs / total : 0);
     },
-    recordingOutput:
-      recordingOutput ??
-      defaultRecordingOutput({
-        camera: previewOutputDimensions?.camera,
-        primary: previewOutputDimensions?.primary ?? { height: 64, width: 64 },
-      }),
+    recordingOutput: effectiveRecordingOutput,
     screenCanvasRef,
   });
   const timelineThumbnails = useRecordingTimelineThumbnails({
@@ -399,11 +407,37 @@ export function NativeRecordingPreview({
           {player.error ? (
             <p className="m-0 px-4 pb-2 text-xs text-error">{player.error}</p>
           ) : null}
+          {copyError ? (
+            <p className="m-0 px-4 pb-2 text-xs text-error">{copyError}</p>
+          ) : null}
 
           {layout ? (
             <RecordingPlaybackControls
+              copyState={copyState}
               durationMs={totalDurationMs}
               isPlaying={player.isPlaying}
+              onCopyCurrentFrame={() => {
+                setCopyState("copying");
+                setCopyError(null);
+                void copyRecordingPreviewFrameToClipboard({
+                  artifactId,
+                  cursorEffects,
+                  positionMs: player.getPositionMs(),
+                  recordingOutput: effectiveRecordingOutput,
+                })
+                  .then(() => {
+                    setCopyState("done");
+                    window.setTimeout(() => {
+                      setCopyState("idle");
+                    }, 1_500);
+                  })
+                  .catch((cause: unknown) => {
+                    setCopyState("idle");
+                    setCopyError(
+                      cause instanceof Error ? cause.message : String(cause),
+                    );
+                  });
+              }}
               onPause={player.pause}
               onPlay={player.play}
               playhead={playhead}

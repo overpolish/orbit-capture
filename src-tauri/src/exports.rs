@@ -70,15 +70,14 @@ const SCREENSHOT_EXTENSION: &str = "png";
 /// FFmpeg is on the machine. See [`save_recording`] for the other case.
 const RECORDING_EXTENSION: &str = "mp4";
 const AUDIO_EXTENSION: &str = "m4a";
-/// The container a recording is written to while it runs. It is a QuickTime
-/// movie because that is the only container that survives being fragmented,
-/// and only a fragmented file is worth anything if the app dies mid-recording
-/// - see `recording::platform::Container::quicktime_fragmented`.
-const WORKING_RECORDING_EXTENSION: &str = "mov";
+/// The container a recording is written to while it runs. macOS writes a
+/// fragmented QuickTime movie; Windows writes fragmented MP4. Both retain
+/// completed fragments if the app dies mid-recording.
+const WORKING_RECORDING_EXTENSION: &str = if cfg!(windows) { "mp4" } else { "mov" };
 /// Every extension a working recording can be found under in the recordings
 /// directory. `.mp4` is there for the files an earlier version of the app left
 /// behind: an upgrade must not walk past someone's unsaved recording.
-const WORKING_RECORDING_EXTENSIONS: &[&str] = &[WORKING_RECORDING_EXTENSION, RECORDING_EXTENSION];
+const WORKING_RECORDING_EXTENSIONS: &[&str] = &["mov", "mp4"];
 /// How long an unclaimed recording is kept before it is swept away. Long
 /// enough that a crash is recoverable, short enough that a forgotten one does
 /// not sit in the app's data directory forever.

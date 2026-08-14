@@ -39,6 +39,16 @@ pub use region::{
   hide_region_selector, is_region_selector_visible, set_region_selector_passthrough,
 };
 
+#[cfg(target_os = "windows")]
+pub fn sync_capture_affinity(app: &AppHandle, record_orbit_windows: bool) -> tauri::Result<()> {
+  for window in app.webview_windows().values() {
+    if platform::is_visible(window)? {
+      platform::set_capture_affinity(window, record_orbit_windows)?;
+    }
+  }
+  Ok(())
+}
+
 #[derive(Clone, Copy)]
 pub enum WindowLabel {
   Export,

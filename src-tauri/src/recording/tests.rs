@@ -202,7 +202,10 @@ fn cursor_metadata_does_not_depend_on_the_native_cursor_pixels() {
     RecordingMode::Region,
     RecordingMode::Window,
   ] {
-    assert!(session::records_cursor(mode));
+    assert_eq!(
+      session::records_cursor(mode),
+      cfg!(any(target_os = "macos", target_os = "windows"))
+    );
   }
   assert!(!session::records_cursor(RecordingMode::Camera));
   assert!(!session::records_cursor(RecordingMode::Audio));

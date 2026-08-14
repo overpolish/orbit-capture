@@ -8,6 +8,7 @@ import {
   screenshotOutputDimensions,
 } from "../screenshot-output";
 import { RecordingPreviewPane, RecordingVideoTrackId } from "../types";
+import { usePreviewCapabilities } from "../use-preview-capabilities";
 
 import { InteractivePreviewViewport } from "./interactive-preview-viewport";
 import { ScreenshotPreviewLayer } from "./screenshot-preview-layer";
@@ -32,6 +33,7 @@ function RecordingOutputPane({
   onChange?: (settings: RecordingOutputSettings[RecordingVideoTrackId]) => void;
 }) {
   const outputRef = useRef<HTMLDivElement | null>(null);
+  const nativeSurface = usePreviewCapabilities()?.nativeRecordingPreview;
   const output = screenshotOutputDimensions(settings);
   const source = {
     height: entry.pane.sourceHeight,
@@ -45,7 +47,7 @@ function RecordingOutputPane({
     >
       <canvas
         aria-label={`${entry.pane.kind === "camera" ? "Camera" : "Screen"} composed preview`}
-        className="absolute inset-0 size-full max-w-none opacity-0"
+        className={`absolute inset-0 size-full max-w-none ${nativeSurface ? "opacity-0" : ""}`}
         ref={entry.canvasRef}
         role="img"
       />

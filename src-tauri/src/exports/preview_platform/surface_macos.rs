@@ -100,7 +100,14 @@ impl RecordingPreviewSurface {
     }
   }
 
-  pub(crate) fn set_viewport(&self, rect: PreviewSurfaceRect, backdrop: [f64; 3]) {
+  pub(crate) fn set_viewport(&self, rect: PreviewSurfaceRect, backdrop: [f64; 4]) {
+    // AppKit's container remains opaque. Flatten over black to preserve the
+    // established macOS appearance while Windows retains the live alpha.
+    let backdrop = [
+      backdrop[0] * backdrop[3],
+      backdrop[1] * backdrop[3],
+      backdrop[2] * backdrop[3],
+    ];
     unsafe {
       orbit_preview_surface_set_viewport(
         self.handle,
@@ -120,6 +127,8 @@ impl RecordingPreviewSurface {
       orbit_preview_surface_begin_layout(self.handle);
     }
   }
+
+  pub(crate) fn set_scale(&self, _scale: f64) {}
 
   pub(crate) fn layout(&self, index: u32, rect: PreviewSurfaceRect) {
     unsafe {

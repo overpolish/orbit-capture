@@ -35,9 +35,11 @@ impl RecordingPreviewSurface {
     Ok(Self)
   }
 
-  pub(crate) fn set_viewport(&self, _rect: PreviewSurfaceRect, _backdrop: [f64; 3]) {}
+  pub(crate) fn set_viewport(&self, _rect: PreviewSurfaceRect, _backdrop: [f64; 4]) {}
 
   pub(crate) fn begin_layout(&self) {}
+
+  pub(crate) fn set_scale(&self, _scale: f64) {}
 
   pub(crate) fn layout(&self, _index: u32, _rect: PreviewSurfaceRect) {}
 

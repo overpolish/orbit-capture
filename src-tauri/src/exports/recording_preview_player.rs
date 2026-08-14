@@ -19,6 +19,8 @@ mod audio;
 pub(crate) mod commands;
 mod layout;
 mod platform;
+#[cfg(target_os = "windows")]
+pub(crate) use platform::GpuVideoReader;
 pub(crate) mod surface_commands;
 pub(crate) mod timeline_thumbnails;
 mod video;
@@ -160,7 +162,11 @@ impl PreviewPlayerManager {
     {
       let rough = std::mem::take(&mut self.rough_seek);
       if self.still_decoder.is_none() {
-        self.still_decoder = Some(platform::StillDecoder::spawn(sources, event_channel)?);
+        self.still_decoder = Some(platform::StillDecoder::spawn(
+          sources,
+          event_channel,
+          frame_channel,
+        )?);
       }
       return self
         .still_decoder

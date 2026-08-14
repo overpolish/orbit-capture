@@ -50,11 +50,18 @@ export function TextRecognitionActions({
 }) {
   return (
     <>
-      <Button onPress={onCopyAll} showFocus={false} size="sm" variant="ghost">
+      <Button
+        className="shrink-0 whitespace-nowrap"
+        onPress={onCopyAll}
+        showFocus={false}
+        size="sm"
+        variant="ghost"
+      >
         <Copy size={15} />
         Copy all
       </Button>
       <Button
+        className="shrink-0 whitespace-nowrap"
         onPress={onCopyAsParagraph}
         showFocus={false}
         size="sm"

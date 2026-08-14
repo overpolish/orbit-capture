@@ -55,6 +55,8 @@ impl CursorRaster {
   ) -> Self {
     let system_artwork = platform::artwork(style);
     let vertical = system_artwork.is_none() && fallback::is_vertical(style);
+    #[cfg(target_os = "windows")]
+    let rotation_degrees = -rotation_degrees;
     let rotation = rotation_degrees.to_radians()
       + if vertical {
         std::f64::consts::FRAC_PI_2
@@ -80,16 +82,30 @@ impl CursorRaster {
     let dy = destination_y - y;
     let local_x = (self.cos * dx + self.sin * dy) / self.scale + self.hotspot_x;
     let local_y = (-self.sin * dx + self.cos * dy) / self.scale + self.hotspot_y;
-    if !(0.0..self.width).contains(&local_x) || !(0.0..self.height).contains(&local_y) {
+    let fallback_arrow = self.system_artwork.is_none() && self.artwork == fallback::Artwork::Arrow;
+    if !fallback_arrow
+      && (!(0.0..self.width).contains(&local_x) || !(0.0..self.height).contains(&local_y))
+    {
       return [0.0; 4];
     }
     self.system_artwork.map_or_else(
       || {
-        fallback::sample(
-          self.artwork,
-          local_x / self.width * 28.0,
-          local_y / self.height * 40.0,
-        )
+        let design_size = if self.artwork == fallback::Artwork::Hand {
+          (32.0, 32.0)
+        } else {
+          (28.0, 40.0)
+        };
+        let artwork_scale = (self.width / design_size.0)
+          .min(self.height / design_size.1)
+          .max(0.01);
+        let (origin_x, origin_y) = fallback::origin(self.artwork);
+        let design_x = local_x / artwork_scale + origin_x;
+        let design_y = local_y / artwork_scale + origin_y;
+        if fallback_arrow && (!(0.0..28.0).contains(&design_x) || !(0.0..40.0).contains(&design_y))
+        {
+          return [0.0; 4];
+        }
+        fallback::sample(self.artwork, design_x, design_y)
       },
       |artwork| {
         sample_image(
@@ -304,5 +320,31 @@ mod tests {
       })
     });
     assert!(has_partial_pixel);
+  }
+
+  #[test]
+  fn fallback_arrow_keeps_its_native_aspect_inside_a_square_cursor_box() {
+    let cursor = CursorRaster::new(CursorStyle::Arrow, 0.0, 32.0, 32.0, 0.0, 0.0, 1.0);
+    let rightmost = (0..32)
+      .flat_map(|y| (0..32).map(move |x| (x, y)))
+      .filter(|(x, y)| cursor.sample(*x as f64 + 0.5, *y as f64 + 0.5, 0.0, 0.0)[3] > 0.0)
+      .map(|(x, _)| x)
+      .max()
+      .unwrap();
+
+    assert!(
+      rightmost <= 23,
+      "the 28:40 arrow was stretched to x={rightmost}"
+    );
+  }
+
+  #[test]
+  fn fallback_arrow_places_its_visible_tip_at_the_recorded_hotspot() {
+    let cursor = CursorRaster::new(CursorStyle::Arrow, 0.0, 32.0, 32.0, 0.0, 0.0, 1.0);
+    assert!(cursor.sample(0.0, 0.0, 0.0, 0.0)[3] > 0.0);
+    assert!(
+      cursor.sample(-0.5, 0.0, 0.0, 0.0)[3] > 0.0,
+      "the rounded tip stroke was clipped at the hotspot"
+    );
   }
 }

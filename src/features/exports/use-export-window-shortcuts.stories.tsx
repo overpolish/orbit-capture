@@ -3,6 +3,8 @@
 
 import { useMemo, useState } from "react";
 
+import { Button } from "../../components/base/button/button";
+
 import { createPlayhead } from "./components/scrub-playhead";
 import { TimelineRuler } from "./components/scrub-timeline";
 import { useExportWindowShortcuts } from "./use-export-window-shortcuts";
@@ -10,10 +12,18 @@ import { useExportWindowShortcuts } from "./use-export-window-shortcuts";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 function ShortcutPreview() {
+  const [activations, setActivations] = useState(0);
   const [isCropping, setIsCropping] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [lastAction, setLastAction] = useState("None");
   const playhead = useMemo(() => createPlayhead(), []);
   useExportWindowShortcuts({
+    onCopy: () => {
+      setLastAction("Copied");
+    },
+    onExport: () => {
+      setLastAction("Exported");
+    },
     onToggleCrop: () => {
       setIsCropping((cropping) => !cropping);
     },
@@ -31,9 +41,17 @@ function ShortcutPreview() {
       >
         <span role="status">
           {isPlaying ? "Playing" : "Paused"} ·{" "}
-          {isCropping ? "Crop on" : "Crop off"}
+          {isCropping ? "Crop on" : "Crop off"} · {lastAction} · Activations{" "}
+          {activations}
         </span>
       </div>
+      <Button
+        onPress={() => {
+          setActivations((count) => count + 1);
+        }}
+      >
+        Focused action
+      </Button>
       <TimelineRuler
         durationMs={5_000}
         onSeek={(ratio) => {

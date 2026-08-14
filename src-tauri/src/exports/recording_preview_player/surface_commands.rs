@@ -16,7 +16,7 @@ pub struct PreviewSurfacePane {
 #[tauri::command]
 pub fn layout_recording_preview_surface(
   state: tauri::State<'_, RecordingPreviewPlayerState>,
-  backdrop: Option<[f64; 3]>,
+  backdrop: Option<[f64; 4]>,
   panes: Vec<PreviewSurfacePane>,
   request_id: u64,
   scale: f64,
@@ -60,15 +60,17 @@ pub fn layout_recording_preview_surface(
   else {
     return Ok(());
   };
+  surface.set_scale(scale);
   surface.begin_layout();
-  surface.set_viewport(viewport, backdrop.unwrap_or([0.09, 0.09, 0.10]));
+  surface.set_viewport(viewport, backdrop.unwrap_or([0.09, 0.09, 0.10, 1.0]));
   for pane in panes {
     surface.layout(pane.index, pane.rect);
   }
   surface.finish_layout();
-  // Re-presenting is only needed when the panes changed size (zoom, resize);
-  // pure pans just move the native views over the existing drawables.
-  if sizes_changed && !manager.is_playing {
+  // Metal redraws paused frames at the new drawable size. Windows keeps a
+  // full-resolution swap chain and DirectComposition transforms it, so a
+  // wheel gesture needs no secondary decode, draw, or swap-chain resize.
+  if sizes_changed && !manager.is_playing && !cfg!(target_os = "windows") {
     if let Some(decoder) = &manager.still_decoder {
       decoder.seek(
         manager.position_ms,

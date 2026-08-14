@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { RefObject, useEffect, useRef } from "react";
+import { RefObject, useEffect, useLayoutEffect, useRef } from "react";
 
 import {
   layoutScreenshotPreviewSurface,
@@ -38,6 +38,7 @@ export function useScreenshotPreviewSurface({
   const sessionIdRef = useRef(0);
   const startedRef = useRef(false);
   const outputRef = useRef(output);
+  const presentationRef = useRef<Promise<void>>(Promise.resolve());
   outputRef.current = output;
 
   useEffect(() => {
@@ -50,10 +51,17 @@ export function useScreenshotPreviewSurface({
         if (disposed) return;
         startedRef.current = true;
         const current = outputRef.current;
-        if (current)
-          void setScreenshotPreviewOutput(current, sessionId).catch(
+        if (current) {
+          const presentation = setScreenshotPreviewOutput(
+            current,
+            sessionId,
+          ).then(
+            () => undefined,
             () => undefined,
           );
+          presentationRef.current = presentation;
+          void presentation;
+        }
       })
       .catch(() => undefined);
     return () => {
@@ -63,11 +71,17 @@ export function useScreenshotPreviewSurface({
     };
   }, [artifactId, isEnabled]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isEnabled || !output || !startedRef.current) return;
-    void setScreenshotPreviewOutput(output, sessionIdRef.current).catch(
+    const presentation = setScreenshotPreviewOutput(
+      output,
+      sessionIdRef.current,
+    ).then(
+      () => undefined,
       () => undefined,
     );
+    presentationRef.current = presentation;
+    void presentation;
   }, [isEnabled, output]);
 
   useEffect(() => {
@@ -78,12 +92,24 @@ export function useScreenshotPreviewSurface({
     let lastLayout = "";
     let pendingLayout:
       Parameters<typeof layoutScreenshotPreviewSurface>[0] | null = null;
+    const isDisposed = () => disposed;
+    const waitForLatestPresentation = async () => {
+      while (!disposed) {
+        const presentation = presentationRef.current;
+        await presentation;
+        if (presentation === presentationRef.current) return;
+      }
+    };
     const flush = () => {
       if (disposed || inFlight || !pendingLayout) return;
-      const next = pendingLayout;
-      pendingLayout = null;
       inFlight = true;
-      void layoutScreenshotPreviewSurface(next)
+      void (async () => {
+        await waitForLatestPresentation();
+        if (isDisposed()) return;
+        const next = pendingLayout;
+        pendingLayout = null;
+        await layoutScreenshotPreviewSurface(next);
+      })()
         .catch(() => undefined)
         .finally(() => {
           inFlight = false;

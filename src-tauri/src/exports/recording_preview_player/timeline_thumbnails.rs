@@ -3,9 +3,16 @@
 
 use std::thread;
 
-use tauri::{ipc::Channel, AppHandle};
+use tauri::{image::Image, ipc::Channel, AppHandle};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use super::{platform, sources};
+use crate::exports::{cursor_effects::CursorEffectSettings, RecordingOutputSettings};
+#[cfg(not(target_os = "windows"))]
+use crate::{
+  exports::cursor_effects::CursorOutputLayout,
+  screenshots::{compose_screenshot, output_placement, CapturedImage},
+};
 
 pub(super) const HEADER_MARKER: u32 = u32::from_le_bytes(*b"OCTH");
 const HEADER_VERSION: u32 = 1;
@@ -61,6 +68,79 @@ pub async fn copy_recording_preview_source_frame(
   .await
   .map_err(|error| error.to_string())??;
   Ok(tauri::ipc::Response::new(jpeg))
+}
+
+/// Copies the composed primary frame at the playhead. Decoding and bitmap
+/// composition happen only for this explicit action; live preview stays on
+/// the native GPU surface and does not cross IPC.
+#[tauri::command]
+pub async fn copy_recording_preview_frame_to_clipboard(
+  app: AppHandle,
+  artifact_id: u64,
+  position_ms: u64,
+  cursor_effects: CursorEffectSettings,
+  recording_output: RecordingOutputSettings,
+) -> Result<(), String> {
+  let sources = sources(&app, artifact_id, None)?;
+  #[cfg(target_os = "windows")]
+  let composed = tauri::async_runtime::spawn_blocking(move || {
+    platform::composed_frame_image(&sources, position_ms, cursor_effects, &recording_output)
+  })
+  .await
+  .map_err(|error| error.to_string())??;
+  #[cfg(not(target_os = "windows"))]
+  let path = sources.screen_path.clone();
+  #[cfg(not(target_os = "windows"))]
+  let duration_ms = sources.duration_ms;
+  #[cfg(not(target_os = "windows"))]
+  let cursor = sources.cursor.clone();
+  #[cfg(not(target_os = "windows"))]
+  let composed = tauri::async_runtime::spawn_blocking(move || {
+    let jpeg = platform::source_frame_jpeg(&path, position_ms, duration_ms)?;
+    let decoded = image::load_from_memory(&jpeg)
+      .map_err(|error| format!("The current video frame could not be decoded: {error}"))?
+      .into_rgba8();
+    let (width, height) = decoded.dimensions();
+    let source = CapturedImage {
+      height,
+      rgba: decoded.into_raw(),
+      width,
+    };
+    let placement = output_placement(width, height, &recording_output.primary)?;
+    let mut composed = compose_screenshot(&source, &recording_output.primary)?;
+    if cursor_effects.bake {
+      if let Some(cursor) = cursor {
+        cursor.composite_output_rgba(
+          &mut composed.rgba,
+          (width, height),
+          position_ms,
+          cursor_effects,
+          CursorOutputLayout {
+            output_size: (composed.width, composed.height),
+            image_rect: (
+              placement.image_x,
+              placement.image_y,
+              f64::from(placement.image_width),
+              f64::from(placement.image_height),
+            ),
+            clip_rect: cursor_effects.clip_at_video_edge.then_some((
+              placement.crop_x,
+              placement.crop_y,
+              placement.crop_width,
+              placement.crop_height,
+            )),
+          },
+        )?;
+      }
+    }
+    Ok::<_, String>(composed)
+  })
+  .await
+  .map_err(|error| error.to_string())??;
+  app
+    .clipboard()
+    .write_image(&Image::new(&composed.rgba, composed.width, composed.height))
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

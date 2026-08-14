@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { Alert } from "../../../components/base/alert/alert";
 import { Checkbox } from "../../../components/base/checkbox/checkbox";
 import { OverflowShadow } from "../../../components/base/overflow-shadow/overflow-shadow";
 import { PillGroup } from "../../../components/base/pill-group/pill-group";
@@ -151,6 +152,8 @@ export function ExportInspector({
   const videoSelection = new Set(enabledVideoTracks);
   const canBakeCamera =
     videoSelection.has("primary") && videoSelection.has("camera");
+  const hasRecordingSettings =
+    Boolean(artifact.camera) || artifact.audioTracks.length > 1;
   const tabs = trackTabs(artifact);
   const effectiveSelectedTrack = selectedTrack ?? tabs[0].id;
 
@@ -198,6 +201,12 @@ export function ExportInspector({
                     </span>
                   </span>
                 </Checkbox>
+              ) : null}
+
+              {!hasRecordingSettings ? (
+                <Alert color="neutral" role="status" size="sm">
+                  No additional options are available for this recording.
+                </Alert>
               ) : null}
 
               <RecordingSizeEstimate

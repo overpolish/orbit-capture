@@ -73,11 +73,31 @@ use serde::Serialize;
 #[cfg(target_os = "macos")]
 #[path = "preview_platform/surface_macos.rs"]
 mod surface;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+#[path = "preview_platform/surface_windows.rs"]
+mod surface;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[path = "preview_platform/surface_fallback.rs"]
 mod surface;
 
+#[cfg(target_os = "windows")]
+pub(crate) use surface::ComposedFrame;
 pub(crate) use surface::RecordingPreviewSurface;
+
+/// Builds the comparatively expensive Windows D3D/DirectComposition pipeline
+/// while the export webview is still hidden. The first recording review can
+/// then open with only its media source to initialise.
+#[cfg(target_os = "windows")]
+pub(crate) fn prewarm(window: tauri::WebviewWindow) {
+  tauri::async_runtime::spawn_blocking(move || {
+    if let Err(error) = RecordingPreviewSurface::from_window(&window) {
+      eprintln!("Could not prewarm the Windows preview surface: {error}");
+    }
+  });
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn prewarm(_window: tauri::WebviewWindow) {}
 
 /// A pane or viewport rectangle in webview points, relative to the window.
 ///

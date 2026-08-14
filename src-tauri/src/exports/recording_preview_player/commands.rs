@@ -130,12 +130,34 @@ pub fn pause_recording_preview(
   manager.require_session(session_id)?;
   manager.is_playing = false;
   manager.cancel_worker();
+  let displayed_position_ms = manager.position_ms;
+  let duration_ms = manager
+    .sources
+    .as_ref()
+    .map_or(0, |sources| sources.duration_ms);
+  manager.position_ms = decodable_position(manager.position_ms, duration_ms);
   if let Some(channel) = &manager.event_channel {
     let _ = channel.send(RecordingPreviewPlayerEvent::Paused {
-      position_ms: manager.position_ms,
+      position_ms: displayed_position_ms,
     });
   }
   manager.restart(PlaybackMode::InteractiveStill)
+}
+
+fn decodable_position(position_ms: u64, duration_ms: u64) -> u64 {
+  position_ms.min(duration_ms.saturating_sub(1))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::decodable_position;
+
+  #[test]
+  fn playback_end_uses_the_final_decodable_offset_for_its_still() {
+    assert_eq!(decodable_position(8_000, 8_000), 7_999);
+    assert_eq!(decodable_position(4_000, 8_000), 4_000);
+    assert_eq!(decodable_position(0, 0), 0);
+  }
 }
 
 #[tauri::command]

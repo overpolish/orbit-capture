@@ -10,7 +10,10 @@
 #[cfg(target_os = "macos")]
 #[path = "cursor/platform_macos.rs"]
 mod platform;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+#[path = "cursor/platform_windows.rs"]
+mod platform;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[path = "cursor/platform_unsupported.rs"]
 mod platform;
 
@@ -26,7 +29,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows"))]
 pub(crate) use self::format::CursorSourceKind;
 pub(crate) use self::format::{
   read, ButtonState, CursorButton, CursorRecord, CursorSource, CursorStyle, FORMAT_VERSION,
@@ -222,7 +225,11 @@ impl CursorRecorder {
     serde_json::to_writer(
       &mut writer,
       &CursorRecord::Header {
-        coordinate_space: "global-logical-points".to_owned(),
+        coordinate_space: if cfg!(target_os = "windows") {
+          "global-physical-pixels".to_owned()
+        } else {
+          "global-logical-points".to_owned()
+        },
         platform: std::env::consts::OS.to_owned(),
         source,
         timebase: "recording-microseconds".to_owned(),

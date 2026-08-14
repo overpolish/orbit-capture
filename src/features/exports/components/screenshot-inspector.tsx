@@ -64,6 +64,21 @@ export function ScreenshotOutputControls({
   const update = (patch: Partial<ScreenshotOutputSettings>) => {
     onChange?.({ ...settings, ...patch });
   };
+  const resizeCanvas = (width: number, height: number) => {
+    // Canvas dimensions change the coordinate system behind both the crop and
+    // placed source. Reframe them together so a previous aspect ratio cannot
+    // leave an oversized invisible crop window around the actual clip.
+    onChange?.(
+      resetScreenshotLayout(
+        {
+          ...settings,
+          height: Math.round(height),
+          width: Math.round(width),
+        },
+        { height: sourceHeight, width: sourceWidth },
+      ),
+    );
+  };
 
   return (
     <div className={`flex flex-col gap-4 ${className}`}>
@@ -89,17 +104,13 @@ export function ScreenshotOutputControls({
               : undefined
           }
           setDimensions={(width, height) => {
-            onChange?.({
-              ...settings,
-              height: Math.round(height),
-              width: Math.round(width),
-            });
+            resizeCanvas(width, height);
           }}
           setHeight={(height) => {
-            onChange?.({ ...settings, height: Math.round(height) });
+            resizeCanvas(settings.width, height);
           }}
           setWidth={(width) => {
-            onChange?.({ ...settings, width: Math.round(width) });
+            resizeCanvas(width, settings.height);
           }}
           width={settings.width}
         />

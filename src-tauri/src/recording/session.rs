@@ -102,10 +102,21 @@ pub fn recordings_directory(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub(super) fn records_cursor(mode: RecordingMode) -> bool {
-  matches!(
-    mode,
-    RecordingMode::Screen | RecordingMode::Region | RecordingMode::Window
-  )
+  cfg!(any(target_os = "macos", target_os = "windows"))
+    && matches!(
+      mode,
+      RecordingMode::Screen | RecordingMode::Region | RecordingMode::Window
+    )
+}
+
+impl CaptureHandles {
+  pub(super) fn mark_stopped_at(&self, at: Instant) {
+    #[cfg(target_os = "windows")]
+    self.session.mark_stopped_at(at);
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = at;
+  }
 }
 
 /// Defence in depth, run before anything is hidden or transitioned. The Record
@@ -169,9 +180,9 @@ pub(super) fn begin_capture(
     .as_ref()
     .filter(|_| !camera_primary)
     .map(|_| directory.join(encoding::camera_temp_file_name(started_at)));
-  // `show_cursor` controls only the pixels ScreenCaptureKit burns into the
-  // movie. The independent cursor track is always useful: hiding the native
-  // pointer is how a clean recording gets Orbit Capture's dynamic cursor.
+  // Cursor metadata remains available independently of whether native capture
+  // pixels include the pointer. This lets an original-cursor recording turn
+  // baking off, or a clean recording turn the editable cursor layer on.
   let cursor_path = records_cursor(options.mode)
     .then(|| directory.join(encoding::cursor_temp_file_name(started_at)));
 
@@ -291,7 +302,10 @@ pub(super) fn resume_capture(handles: &CaptureHandles) -> Result<(), String> {
 }
 
 /// Finishes the movie, returning it alongside the name to suggest for it.
-pub(super) fn finalize_capture(handles: CaptureHandles) -> Result<(FinalizeInfo, String), String> {
+pub(super) fn finalize_capture(
+  handles: CaptureHandles,
+  stopped_at: Instant,
+) -> Result<(FinalizeInfo, String), String> {
   let CaptureHandles {
     cursor,
     output_path,
@@ -300,9 +314,8 @@ pub(super) fn finalize_capture(handles: CaptureHandles) -> Result<(FinalizeInfo,
     started_at,
   } = handles;
 
-  let at = Instant::now();
   let cursor_path = cursor.map(CursorRecorder::stop).transpose();
-  let mut info = match session.stop_at(at) {
+  let mut info = match session.stop_at(stopped_at) {
     Ok(info) => info,
     Err(error) => {
       // Nothing playable came out, so nothing is left lying around either.

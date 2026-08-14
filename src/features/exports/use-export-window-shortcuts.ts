@@ -6,28 +6,38 @@ import { useEffect } from "react";
 import { ownsTextEditingKeys } from "./keyboard-target";
 
 export function useExportWindowShortcuts({
+  onCopy,
+  onExport,
   onToggleCrop,
   onTogglePlayback,
 }: {
+  onCopy?: () => void;
+  onExport?: () => void;
   onToggleCrop?: () => void;
   onTogglePlayback?: () => void;
 }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.repeat ||
-        event.isComposing ||
-        event.altKey ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.shiftKey
-      )
-        return;
+      if (event.repeat || event.isComposing || event.altKey) return;
 
-      // Space is transport control everywhere except a text field, exactly
-      // like a video editor: clicking a checkbox must not steal playback.
+      const commandKey = event.ctrlKey || event.metaKey;
+      if (commandKey && !event.shiftKey) {
+        if (event.code === "KeyC" && onCopy) {
+          if (ownsTextEditingKeys(event.target)) return;
+          event.preventDefault();
+          onCopy();
+        } else if (event.code === "KeyE" && onExport) {
+          event.preventDefault();
+          onExport();
+        }
+        return;
+      }
+
+      if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+
+      // P leaves Space available to activate whichever control has focus.
       if (
-        event.code === "Space" &&
+        event.code === "KeyP" &&
         onTogglePlayback &&
         !ownsTextEditingKeys(event.target)
       ) {
@@ -43,19 +53,9 @@ export function useExportWindowShortcuts({
       }
     };
 
-    // Focused controls (checkboxes, buttons) activate on space keyup;
-    // suppressing it keeps the toggle from firing after playback handled the
-    // keydown.
-    const onKeyUp = (event: KeyboardEvent) => {
-      if (event.code === "Space" && !ownsTextEditingKeys(event.target)) {
-        event.preventDefault();
-      }
-    };
     window.addEventListener("keydown", onKeyDown, true);
-    window.addEventListener("keyup", onKeyUp, true);
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
-      window.removeEventListener("keyup", onKeyUp, true);
     };
-  }, [onToggleCrop, onTogglePlayback]);
+  }, [onCopy, onExport, onToggleCrop, onTogglePlayback]);
 }

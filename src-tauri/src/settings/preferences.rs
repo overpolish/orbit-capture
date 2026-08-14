@@ -114,14 +114,31 @@ pub fn set_general_settings(
   mut settings: GeneralSettings,
 ) -> Result<GeneralSettings, String> {
   validate(&settings)?;
-  let autolaunch = app.autolaunch();
-  if settings.launch_at_login {
-    autolaunch.enable().map_err(|error| error.to_string())?;
-  } else {
-    autolaunch.disable().map_err(|error| error.to_string())?;
+  let current_settings = current(&app);
+  if settings.launch_at_login != current_settings.launch_at_login {
+    let autolaunch = app.autolaunch();
+    if settings.launch_at_login {
+      autolaunch.enable().map_err(|error| error.to_string())?;
+    } else {
+      autolaunch.disable().map_err(|error| error.to_string())?;
+    }
+    settings.launch_at_login = autolaunch.is_enabled().unwrap_or(settings.launch_at_login);
   }
-  settings.launch_at_login = autolaunch.is_enabled().unwrap_or(settings.launch_at_login);
-  write(&app, &settings)?;
+  #[cfg(target_os = "windows")]
+  let capture_affinity_changed =
+    settings.record_orbit_windows != current_settings.record_orbit_windows;
+  #[cfg(target_os = "windows")]
+  if capture_affinity_changed {
+    crate::windows::sync_capture_affinity(&app, settings.record_orbit_windows)
+      .map_err(|error| error.to_string())?;
+  }
+  if let Err(error) = write(&app, &settings) {
+    #[cfg(target_os = "windows")]
+    if capture_affinity_changed {
+      let _ = crate::windows::sync_capture_affinity(&app, current_settings.record_orbit_windows);
+    }
+    return Err(error);
+  }
   *app
     .state::<GeneralSettingsState>()
     .0

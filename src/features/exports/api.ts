@@ -148,7 +148,7 @@ export const layoutRecordingPreviewSurface = ({
   sessionId,
   viewport,
 }: {
-  backdrop: [number, number, number];
+  backdrop: [number, number, number, number];
   panes: {
     index: number;
     rect: { height: number; width: number; x: number; y: number };
@@ -253,6 +253,27 @@ export const copyRecordingPreviewSourceFrame = ({
     track,
   });
 
+export const copyRecordingPreviewFrameToClipboard = ({
+  artifactId,
+  cursorEffects,
+  positionMs,
+  recordingOutput,
+}: {
+  artifactId: number;
+  cursorEffects: CursorEffectSettings;
+  positionMs: number;
+  recordingOutput: RecordingOutputSettings;
+}) =>
+  invoke<null>("copy_recording_preview_frame_to_clipboard", {
+    artifactId,
+    cursorEffects: normalizedCursorEffects(cursorEffects),
+    positionMs: Math.max(0, Math.round(positionMs)),
+    recordingOutput: {
+      camera: normalizedScreenshotOutput(recordingOutput.camera),
+      primary: normalizedScreenshotOutput(recordingOutput.primary),
+    },
+  });
+
 /**
  * What the backend's preview platform can actually do. Probed instead of
  * sniffed, so a platform whose native backend lands one piece at a time flips
@@ -276,7 +297,7 @@ export const layoutScreenshotPreviewSurface = ({
   sessionId,
   viewport,
 }: {
-  backdrop: [number, number, number];
+  backdrop: [number, number, number, number];
   panes: {
     index: number;
     rect: { height: number; width: number; x: number; y: number };

@@ -261,10 +261,12 @@ pub async fn estimate_recording_export(
           recording_output.primary.height,
           duration_ms,
           media_preview::VideoExportOptions {
-            compression: estimate_compression,
+            compression,
             resolution_scale_percent: 100,
             source_scale_percent: 100,
           },
+          original_size.saturating_sub(original_audio),
+          (width, height),
         )
       }
       None
@@ -323,10 +325,12 @@ pub async fn estimate_recording_export(
           recording_output.camera.height,
           camera.duration_ms,
           media_preview::VideoExportOptions {
-            compression: camera_compression.max(1),
+            compression: camera_compression,
             resolution_scale_percent: 100,
             source_scale_percent: 100,
           },
+          camera.original_size_bytes,
+          (camera.width, camera.height),
         ),
         None if camera_compression == 0 && camera_resolution_scale_percent == 100 => {
           camera.original_size_bytes

@@ -86,6 +86,17 @@ pub fn dismiss(app: &AppHandle) {
     .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
 }
 
+#[cfg(target_os = "windows")]
+fn set_recognition_capture_protected(
+  window: &tauri::WebviewWindow,
+  protected: bool,
+) -> Result<(), String> {
+  window
+    .set_content_protected(protected)
+    .map_err(|error| error.to_string())?;
+  unsafe { windows::Win32::Graphics::Dwm::DwmFlush() }.map_err(|error| error.to_string())
+}
+
 pub fn start(app: &AppHandle) -> Result<(), String> {
   dismiss(app);
 
@@ -120,13 +131,15 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
     .shadow(false)
     .skip_taskbar(true)
     .transparent(true)
-    .visible(true)
+    .visible(false)
     .visible_on_all_workspaces(true)
     .build()
     .map_err(|error| error.to_string())?;
+    #[cfg(not(target_os = "windows"))]
     window
       .set_content_protected(true)
       .map_err(|error| error.to_string())?;
+    crate::windows::show(&window, index == 0).map_err(|error| error.to_string())?;
   }
 
   Ok(())
@@ -167,12 +180,21 @@ pub async fn capture_text_region(
     .iter()
     .filter_map(platform_window_id)
     .collect::<Vec<_>>();
+
+  #[cfg(target_os = "windows")]
+  set_recognition_capture_protected(&window, true)?;
   let image = screenshots::capture_for_text_recognition(
     &app,
     ScreenshotTarget::Region { monitor_id, region },
     &excluded_window_ids,
   )
-  .await?;
+  .await;
+  #[cfg(target_os = "windows")]
+  set_recognition_capture_protected(
+    &window,
+    !crate::settings::current(&app).record_orbit_windows,
+  )?;
+  let image = image?;
   let image_png = screenshots::encoding::encode_truecolor_png(&image)?;
   let result = CapturedTextRegion {
     height: image.height,

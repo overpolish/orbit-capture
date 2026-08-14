@@ -29,6 +29,7 @@ where
 }
 
 pub fn show(window: &WebviewWindow, focus: bool) -> tauri::Result<()> {
+  platform::prepare_to_show(window)?;
   window.show()?;
   window.unminimize()?;
   if focus {
@@ -115,6 +116,8 @@ pub fn initialize_export(window: &WebviewWindow) -> tauri::Result<()> {
   // during application activation even when it was configured as invisible.
   // Export only becomes visible when an artifact is presented.
   window.hide()?;
+
+  crate::exports::preview_platform::prewarm(window.clone());
 
   let app = window.app_handle().clone();
   let export = window.clone();

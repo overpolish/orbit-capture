@@ -17,6 +17,7 @@ import {
   screenshotOutputDimensions,
 } from "../screenshot-output";
 import { CameraOverlaySettings, RecordingPreviewPane } from "../types";
+import { usePreviewCapabilities } from "../use-preview-capabilities";
 
 import { InteractivePreviewViewport } from "./interactive-preview-viewport";
 import { ScreenshotPreviewLayer } from "./screenshot-preview-layer";
@@ -57,6 +58,7 @@ export function BakedCameraPreviewViewport({
 }) {
   const mediaRef = useRef<HTMLDivElement | null>(null);
   const outputRef = useRef<HTMLDivElement | null>(null);
+  const nativeSurface = usePreviewCapabilities()?.nativeRecordingPreview;
   const output = screenshotOutputDimensions(outputSettings);
   const outputPane = {
     ...screenPane,
@@ -105,7 +107,7 @@ export function BakedCameraPreviewViewport({
         >
           <canvas
             aria-label="Native composed recording preview"
-            className="absolute inset-0 size-full max-w-none opacity-0"
+            className={`absolute inset-0 size-full max-w-none ${nativeSurface ? "opacity-0" : ""}`}
             ref={screenCanvasRef}
             role="img"
           />

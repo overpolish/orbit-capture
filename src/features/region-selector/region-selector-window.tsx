@@ -25,6 +25,7 @@ import { Region } from "../recording-sources/types";
 import { ShortcutAction } from "../settings/types";
 
 import { Magnifier } from "./magnifier";
+import { RegionDrawingSurface } from "./region-drawing-surface";
 import { fitRegion, wholePixel, wholePixelSize } from "./region-geometry";
 import { HANDLE_CLASSES, HANDLE_STYLES } from "./resize-handles";
 import {
@@ -50,6 +51,7 @@ export function RegionSelectorWindow() {
   const [activeAspect, setActiveAspect] = useState<number>();
   const [resizeDirection, setResizeDirection] = useState<ResizeDirection>();
   const [isDragging, setIsDragging] = useState(false);
+  const [isDrawing, setIsDrawing] = useState(false);
   const [screenshot, setScreenshot] = useState<ArrayBuffer | null>(null);
   const activeHandleRef = useRef<HTMLElement | null>(null);
 
@@ -170,9 +172,38 @@ export function RegionSelectorWindow() {
     setRegion(centered);
   };
 
+  const finish = useCallback(() => {
+    if (!activeMonitor) return;
+    if (isScreenshotCapture) {
+      captureScreenshotRegion(activeMonitor.id, persistDraft());
+      return;
+    }
+    persistDraft();
+    setRegionEditing(false);
+  }, [activeMonitor, isScreenshotCapture, persistDraft, setRegionEditing]);
+
+  const canFinish =
+    isRegionEditing && !resizeDirection && !isDragging && !isDrawing;
+
+  useEffect(() => {
+    if (!canFinish) return;
+
+    const finishOnEnter = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" || event.repeat || event.isComposing) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      finish();
+    };
+
+    window.addEventListener("keydown", finishOnEnter, true);
+    return () => {
+      window.removeEventListener("keydown", finishOnEnter, true);
+    };
+  }, [canFinish, finish]);
+
   if (!activeMonitor) return null;
 
-  const showActions = isRegionEditing && !resizeDirection && !isDragging;
+  const showActions = canFinish;
   const isMac = navigator.userAgent.includes("Mac");
 
   return (
@@ -202,6 +233,15 @@ export function RegionSelectorWindow() {
           width="100%"
         />
       </svg>
+
+      <RegionDrawingSurface
+        bounds={activeMonitor.size}
+        current={draft}
+        isEditing={isRegionEditing}
+        onChange={setDraft}
+        onDrawingChange={setIsDrawing}
+        onFinish={setRegion}
+      />
 
       <Rnd
         bounds="parent"
@@ -304,19 +344,7 @@ export function RegionSelectorWindow() {
             }}
             width={draft.size.width}
           />
-          <Button
-            color="success"
-            onPress={() => {
-              if (isScreenshotCapture) {
-                captureScreenshotRegion(activeMonitor.id, persistDraft());
-                return;
-              }
-              persistDraft();
-              setRegionEditing(false);
-            }}
-            showFocus={false}
-            size="sm"
-          >
+          <Button color="success" onPress={finish} showFocus={false} size="sm">
             {isScreenshotCapture ? (
               <ImageDown aria-hidden size={18} />
             ) : (

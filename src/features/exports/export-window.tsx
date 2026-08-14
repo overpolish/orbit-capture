@@ -147,11 +147,15 @@ export function ExportWindow() {
           ...(artifact.camera ? (["camera"] as const) : []),
         ]
       : [];
-  const enabledVideoTracks =
+  const selectedVideoTracks =
     artifact?.kind === "recording" &&
     videoTrackSelection?.artifactId === artifact.id
       ? videoTrackSelection.tracks
       : defaultVideoTracks;
+  const enabledVideoTracks =
+    defaultVideoTracks.length > 0 && selectedVideoTracks.length === 0
+      ? defaultVideoTracks.slice(0, 1)
+      : selectedVideoTracks;
   const includePrimaryVideo = enabledVideoTracks.includes("primary");
   const includeCamera = enabledVideoTracks.includes("camera");
   const effectiveBakeCamera =
@@ -306,7 +310,12 @@ export function ExportWindow() {
               ...screenshotDefaults,
               ...persistedScreenshotOutput,
               backgroundRadiusPercent: persistedScreenshotBackgroundRadius,
+              // A new capture starts at its own native canvas dimensions.
+              // Persist visual preferences, not the previous artifact's
+              // aspect ratio or manually enlarged output canvas.
+              height: screenshotDefaults.height,
               radiusPercent: persistedScreenshotRadius,
+              width: screenshotDefaults.width,
             },
             artifact,
           )
@@ -412,7 +421,7 @@ export function ExportWindow() {
       onCursorEffectsChange={setCursorEffects}
       onEnabledTracksChange={onEnabledTracksChange}
       onEnabledVideoTracksChange={(tracks) => {
-        if (artifactId === undefined) return;
+        if (artifactId === undefined || tracks.length === 0) return;
         setVideoTrackSelection({ artifactId, tracks });
       }}
       onFileStemChange={(value) => {
@@ -534,6 +543,16 @@ export function ExportWindow() {
           });
         }
         setAudioTrackVolumes({ artifactId, values: next });
+      }}
+      onToggleMaximize={() => {
+        getCurrentWindow()
+          .toggleMaximize()
+          .catch((cause: unknown) => {
+            console.error(
+              "Could not maximize or restore the export window",
+              cause,
+            );
+          });
       }}
       previewUrl={previewUrl}
       recordingOutput={recordingOutput}

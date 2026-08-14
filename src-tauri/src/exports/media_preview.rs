@@ -27,19 +27,25 @@ mod encode;
 mod estimate;
 mod output;
 mod tools;
+#[cfg(target_os = "windows")]
+mod windows;
 
 pub use audio::prepare;
 #[cfg(target_os = "macos")]
 pub(in crate::exports) use bake::bake_geometry;
+#[cfg(target_os = "macos")]
+pub(in crate::exports) use encode::remux_error;
 pub use encode::{
   camera_recording_exporter, remuxer, selected_audio_exporter, selected_recording_exporter, Remux,
   SelectedRecordingExport,
 };
-#[cfg(target_os = "macos")]
-pub(in crate::exports) use encode::{remux_error, remux_temp_path, run_export};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(in crate::exports) use encode::{remux_temp_path, run_export};
 pub use estimate::{estimate_compressed_video_bytes, supports_compression};
 pub use output::duration_ms;
 pub use tools::inspect_audio_tracks;
+#[cfg(target_os = "windows")]
+pub(in crate::exports) use windows::recording_info;
 
 pub(in crate::exports) use estimate::export_crf;
 use estimate::resolution_filter;

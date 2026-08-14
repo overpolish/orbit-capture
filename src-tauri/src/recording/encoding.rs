@@ -89,7 +89,11 @@ pub fn bitrate_bps(width: u32, height: u32, fps: u32) -> i32 {
 /// `platform::Container::quicktime_fragmented` and `exports::save_recording`.
 pub fn temp_file_name(started_at: NaiveDateTime) -> String {
   started_at
-    .format("recording-%Y%m%d-%H%M%S%.3f.mov")
+    .format(if cfg!(target_os = "windows") {
+      "recording-%Y%m%d-%H%M%S%.3f.mp4"
+    } else {
+      "recording-%Y%m%d-%H%M%S%.3f.mov"
+    })
     .to_string()
 }
 

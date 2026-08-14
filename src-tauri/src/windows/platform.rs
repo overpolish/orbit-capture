@@ -3,7 +3,7 @@
 
 use tauri::WebviewWindow;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use tauri::Manager;
 
 #[cfg(target_os = "macos")]
@@ -163,29 +163,72 @@ pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
 }
 
 /// Every window this app floats over the desktop is an overlay: always on top,
-/// off the taskbar, and excluded from capture so it can never appear in a
-/// screenshot or recording - including the ones this app takes itself. That
-/// exclusion is what removes the need to hide the UI before capturing.
+/// and off the taskbar. Its capture affinity follows the user's persistent
+/// "record Orbit Capture windows" preference.
 #[cfg(target_os = "windows")]
 fn initialize_overlay(window: &WebviewWindow) -> tauri::Result<()> {
   window.set_always_on_top(true)?;
   window.set_skip_taskbar(true)?;
-  exclude_from_capture(window)
+  initialize_capture_affinity(window)
+}
+
+#[cfg(target_os = "macos")]
+pub fn prepare_to_show(_window: &WebviewWindow) -> tauri::Result<()> {
+  Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn exclude_from_capture(window: &WebviewWindow) -> tauri::Result<()> {
+fn initialize_capture_affinity(window: &WebviewWindow) -> tauri::Result<()> {
+  let record_orbit_windows = crate::settings::current(window.app_handle()).record_orbit_windows;
+  // Tauri can transiently report configured-hidden windows as visible while
+  // WebView2 is creating their native surfaces. Changing display affinity in
+  // that interval orders those unpainted surfaces onscreen. Hide on both sides
+  // of the native call so startup never exposes a blank window shell.
+  window.hide()?;
+  set_capture_affinity(window, record_orbit_windows)?;
+  window.hide()
+}
+
+#[cfg(target_os = "windows")]
+pub fn set_capture_affinity(
+  window: &WebviewWindow,
+  record_orbit_windows: bool,
+) -> tauri::Result<()> {
   use windows::Win32::{
     Foundation::HWND,
-    UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE},
+    UI::WindowsAndMessaging::{
+      GetWindowDisplayAffinity, SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+    },
   };
 
+  let hwnd = HWND(window.hwnd()?.0);
+  let desired_affinity = if record_orbit_windows {
+    WDA_NONE
+  } else {
+    WDA_EXCLUDEFROMCAPTURE
+  };
   unsafe {
-    SetWindowDisplayAffinity(HWND(window.hwnd()?.0), WDA_EXCLUDEFROMCAPTURE)
-      .map_err(std::io::Error::other)?;
+    let mut current_affinity = 0;
+    GetWindowDisplayAffinity(hwnd, &mut current_affinity).map_err(std::io::Error::other)?;
+    if current_affinity != desired_affinity.0 {
+      SetWindowDisplayAffinity(hwnd, desired_affinity).map_err(std::io::Error::other)?;
+    }
   }
 
   Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub fn is_visible(window: &WebviewWindow) -> tauri::Result<bool> {
+  use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::IsWindowVisible};
+
+  Ok(unsafe { IsWindowVisible(HWND(window.hwnd()?.0)).as_bool() })
+}
+
+#[cfg(target_os = "windows")]
+pub fn prepare_to_show(window: &WebviewWindow) -> tauri::Result<()> {
+  let record_orbit_windows = crate::settings::current(window.app_handle()).record_orbit_windows;
+  set_capture_affinity(window, record_orbit_windows)
 }
 
 #[cfg(target_os = "windows")]
@@ -220,7 +263,7 @@ pub fn initialize_recording_dock(window: &WebviewWindow) -> tauri::Result<()> {
 
 #[cfg(target_os = "windows")]
 pub fn initialize_export(window: &WebviewWindow) -> tauri::Result<()> {
-  exclude_from_capture(window)
+  initialize_capture_affinity(window)
 }
 
 #[cfg(target_os = "windows")]
@@ -282,6 +325,7 @@ pub fn hide(window: &WebviewWindow) -> tauri::Result<()> {
 
 #[cfg(target_os = "windows")]
 pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
+  prepare_to_show(window)?;
   window.show()
 }
 
@@ -328,6 +372,11 @@ pub fn hide(window: &WebviewWindow) -> tauri::Result<()> {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
   window.show()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn prepare_to_show(_window: &WebviewWindow) -> tauri::Result<()> {
+  Ok(())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]

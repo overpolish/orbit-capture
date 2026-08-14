@@ -13,6 +13,6 @@ use super::platform::VideoFramePayload;
 pub(super) const PREVIEW_FPS: u64 = 30;
 
 pub(super) struct VideoFrame {
-  pub index: u64,
   pub payload: VideoFramePayload,
+  pub timestamp_ms: u64,
 }

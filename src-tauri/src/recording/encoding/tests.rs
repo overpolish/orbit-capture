@@ -204,7 +204,11 @@ fn names_the_working_file_so_it_sorts_by_time() {
     .unwrap();
   assert_eq!(
     temp_file_name(started_at),
-    "recording-20260808-143205.250.mov"
+    if cfg!(target_os = "windows") {
+      "recording-20260808-143205.250.mp4"
+    } else {
+      "recording-20260808-143205.250.mov"
+    }
   );
 }
 

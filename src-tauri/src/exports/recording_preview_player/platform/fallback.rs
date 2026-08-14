@@ -36,6 +36,7 @@ impl StillDecoder {
   pub(crate) fn spawn(
     _sources: PlayerSources,
     _event_channel: Channel<RecordingPreviewPlayerEvent>,
+    _frame_channel: Channel,
   ) -> Result<Self, String> {
     Err("This platform has no native preview decoder".to_owned())
   }

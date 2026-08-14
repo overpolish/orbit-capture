@@ -25,6 +25,15 @@ import { useRecordingPreviewSurface } from "./use-recording-preview-surface";
 
 let sessionSequence = 0;
 
+const settingsKey = (settings: {
+  audioTrackVolumes: AudioTrackVolume[];
+  bakeCamera: boolean;
+  cameraOverlay: import("./types").CameraOverlaySettings;
+  cursorEffects: CursorEffectSettings;
+  enabledStreamIndices: number[];
+  recordingOutput: import("./screenshot-output").RecordingOutputSettings;
+}) => JSON.stringify(settings);
+
 export function useRecordingPreviewPlayer({
   artifactId,
   audioTrackVolumes,
@@ -115,6 +124,14 @@ export function useRecordingPreviewPlayer({
   useEffect(() => {
     if (!isEnabled) return;
     let disposed = false;
+    const initialSettingsKey = settingsKey({
+      audioTrackVolumes,
+      bakeCamera,
+      cameraOverlay,
+      cursorEffects,
+      enabledStreamIndices,
+      recordingOutput,
+    });
     const sessionId = Date.now() * 1_000 + (++sessionSequence % 1_000);
     sessionIdRef.current = sessionId;
     seekRequestRef.current = 0;
@@ -190,6 +207,20 @@ export function useRecordingPreviewPlayer({
         durationRef.current = info.durationMs;
         setDurationMs(info.durationMs);
         startedRef.current = true;
+        const latestSettingsKey = settingsKey({
+          audioTrackVolumes: audioTrackVolumesRef.current,
+          bakeCamera: compositionRef.current.bakeCamera,
+          cameraOverlay: compositionRef.current.cameraOverlay,
+          cursorEffects: cursorEffectsRef.current,
+          enabledStreamIndices: enabledStreamIndicesRef.current,
+          recordingOutput: compositionRef.current.recordingOutput,
+        });
+        // Startup already installed the exact settings passed above. Repeating
+        // them restarts a paused native decoder for cursor and composition,
+        // making first-open review needlessly decode its first frame three
+        // times. Only catch up when controls genuinely changed while startup
+        // was in flight.
+        if (latestSettingsKey === initialSettingsKey) return;
         void Promise.all([
           selectRecordingPreviewAudio(
             enabledStreamIndicesRef.current,

@@ -225,9 +225,8 @@ export function TimelineRuler({
         event.currentTarget.blur();
       }}
       onPointerDown={(event) => {
-        // Pointer scrubbing must not leave the ruler as the keyboard target.
-        // Otherwise the next Space press exposes WebKit's focus treatment
-        // instead of reaching the export-window playback shortcut.
+        // Pointer scrubbing must not leave a transient focus treatment on the
+        // ruler; keyboard users can still reach it normally with Tab.
         event.preventDefault();
         event.currentTarget.setPointerCapture(event.pointerId);
         seek(event, "start");

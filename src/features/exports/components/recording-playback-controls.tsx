@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { Pause, Play } from "lucide-react";
+import { Check, ClipboardCopy, Pause, Play } from "lucide-react";
 
+import { Button } from "../../../components/base/button/button";
 import { ToggleButton } from "../../../components/base/button/toggle-button";
 import { formatDuration } from "../duration";
 
@@ -15,19 +16,23 @@ type RecordingPlaybackControlsProps = {
   onPause: () => void;
   onPlay: () => void;
   playhead: Playhead;
+  copyState?: "copying" | "done" | "idle";
+  onCopyCurrentFrame?: () => void;
 };
 
 export function RecordingPlaybackControls({
+  copyState = "idle",
   durationMs,
   isPlaying,
+  onCopyCurrentFrame,
   onPause,
   onPlay,
   playhead,
 }: RecordingPlaybackControlsProps) {
   return (
-    <div className="flex h-7 shrink-0 items-center justify-center gap-1.5 border-t border-muted/15 px-3">
+    <div className="relative flex h-7 shrink-0 items-center justify-center gap-1.5 border-t border-muted/15 px-3">
       <ToggleButton
-        aria-keyshortcuts="Space"
+        aria-keyshortcuts="P"
         aria-label={isPlaying ? "Pause preview" : "Play preview"}
         className="size-6 shrink-0"
         isSelected={isPlaying}
@@ -46,6 +51,28 @@ export function RecordingPlaybackControls({
         <ElapsedTime playhead={playhead} />
         <span className="text-muted"> / {formatDuration(durationMs)}</span>
       </span>
+      {onCopyCurrentFrame ? (
+        <Button
+          aria-label="Copy current frame"
+          className="absolute right-3"
+          isDisabled={copyState === "copying"}
+          onPress={onCopyCurrentFrame}
+          showFocus={false}
+          size="sm"
+          variant="ghost"
+        >
+          {copyState === "done" ? (
+            <Check size={13} />
+          ) : (
+            <ClipboardCopy size={13} />
+          )}
+          {copyState === "copying"
+            ? "Copying…"
+            : copyState === "done"
+              ? "Copied"
+              : "Copy frame"}
+        </Button>
+      ) : null}
     </div>
   );
 }

@@ -153,7 +153,7 @@ pub(super) fn spawn(
           Ok(None) | Err(_) => break,
         };
         let mut frame = VideoFrame {
-          index,
+          timestamp_ms: start_ms.saturating_add(index * 1_000 / PREVIEW_FPS),
           payload: VideoFramePayload::Composite(bytes),
         };
         loop {

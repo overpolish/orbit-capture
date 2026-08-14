@@ -129,3 +129,48 @@ fn initial_snapshot_starts_at_zero_and_motion_keeps_hardware_cadence() {
     ]
   ));
 }
+
+#[cfg(target_os = "windows")]
+#[test]
+#[ignore = "requires an interactive Windows desktop"]
+fn windows_sampler_writes_a_live_semantic_snapshot() {
+  let origin = Arc::new(OnceLock::new());
+  origin.set(Instant::now()).unwrap();
+  let path = std::env::temp_dir().join(format!(
+    "orbit-windows-cursor-live-{}.jsonl",
+    std::process::id()
+  ));
+  let recorder = CursorRecorder::start(
+    path,
+    origin,
+    CursorSource {
+      height: 1_080.0,
+      kind: CursorSourceKind::Screen,
+      platform_id: "test".to_owned(),
+      video_height: 1_080,
+      video_width: 1_920,
+      width: 1_920.0,
+      x: 0.0,
+      y: 0.0,
+    },
+  )
+  .unwrap();
+  std::thread::sleep(Duration::from_millis(40));
+  let path = recorder.stop().unwrap();
+  let records = read(&path).unwrap();
+  let _ = std::fs::remove_file(path);
+  assert!(matches!(
+    records.first(),
+    Some(CursorRecord::Header {
+      coordinate_space,
+      platform,
+      ..
+    }) if coordinate_space == "global-physical-pixels" && platform == "windows"
+  ));
+  assert!(records
+    .iter()
+    .any(|record| matches!(record, CursorRecord::Appearance { .. })));
+  assert!(records
+    .iter()
+    .any(|record| matches!(record, CursorRecord::Position { .. })));
+}

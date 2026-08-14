@@ -91,6 +91,9 @@ export function ScreenshotLayoutControl({
     };
   };
   const begin = (event: ReactPointerEvent, action: Action) => {
+    // Middle mouse belongs to the parent preview viewport everywhere,
+    // including over crop fills, handles and the scale ring.
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);

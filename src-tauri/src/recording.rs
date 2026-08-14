@@ -8,21 +8,26 @@ mod microphone;
 mod monitor;
 #[cfg(target_os = "macos")]
 mod platform;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod platform_unsupported;
+#[cfg(target_os = "windows")]
+mod platform_windows;
 mod session;
 mod state;
 mod types;
 mod ui;
 
+use std::time::Instant;
 use tauri::{AppHandle, State};
 
 use crate::windows;
 
 #[cfg(target_os = "macos")]
 use platform as capture;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use platform_unsupported as capture;
+#[cfg(target_os = "windows")]
+use platform_windows as capture;
 
 pub use encoding::{CameraFinalizeInfo, FinalizeInfo, PrimaryRecordingKind};
 pub use session::recordings_directory;
@@ -209,16 +214,24 @@ pub fn toggle_pause(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn stop(app: &AppHandle) -> Result<(), String> {
+  // This is the user's end point. Finalization runs on a blocking worker and
+  // may not be scheduled immediately; sampling the clock there would turn
+  // that scheduling delay into a frozen tail in the movie.
+  let stopped_at = Instant::now();
   transition(app, RecordingStatus::Stopping, None).inspect_err(|error| {
     emit_error(app, "stop", error);
   })?;
   state(app).cancel();
+  let handles = take_handles(app);
+  if let Some(handles) = &handles {
+    handles.mark_stopped_at(stopped_at);
+  }
 
   let app = app.clone();
   // `tokio` is macOS-only in this crate, so the finalize wait uses a blocking
   // task the way the window animations do.
   tauri::async_runtime::spawn_blocking(move || {
-    let finalized = take_handles(&app).map(finalize_capture);
+    let finalized = handles.map(|handles| finalize_capture(handles, stopped_at));
 
     restore_windows(&app);
     if let Err(error) = transition(&app, RecordingStatus::Idle, None) {

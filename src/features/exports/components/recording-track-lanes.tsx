@@ -75,6 +75,7 @@ export function RecordingTrackLanes({
             const trackId: RecordingVideoTrackId =
               index === 0 ? "primary" : "camera";
             const enabled = enabledVideoTracks.has(trackId);
+            const mustRemainEnabled = enabled && enabledVideoTracks.size === 1;
             return (
               <div className="flex items-center gap-2" key={trackId}>
                 <div
@@ -84,12 +85,19 @@ export function RecordingTrackLanes({
                   }}
                 >
                   <Checkbox
-                    aria-label={`${enabled ? "Exclude" : "Include"} ${label}`}
+                    aria-label={
+                      mustRemainEnabled
+                        ? `${label} must remain included`
+                        : `${enabled ? "Exclude" : "Include"} ${label}`
+                    }
+                    isDisabled={mustRemainEnabled}
                     isSelected={enabled}
                     onChange={() => {
                       const next = new Set(enabledVideoTracks);
-                      if (next.has(trackId)) next.delete(trackId);
-                      else next.add(trackId);
+                      if (next.has(trackId)) {
+                        if (next.size === 1) return;
+                        next.delete(trackId);
+                      } else next.add(trackId);
                       onEnabledVideoTracksChange(next);
                     }}
                     size="xs"

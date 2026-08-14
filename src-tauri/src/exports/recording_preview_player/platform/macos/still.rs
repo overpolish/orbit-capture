@@ -333,6 +333,7 @@ impl NativeStillDecoder {
   pub(crate) fn spawn(
     sources: PlayerSources,
     event_channel: Channel<RecordingPreviewPlayerEvent>,
+    _frame_channel: Channel,
   ) -> Result<Self, String> {
     let (sender, receiver) = mpsc::channel();
     let thread = std::thread::Builder::new()

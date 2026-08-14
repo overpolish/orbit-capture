@@ -73,6 +73,7 @@ export function ScreenshotRadiusControl({
       className="absolute rounded-full border-0 bg-white p-0 outline-none"
       onPointerCancel={finish}
       onPointerDown={(event) => {
+        if (event.button !== 0) return;
         event.preventDefault();
         event.stopPropagation();
         activeRef.current = true;

@@ -6,6 +6,7 @@ import {
   PointerEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -45,6 +46,7 @@ const monitorId = Number(
   new URLSearchParams(window.location.search).get("monitorId") ?? 0,
 );
 const isMac = navigator.userAgent.includes("Mac");
+const TOOLBAR_MARGIN = 8;
 
 const imageUrl = (bytes: number[]) =>
   URL.createObjectURL(
@@ -67,6 +69,13 @@ export function TextRecognitionWindow() {
   const textAnchorRef = useRef<TextPosition | undefined>(undefined);
   const textFocusRef = useRef<TextPosition | undefined>(undefined);
   const selectionRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [toolbarMetrics, setToolbarMetrics] = useState({
+    height: 44,
+    viewportHeight: window.innerHeight,
+    viewportWidth: window.innerWidth,
+    width: 280,
+  });
   const frozenUrl = useMemo(
     () => (capture ? imageUrl(capture.imagePng) : undefined),
     [capture],
@@ -78,6 +87,37 @@ export function TextRecognitionWindow() {
     },
     [frozenUrl],
   );
+
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current;
+    if (!toolbar || status !== "ready") return;
+
+    const measure = () => {
+      const bounds = toolbar.getBoundingClientRect();
+      const next = {
+        height: bounds.height,
+        viewportHeight: window.innerHeight,
+        viewportWidth: window.innerWidth,
+        width: bounds.width,
+      };
+      setToolbarMetrics((current) =>
+        current.height === next.height &&
+        current.viewportHeight === next.viewportHeight &&
+        current.viewportWidth === next.viewportWidth &&
+        current.width === next.width
+          ? current
+          : next,
+      );
+    };
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(toolbar);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [status]);
 
   const close = useCallback(() => {
     void cancelTextRecognition();
@@ -92,7 +132,12 @@ export function TextRecognitionWindow() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close();
+        return;
+      }
       if (!(event.metaKey || event.ctrlKey) || !result) return;
 
       if (event.key.toLowerCase() === "a" && result.lines.length > 0) {
@@ -118,9 +163,9 @@ export function TextRecognitionWindow() {
         copyAndClose(text);
       }
     };
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onKeyDown, true);
     };
   }, [close, copyAndClose, result, textAnchor, textFocus, textRanges]);
 
@@ -310,13 +355,28 @@ export function TextRecognitionWindow() {
 
       {status === "ready" && result && selection && (
         <CanvasToolbar
-          className="absolute max-w-[calc(100vw-16px)] p-2"
+          className="absolute w-max max-w-[calc(100vw-16px)] overflow-x-auto p-2"
+          ref={toolbarRef}
           style={{
-            left: Math.min(selection.x, window.innerWidth - 220),
-            top:
-              selection.y + selection.height + 8 < window.innerHeight - 44
-                ? selection.y + selection.height + 8
-                : Math.max(8, selection.y - 44),
+            left: Math.max(
+              TOOLBAR_MARGIN,
+              Math.min(
+                selection.x,
+                toolbarMetrics.viewportWidth -
+                  toolbarMetrics.width -
+                  TOOLBAR_MARGIN,
+              ),
+            ),
+            top: (() => {
+              const below = selection.y + selection.height + TOOLBAR_MARGIN;
+              return below + toolbarMetrics.height <=
+                toolbarMetrics.viewportHeight - TOOLBAR_MARGIN
+                ? below
+                : Math.max(
+                    TOOLBAR_MARGIN,
+                    selection.y - toolbarMetrics.height - TOOLBAR_MARGIN,
+                  );
+            })(),
           }}
         >
           <TextRecognitionActions

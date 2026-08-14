@@ -119,21 +119,49 @@ pub(crate) fn output_placement(
   let image_height = (f64::from(image_width) * f64::from(source_height) / f64::from(source_width))
     .round()
     .max(1.0) as u32;
+  let mut crop_height = (f64::from(output_height) * settings.screenshot_crop_height_percent / 100.0)
+    .round()
+    .max(1.0) as u32;
+  let mut crop_width = (f64::from(output_width) * settings.screenshot_crop_width_percent / 100.0)
+    .round()
+    .max(1.0) as u32;
+  let mut crop_x =
+    (f64::from(output_width) * settings.screenshot_crop_x_percent / 100.0).round() as i32;
+  let mut crop_y =
+    (f64::from(output_height) * settings.screenshot_crop_y_percent / 100.0).round() as i32;
+  let image_x = f64::from(output_width) * settings.screenshot_image_x_percent / 100.0
+    - f64::from(image_width) / 2.0;
+  let image_y = f64::from(output_height) * settings.screenshot_image_y_percent / 100.0
+    - f64::from(image_height) / 2.0;
+  // Preview resolution scaling can round a crop and its otherwise coincident
+  // placed source to opposite sides of the same pixel. Snap all four edges
+  // when they differ by no more than one pixel; a deliberate crop edit moves
+  // farther than this and remains independent.
+  let image_left = image_x.round() as i32;
+  let image_top = image_y.round() as i32;
+  let image_right = image_left.saturating_add(image_width as i32);
+  let image_bottom = image_top.saturating_add(image_height as i32);
+  let crop_right = crop_x.saturating_add(crop_width as i32);
+  let crop_bottom = crop_y.saturating_add(crop_height as i32);
+  if (crop_x - image_left).abs() <= 1
+    && (crop_right - image_right).abs() <= 1
+    && (crop_y - image_top).abs() <= 1
+    && (crop_bottom - image_bottom).abs() <= 1
+  {
+    crop_x = image_left;
+    crop_y = image_top;
+    crop_width = image_width;
+    crop_height = image_height;
+  }
   Ok(OutputPlacement {
-    crop_height: (f64::from(output_height) * settings.screenshot_crop_height_percent / 100.0)
-      .round()
-      .max(1.0) as u32,
-    crop_width: (f64::from(output_width) * settings.screenshot_crop_width_percent / 100.0)
-      .round()
-      .max(1.0) as u32,
-    crop_x: (f64::from(output_width) * settings.screenshot_crop_x_percent / 100.0).round() as i32,
-    crop_y: (f64::from(output_height) * settings.screenshot_crop_y_percent / 100.0).round() as i32,
+    crop_height,
+    crop_width,
+    crop_x,
+    crop_y,
     image_height,
     image_width,
-    image_x: f64::from(output_width) * settings.screenshot_image_x_percent / 100.0
-      - f64::from(image_width) / 2.0,
-    image_y: f64::from(output_height) * settings.screenshot_image_y_percent / 100.0
-      - f64::from(image_height) / 2.0,
+    image_x,
+    image_y,
   })
 }
 
@@ -174,27 +202,18 @@ pub fn compose_screenshot(
   let crop_height = placement.crop_height;
   let source_x = (crop_x - image_x).round() as i64;
   let source_y = (crop_y - image_y).round() as i64;
-  if source_x < 0
-    || source_y < 0
-    || source_x as u64 + u64::from(crop_width) > u64::from(image_width)
-    || source_y as u64 + u64::from(crop_height) > u64::from(image_height)
-  {
-    return Err("The screenshot image no longer covers its crop window".to_owned());
-  }
   let resized = image::imageops::resize(
     &source,
     image_width,
     image_height,
     image::imageops::FilterType::Lanczos3,
   );
-  let cropped = image::imageops::crop_imm(
-    &resized,
-    source_x as u32,
-    source_y as u32,
-    crop_width,
-    crop_height,
-  )
-  .to_image();
+  // Crop and image are independently movable. Their overlap is the video;
+  // uncovered crop pixels stay transparent so the configured background
+  // shows through, matching the GPU preview shader instead of rejecting a
+  // valid artistic placement.
+  let mut cropped = image::RgbaImage::new(crop_width, crop_height);
+  image::imageops::overlay(&mut cropped, &resized, -source_x, -source_y);
   let rounded = rounded_corners(
     &CapturedImage {
       height: crop_height,
@@ -223,13 +242,23 @@ pub fn compose_screenshot(
     .ok_or_else(|| "The screenshot pixels are not valid".to_owned())?;
   let placement_x = crop_x.round() as i64;
   let placement_y = crop_y.round() as i64;
-  let shadow_margin = (placement_x.max(0) as f64)
-    .min(placement_y.max(0) as f64)
-    .min(f64::from(output_width) - placement_x as f64 - f64::from(crop_width))
-    .min(f64::from(output_height) - placement_y as f64 - f64::from(crop_height))
+  let visible_left = crop_x.max(image_x);
+  let visible_top = crop_y.max(image_y);
+  let visible_right = (crop_x + f64::from(crop_width)).min(image_x + f64::from(image_width));
+  let visible_bottom = (crop_y + f64::from(crop_height)).min(image_y + f64::from(image_height));
+  let visible_width = (visible_right - visible_left).max(0.0);
+  let visible_height = (visible_bottom - visible_top).max(0.0);
+  let shadow_margin = visible_left
+    .min(visible_top)
+    .min(f64::from(output_width) - visible_right)
+    .min(f64::from(output_height) - visible_bottom)
     .max(0.0);
-  if settings.drop_shadow && shadow_margin * 0.45 > 1.0 {
-    let sigma = (f64::from(crop_width.min(crop_height)) * 0.042)
+  if settings.drop_shadow
+    && visible_width > 0.0
+    && visible_height > 0.0
+    && shadow_margin * 0.45 > 1.0
+  {
+    let sigma = (visible_width.min(visible_height) * 0.055)
       .clamp(10.0, 110.0)
       .min(shadow_margin * 0.45) as f32;
     let padding = (sigma * 3.0).ceil() as u32;
@@ -367,6 +396,22 @@ mod tests {
   }
 
   #[test]
+  fn snaps_a_one_pixel_preview_rounding_gap_but_keeps_a_real_crop() {
+    let mut output_settings = settings(401, 401);
+    let exact = output_placement(200, 100, &output_settings).unwrap();
+    output_settings.screenshot_crop_height_percent += 100.0 / 401.0;
+    let snapped = output_placement(200, 100, &output_settings).unwrap();
+    assert_eq!(snapped.crop_x, exact.image_x.round() as i32);
+    assert_eq!(snapped.crop_y, exact.image_y.round() as i32);
+    assert_eq!(snapped.crop_width, exact.image_width);
+    assert_eq!(snapped.crop_height, exact.image_height);
+
+    output_settings.screenshot_crop_height_percent += 300.0 / 401.0;
+    let deliberate = output_placement(200, 100, &output_settings).unwrap();
+    assert_ne!(deliberate.crop_height, deliberate.image_height);
+  }
+
+  #[test]
   fn clips_an_artistically_placed_screenshot_at_the_canvas_edge() {
     let mut output_settings = settings(400, 400);
     output_settings.screenshot_crop_x_percent = -20.0;
@@ -382,6 +427,24 @@ mod tests {
     };
 
     assert_colour_close(pixel(0, 200), [200, 100, 50, 255]);
+    assert_colour_close(pixel(300, 200), [17, 34, 51, 255]);
+  }
+
+  #[test]
+  fn allows_the_image_to_cover_only_part_of_its_crop_window() {
+    let mut output_settings = settings(400, 400);
+    output_settings.screenshot_image_x_percent = 25.0;
+    let output = compose_screenshot(
+      &solid_image(200, 100, [200, 100, 50, 255]),
+      &output_settings,
+    )
+    .unwrap();
+    let pixel = |x: u32, y: u32| {
+      let start = ((y * output.width + x) * 4) as usize;
+      &output.rgba[start..start + 4]
+    };
+
+    assert_colour_close(pixel(100, 200), [200, 100, 50, 255]);
     assert_colour_close(pixel(300, 200), [17, 34, 51, 255]);
   }
 

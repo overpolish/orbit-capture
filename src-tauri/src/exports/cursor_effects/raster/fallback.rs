@@ -9,13 +9,19 @@ type Line = (Point, Point);
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum Artwork {
   Arrow,
+  Crosshair,
+  Hand,
   IBeam,
+  NotAllowed,
   Resize,
 }
 
 pub(super) fn artwork(style: CursorStyle) -> Artwork {
   match style {
     CursorStyle::IBeam | CursorStyle::VerticalIBeam => Artwork::IBeam,
+    CursorStyle::PointingHand | CursorStyle::ClosedHand | CursorStyle::OpenHand => Artwork::Hand,
+    CursorStyle::Crosshair => Artwork::Crosshair,
+    CursorStyle::NotAllowed => Artwork::NotAllowed,
     CursorStyle::ResizeHorizontal | CursorStyle::ResizeVertical => Artwork::Resize,
     _ => Artwork::Arrow,
   }
@@ -42,6 +48,39 @@ pub(super) fn sample(artwork: Artwork, x: f64, y: f64) -> [f64; 4] {
     }
     Artwork::IBeam => sample_stroked_lines((x, y), &I_BEAM_LINES),
     Artwork::Resize => sample_stroked_lines((x, y), &RESIZE_LINES),
+    Artwork::Crosshair => sample_stroked_lines((x, y), &CROSSHAIR_LINES),
+    Artwork::Hand => {
+      let index = rounded_rect_distance((x, y), (8.0, 1.0, 6.0, 21.0), 3.0);
+      let middle = rounded_rect_distance((x, y), (13.0, 11.0, 6.0, 14.0), 3.0);
+      let ring = rounded_rect_distance((x, y), (18.0, 13.0, 6.0, 13.0), 3.0);
+      let little = rounded_rect_distance((x, y), (23.0, 16.0, 5.0, 11.0), 2.5);
+      let palm = rounded_rect_distance((x, y), (7.0, 18.0, 21.0, 13.0), 5.0);
+      let thumb = segment_distance((x, y), (6.0, 19.0), (12.0, 26.0)) - 3.4;
+      let shape = index.min(middle).min(ring).min(little).min(palm).min(thumb);
+      let seams = segment_distance((x, y), (14.2, 13.0), (14.2, 19.0))
+        .min(segment_distance((x, y), (19.2, 15.0), (19.2, 20.5)))
+        .min(segment_distance((x, y), (24.1, 18.0), (24.1, 22.0)))
+        .min(segment_distance((x, y), (8.3, 20.0), (13.1, 25.0)));
+      if shape <= 1.15 && seams <= 1.0 {
+        [0.0, 0.0, 0.0, 255.0]
+      } else {
+        sample_signed_shape(shape)
+      }
+    }
+    Artwork::NotAllowed => {
+      let ring = ((x - 14.0).hypot(y - 20.0) - 10.5).abs();
+      let slash = segment_distance((x, y), (7.0, 13.0), (21.0, 27.0));
+      sample_stroke_distance(ring.min(slash))
+    }
+  }
+}
+
+/// Vector-space point that corresponds to the operating system hotspot.
+pub(super) fn origin(artwork: Artwork) -> Point {
+  if artwork == Artwork::Arrow {
+    ARROW_POINTS[0]
+  } else {
+    (0.0, 0.0)
   }
 }
 
@@ -66,12 +105,22 @@ const RESIZE_LINES: [Line; 5] = [
   ((26.0, 20.0), (19.0, 13.0)),
   ((26.0, 20.0), (19.0, 27.0)),
 ];
+const CROSSHAIR_LINES: [Line; 4] = [
+  ((14.0, 2.0), (14.0, 15.0)),
+  ((14.0, 25.0), (14.0, 38.0)),
+  ((1.0, 20.0), (9.0, 20.0)),
+  ((19.0, 20.0), (27.0, 20.0)),
+];
 
 fn sample_stroked_lines(point: Point, lines: &[Line]) -> [f64; 4] {
   let distance = lines
     .iter()
     .map(|(start, end)| segment_distance(point, *start, *end))
     .fold(f64::INFINITY, f64::min);
+  sample_stroke_distance(distance)
+}
+
+fn sample_stroke_distance(distance: f64) -> [f64; 4] {
   if distance <= 1.25 {
     [255.0, 255.0, 255.0, 255.0]
   } else if distance <= 2.5 {
@@ -79,6 +128,25 @@ fn sample_stroked_lines(point: Point, lines: &[Line]) -> [f64; 4] {
   } else {
     [0.0; 4]
   }
+}
+
+fn sample_signed_shape(distance: f64) -> [f64; 4] {
+  if distance <= -0.75 {
+    [255.0; 4]
+  } else if distance <= 1.5 {
+    [0.0, 0.0, 0.0, 255.0]
+  } else {
+    [0.0; 4]
+  }
+}
+
+fn rounded_rect_distance(point: Point, rect: (f64, f64, f64, f64), radius: f64) -> f64 {
+  let half = (rect.2 / 2.0, rect.3 / 2.0);
+  let local = (
+    (point.0 - (rect.0 + half.0)).abs() - (half.0 - radius),
+    (point.1 - (rect.1 + half.1)).abs() - (half.1 - radius),
+  );
+  local.0.max(0.0).hypot(local.1.max(0.0)) + local.0.max(local.1).min(0.0) - radius
 }
 
 fn polygon_distance(point: Point, polygon: &[Point]) -> f64 {
@@ -128,5 +196,12 @@ mod tests {
     assert_eq!(sample(Artwork::Arrow, 7.0, 15.0), [255.0; 4]);
     assert_eq!(sample(Artwork::Arrow, 3.0, 15.0), [0.0, 0.0, 0.0, 255.0]);
     assert_eq!(sample(Artwork::Arrow, 27.0, 2.0), [0.0; 4]);
+  }
+
+  #[test]
+  fn hand_has_separate_fingers_instead_of_one_solid_mitten() {
+    assert_eq!(sample(Artwork::Hand, 11.0, 8.0), [255.0; 4]);
+    assert_eq!(sample(Artwork::Hand, 14.2, 16.0), [0.0, 0.0, 0.0, 255.0]);
+    assert_eq!(sample(Artwork::Hand, 31.0, 2.0), [0.0; 4]);
   }
 }

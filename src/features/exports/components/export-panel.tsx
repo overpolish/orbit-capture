@@ -76,6 +76,7 @@ type ExportPanelProps = {
   onScreenshotRadiusChangeEnd?: () => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
   onSelectedTrackVolumeChange?: (decibels: number) => void;
+  onToggleMaximize?: () => void;
   previewUrl?: string | null;
   recordingOutput?: RecordingOutputSettings;
   recordingPreviewError?: string | null;
@@ -145,6 +146,7 @@ export function ExportPanel({
   onScreenshotRadiusChangeEnd,
   onSelectedTrackChange,
   onSelectedTrackVolumeChange,
+  onToggleMaximize,
   previewUrl,
   recordingOutput,
   recordingPreviewError,
@@ -211,6 +213,7 @@ export function ExportPanel({
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10 bg-content/92"
         data-preview-backdrop
+        data-preview-window-backdrop
       />
       <Overlay blur="lg" contained isOpen={isSaving}>
         <div className="flex flex-col items-center gap-3">
@@ -264,6 +267,7 @@ export function ExportPanel({
         onExport={onSave}
         onFileStemChange={onFileStemChange}
         onMinimize={onMinimize}
+        onToggleMaximize={onToggleMaximize}
       />
 
       {artifact?.kind === "recording" ? (

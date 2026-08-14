@@ -55,45 +55,55 @@ export const applyBackdropMask = (element: HTMLElement, holes: Hole[]) => {
   );
 };
 
-let backdropProbe: CanvasRenderingContext2D | null = null;
-let backdropKey = "";
-let backdropColour: [number, number, number] = [0, 0, 0];
+export type PreviewBackdrop = [number, number, number, number];
 
-/**
- * The effective viewport backdrop: the translucent background layers
- * composited bottom-up over black, matching what the user sees so the native
- * container can paint the same colour behind the video panes. A 1x1 canvas
- * does the compositing because computed backgrounds arrive in any CSS colour
- * syntax (`rgb(... / 0.92)`, `color(srgb ...)`), all of which `fillStyle`
- * understands.
- */
-export const effectiveBackdrop = (): [number, number, number] => {
-  const layers: string[] = [];
-  for (const element of document.querySelectorAll<HTMLElement>(
-    "[data-preview-backdrop]",
-  )) {
-    layers.push(getComputedStyle(element).backgroundColor);
-  }
-  const key = layers.join("|");
-  if (key === backdropKey) return backdropColour;
+let backdropProbe: CanvasRenderingContext2D | null = null;
+const backdropCache = new Map<string, PreviewBackdrop>();
+
+const compositeBackdrop = (selector: string): PreviewBackdrop => {
+  const layers = Array.from(
+    document.querySelectorAll<HTMLElement>(selector),
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  const key = `${selector}|${layers.join("|")}`;
+  const cached = backdropCache.get(key);
+  if (cached) return cached;
   if (!backdropProbe) {
     const canvas = document.createElement("canvas");
     canvas.width = 1;
     canvas.height = 1;
     backdropProbe = canvas.getContext("2d", { willReadFrequently: true });
-    if (!backdropProbe) return backdropColour;
+    if (!backdropProbe) return [0, 0, 0, 1];
   }
+  backdropProbe.clearRect(0, 0, 1, 1);
   backdropProbe.globalCompositeOperation = "source-over";
-  backdropProbe.fillStyle = "#000";
-  backdropProbe.fillRect(0, 0, 1, 1);
   for (const layer of layers) {
     backdropProbe.fillStyle = layer;
     backdropProbe.fillRect(0, 0, 1, 1);
   }
   const pixel = backdropProbe.getImageData(0, 0, 1, 1).data;
-  backdropKey = key;
-  backdropColour = [pixel[0] / 255, pixel[1] / 255, pixel[2] / 255];
-  return backdropColour;
+  const colour: PreviewBackdrop = [
+    pixel[0] / 255,
+    pixel[1] / 255,
+    pixel[2] / 255,
+    pixel[3] / 255,
+  ];
+  backdropCache.set(key, colour);
+  return colour;
+};
+
+/**
+ * The effective viewport backdrop: the translucent background layers
+ * composited bottom-up over transparency. Windows gives this RGBA surface to
+ * DirectComposition, so it is blended over the same live window material as
+ * the neighbouring WebView pixels instead of approximating them over black.
+ * A 1x1 canvas
+ * does the compositing because computed backgrounds arrive in any CSS colour
+ * syntax (`rgb(... / 0.92)`, `color(srgb ...)`), all of which `fillStyle`
+ * understands.
+ */
+export const effectiveBackdrop = (): PreviewBackdrop => {
+  return compositeBackdrop("[data-preview-backdrop]");
 };
 
 export const clearBackdropMasks = () => {
@@ -128,24 +138,31 @@ export function useRecordingPreviewSurface({
     let disposed = false;
     let inFlight = false;
     let lastLayout = "";
-    let pendingLayout:
-      Parameters<typeof layoutRecordingPreviewSurface>[0] | null = null;
+    let pendingLayout: {
+      acknowledgeTransform: boolean;
+      value: Parameters<typeof layoutRecordingPreviewSurface>[0];
+    } | null = null;
     let requestId = 0;
     const flush = () => {
       if (disposed || inFlight || !pendingLayout) return;
       const next = pendingLayout;
       pendingLayout = null;
       inFlight = true;
-      void layoutRecordingPreviewSurface(next)
+      void layoutRecordingPreviewSurface(next.value)
         .catch((cause: unknown) => {
           if (!disposed) onError(String(cause));
         })
         .finally(() => {
+          if (!disposed && next.acknowledgeTransform) {
+            window.dispatchEvent(
+              new Event("orbit-preview-transform-committed"),
+            );
+          }
           inFlight = false;
           flush();
         });
     };
-    const measure = () => {
+    const measure = (acknowledgeTransform = false) => {
       if (startedRef.current) {
         const connected = [screenCanvasRef.current, cameraCanvasRef.current]
           .map((canvas, index) => ({ canvas, index }))
@@ -218,14 +235,30 @@ export function useRecordingPreviewSurface({
             // positions are replaced by the newest one, and the Rust side also
             // rejects an older request if IPC completion order ever differs.
             pendingLayout = {
-              backdrop: effectiveBackdrop(),
-              panes,
-              requestId: ++requestId,
-              scale,
-              sessionId: sessionIdRef.current,
-              viewport: viewportSurface,
+              acknowledgeTransform:
+                acknowledgeTransform ||
+                (pendingLayout?.acknowledgeTransform ?? false),
+              value: {
+                backdrop: effectiveBackdrop(),
+                panes,
+                requestId: ++requestId,
+                scale,
+                sessionId: sessionIdRef.current,
+                viewport: viewportSurface,
+              },
             };
             flush();
+          } else if (acknowledgeTransform) {
+            // A rounded DOM transform can measure to the already committed
+            // native rectangle. Defer the acknowledgement until the event
+            // dispatcher has marked this transform as claimed.
+            queueMicrotask(() => {
+              if (!disposed) {
+                window.dispatchEvent(
+                  new Event("orbit-preview-transform-committed"),
+                );
+              }
+            });
           }
         }
       }
@@ -238,8 +271,10 @@ export function useRecordingPreviewSurface({
     // Pan/zoom transforms dispatch this right after their style write; the
     // synchronous measure keeps the native pane glued to the webview instead
     // of trailing by an animation frame of callback ordering.
-    const onTransformed = () => {
-      if (!disposed) measure();
+    const onTransformed = (event: Event) => {
+      if (disposed || !startedRef.current || !nativeSurface) return;
+      event.preventDefault();
+      measure(true);
     };
     window.addEventListener("orbit-preview-transformed", onTransformed);
     animation = requestAnimationFrame(update);

@@ -73,6 +73,8 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
   const onZoomChangeRef = useRef(onZoomChange);
   const reportedZoomRef = useRef<number | undefined>(undefined);
   const requestedFullRef = useRef(false);
+  const nativeTransformInFlightRef = useRef(false);
+  const nativeTransformPendingRef = useRef(false);
   const [isPanning, setIsPanning] = useState(false);
 
   getMediaSizeRef.current = getMediaSize;
@@ -82,6 +84,10 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
   const applyTransform = (reveal: boolean) => {
     const media = mediaRef.current;
     if (!media) return;
+    if (nativeTransformInFlightRef.current) {
+      nativeTransformPendingRef.current = true;
+      return;
+    }
     const { fitScale } = geometryRef.current;
     const { x, y, zoom } = transformRef.current;
     const scale = fitScale * zoom;
@@ -94,9 +100,15 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
     // The native pane layout listens for this and measures synchronously, so
     // the surface below tracks a pan in the same frame instead of trailing by
     // an animation-frame of scheduling order.
-    media.dispatchEvent(
-      new Event("orbit-preview-transformed", { bubbles: true }),
-    );
+    const transformed = new Event("orbit-preview-transformed", {
+      bubbles: true,
+      cancelable: true,
+    });
+    media.dispatchEvent(transformed);
+    // The Windows native-preview listener claims this event. Keep the DOM
+    // transform at one committed DirectComposition transaction at a time so
+    // its OSCs cannot race several pointer frames ahead of the video pane.
+    nativeTransformInFlightRef.current = transformed.defaultPrevented;
   };
 
   const measureAndApply = () => {
@@ -203,6 +215,23 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
   }, []);
 
   useEffect(() => {
+    const committed = () => {
+      if (!nativeTransformInFlightRef.current) return;
+      nativeTransformInFlightRef.current = false;
+      if (!nativeTransformPendingRef.current) return;
+      nativeTransformPendingRef.current = false;
+      applyTransform(false);
+    };
+    window.addEventListener("orbit-preview-transform-committed", committed);
+    return () => {
+      window.removeEventListener(
+        "orbit-preview-transform-committed",
+        committed,
+      );
+    };
+  });
+
+  useEffect(() => {
     const box = boxRef.current;
     if (!box) return;
     const onWheel = (event: WheelEvent) => {
@@ -270,6 +299,8 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
         setIsPanning(false);
       }}
       onPointerDown={(event) => {
+        if (event.button !== 0 && event.button !== 1) return;
+        if (event.button === 1) event.preventDefault();
         measureAndApply();
         clearTransition();
         event.currentTarget.setPointerCapture(event.pointerId);

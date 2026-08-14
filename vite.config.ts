@@ -11,6 +11,12 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(() => ({
   plugins: [react(), tailwindcss()],
 
+  // Every window is served from the same local WebView bundle. The desktop app
+  // does not pay a network-transfer penalty for keeping that shared startup
+  // path together, so use a limit that reflects the packaged application.
+  build: {
+    chunkSizeWarningLimit: 1024,
+  },
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

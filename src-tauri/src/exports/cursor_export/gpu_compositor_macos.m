@@ -182,7 +182,7 @@ static float rounded_box_distance(float2 point, float2 size, float radius) {
 }
 
 static float shadow_sigma(float2 size) {
-  return clamp(min(size.x, size.y) * 0.042, 10.0, 110.0);
+  return clamp(min(size.x, size.y) * 0.055, 10.0, 110.0);
 }
 
 static float margin_capped_sigma(float2 origin, float2 size, float2 canvas,
@@ -205,6 +205,31 @@ static float soft_shadow(float2 point, float2 size, float radius,
   float distance = max(0.0, rounded_box_distance(offset_point, size, radius));
   return distance < sigma * 4.0
     ? exp(-(distance * distance) / (2.0 * sigma * sigma)) * opacity
+    : 0.0;
+}
+
+static float visible_foreground_shadow(
+    float2 point, float2 crop_origin, float2 crop_size, float crop_radius,
+    float2 image_origin, float2 image_size, float sigma, float opacity) {
+  float2 offset_point = point - float2(0.0, sigma * 0.35);
+  float crop_distance = rounded_box_distance(
+    offset_point - crop_origin, crop_size, crop_radius);
+  float image_distance = rounded_box_distance(
+    offset_point - image_origin, image_size, 0.0);
+  float distance = max(0.0, max(crop_distance, image_distance));
+  return distance < sigma * 4.0
+    ? exp(-(distance * distance) / (2.0 * sigma * sigma)) * opacity
+    : 0.0;
+}
+
+static float visible_foreground_sigma(
+    float2 crop_origin, float2 crop_size, float2 image_origin,
+    float2 image_size, float2 canvas) {
+  float2 origin = max(crop_origin, image_origin);
+  float2 end = min(crop_origin + crop_size, image_origin + image_size);
+  float2 size = max(end - origin, 0.0);
+  return min(size.x, size.y) > 0.0
+    ? margin_capped_sigma(origin, size, canvas, shadow_sigma(size))
     : 0.0;
 }
 
@@ -297,41 +322,37 @@ static float4 canvas_rgba_pixel(const device uchar4 *source,
                                 uint source_width, uint source_height,
                                 float2 point, float2 dimensions,
                                 constant CanvasUniforms &u, float seconds) {
-  float canvas_coverage = rounded_coverage(
-    point, dimensions, float(u.background_radius));
   float3 background = u.mesh_enabled != 0
     ? mesh_pixel(point, dimensions, u, seconds)
     : u.background_color.rgb;
   float2 crop_point = point - float2(u.crop_x, u.crop_y);
   float2 crop_size = float2(u.crop_width, u.crop_height);
+  float2 crop_origin = float2(u.crop_x, u.crop_y);
+  float2 image_origin = float2(u.image_x, u.image_y);
+  float2 image_size = float2(u.image_width, u.image_height);
   float crop_coverage = rounded_coverage(crop_point, crop_size, float(u.radius));
+  float2 image_point = point - image_origin;
+  float image_coverage = crop_coverage *
+    rounded_coverage(image_point, image_size, 0.0);
   if (u.drop_shadow != 0) {
-    float sigma = margin_capped_sigma(
-      float2(u.crop_x, u.crop_y), crop_size, dimensions,
-      shadow_sigma(crop_size));
+    float sigma = visible_foreground_sigma(
+      crop_origin, crop_size, image_origin, image_size, dimensions);
     if (sigma > 1.0) {
-      float shadow = soft_shadow(
-        crop_point, crop_size, float(u.radius), sigma, 0.14);
-      background *= 1.0 - shadow * (1.0 - crop_coverage);
+      float shadow = visible_foreground_shadow(
+        point, crop_origin, crop_size, float(u.radius),
+        image_origin, image_size, sigma, 0.14);
+      background *= 1.0 - shadow * (1.0 - image_coverage);
     }
   }
-  float outside_alpha = u.transparent_background != 0 ? 0.0 : 1.0;
-  float3 colour = background * canvas_coverage;
-  float alpha = mix(outside_alpha, 1.0, canvas_coverage);
+  float3 colour = background;
   // The source only exists inside its placed rect: a crop reaching past it
   // (a 4:5 or 9:16 canvas around a wide capture) must show background there,
   // not clamp-to-edge smears of the outermost source pixels.
-  float2 image_point = point - float2(u.image_x, u.image_y);
-  float2 image_size = float2(u.image_width, u.image_height);
-  float image_coverage = crop_coverage *
-    (1.0 - smoothstep(-0.75, 0.75,
-                      rounded_box_distance(image_point, image_size, 0.0)));
   if (image_coverage > 0.0) {
     float4 video = rgba_source_pixel(source, source_width, source_height, point, u);
     colour = mix(colour, video.rgb, image_coverage);
-    alpha = max(alpha, image_coverage);
   }
-  return float4(colour, alpha);
+  return float4(colour, 1.0);
 }
 
 kernel void compose_canvas_rgba(
@@ -398,7 +419,10 @@ kernel void compose_canvas_rgba(
       camera_pixel.y * overlay.camera_source_width + camera_pixel.x]) / 255.0;
     rgba = mix(rgba, camera_rgba, camera_coverage * camera_rgba.a);
   }
-  rgba.rgb = output_dither(rgba.rgb, float2(gid));
+  float canvas_coverage = rounded_coverage(
+    float2(gid) + 0.5, float2(dimensions), float(u.background_radius));
+  rgba.rgb = output_dither(rgba.rgb, float2(gid)) * canvas_coverage;
+  rgba.a = u.transparent_background != 0 ? canvas_coverage : 1.0;
   output[gid.y * dimensions.x + gid.x] = uchar4(
     clamp(rgba, 0.0, 1.0) * 255.0 + 0.5);
 }
@@ -469,7 +493,10 @@ kernel void present_canvas_rgba(
       camera_pixel.y * overlay.camera_source_width + camera_pixel.x]) / 255.0;
     rgba = mix(rgba, camera_rgba, camera_coverage * camera_rgba.a);
   }
-  rgba.rgb = output_dither(rgba.rgb, float2(gid));
+  float canvas_coverage = rounded_coverage(
+    point, canvas_dimensions, float(u.background_radius));
+  rgba.rgb = output_dither(rgba.rgb, float2(gid)) * canvas_coverage;
+  rgba.a = u.transparent_background != 0 ? canvas_coverage : 1.0;
   output.write(clamp(rgba, 0.0, 1.0), gid);
 }
 
@@ -490,29 +517,31 @@ static float3 canvas_pixel(texture2d<float, access::sample> source_y,
   float3 background = u.mesh_enabled != 0
     ? mesh_pixel(point, dimensions, u, seconds)
     : u.background_color.rgb;
-  background *= rounded_coverage(point, dimensions, float(u.background_radius));
+  float canvas_coverage = rounded_coverage(
+    point, dimensions, float(u.background_radius));
   float2 crop_point = point - float2(u.crop_x, u.crop_y);
   float2 crop_size = float2(u.crop_width, u.crop_height);
+  float2 crop_origin = float2(u.crop_x, u.crop_y);
+  float2 image_origin = float2(u.image_x, u.image_y);
+  float2 image_size = float2(u.image_width, u.image_height);
   float crop_coverage = rounded_coverage(crop_point, crop_size, float(u.radius));
+  float2 image_point = point - image_origin;
+  float image_coverage = crop_coverage *
+    rounded_coverage(image_point, image_size, 0.0);
   if (u.drop_shadow != 0) {
-    float sigma = margin_capped_sigma(
-      float2(u.crop_x, u.crop_y), crop_size, dimensions,
-      shadow_sigma(crop_size));
+    float sigma = visible_foreground_sigma(
+      crop_origin, crop_size, image_origin, image_size, dimensions);
     if (sigma > 1.0) {
-      float shadow = soft_shadow(
-        crop_point, crop_size, float(u.radius), sigma, 0.14);
-      background *= 1.0 - shadow * (1.0 - crop_coverage);
+      float shadow = visible_foreground_shadow(
+        point, crop_origin, crop_size, float(u.radius),
+        image_origin, image_size, sigma, 0.14);
+      background *= 1.0 - shadow * (1.0 - image_coverage);
     }
   }
-  float2 image_point = point - float2(u.image_x, u.image_y);
-  float2 image_size = float2(u.image_width, u.image_height);
-  float image_coverage = crop_coverage *
-    (1.0 - smoothstep(-0.75, 0.75,
-                      rounded_box_distance(image_point, image_size, 0.0)));
   if (image_coverage > 0.0)
     return mix(background, source_pixel(source_y, source_uv, point, u),
-               image_coverage);
-  return background;
+               image_coverage) * canvas_coverage;
+  return background * canvas_coverage;
 }
 
 kernel void compose_canvas_luma(

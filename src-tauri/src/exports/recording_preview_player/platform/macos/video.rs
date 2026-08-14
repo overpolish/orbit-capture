@@ -342,7 +342,7 @@ pub(super) fn spawn(
           })
         };
         let mut frame = VideoFrame {
-          index,
+          timestamp_ms: target_ms,
           payload: VideoFramePayload::Native {
             screen: screen_frame,
             camera: camera_frame,

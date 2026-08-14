@@ -15,7 +15,7 @@ use std::{
 use tauri::ipc::Channel;
 
 use super::{
-  audio, platform, video, AudioTrackVolume, PlayerSources, PreviewAudioSettings,
+  audio, platform, AudioTrackVolume, PlayerSources, PreviewAudioSettings,
   RecordingPreviewPlayerEvent,
 };
 
@@ -64,6 +64,10 @@ fn send_frame(
 
 fn send_error(channel: &Channel<RecordingPreviewPlayerEvent>, message: String) {
   let _ = channel.send(RecordingPreviewPlayerEvent::Error { message });
+}
+
+const fn presentation_elapsed_ms(frame_timestamp_ms: u64, start_ms: u64) -> u64 {
+  frame_timestamp_ms.saturating_sub(start_ms)
 }
 
 struct RunContext {
@@ -191,7 +195,7 @@ fn run(context: RunContext) {
         break;
       }
     };
-    let frame_time_ms = frame.index * 1_000 / video::PREVIEW_FPS;
+    let frame_time_ms = presentation_elapsed_ms(frame.timestamp_ms, start_ms);
     while elapsed_ms() < frame_time_ms && !cancelled.load(Ordering::Acquire) {
       std::thread::sleep(Duration::from_millis(2));
     }
@@ -313,5 +317,16 @@ impl PreviewPlayerWorker {
       let _ = thread.join();
     }
     self.position_ms.load(Ordering::Acquire)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::presentation_elapsed_ms;
+
+  #[test]
+  fn playback_follows_media_timestamps_after_a_seek() {
+    assert_eq!(presentation_elapsed_ms(7_126, 5_000), 2_126);
+    assert_eq!(presentation_elapsed_ms(4_999, 5_000), 0);
   }
 }

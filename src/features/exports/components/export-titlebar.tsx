@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { ClipboardCopy, Folder, Minus, Trash2, Upload, X } from "lucide-react";
+import {
+  ClipboardCopy,
+  Folder,
+  Minus,
+  Square,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 import { Input, TextField } from "react-aria-components";
 
 import logoUrl from "../../../assets/orbit-capture-mark.svg";
@@ -9,6 +17,7 @@ import { Button } from "../../../components/base/button/button";
 import { inputFieldVariants } from "../../../components/base/input-fields/input-field";
 import { ConfirmActionButton } from "../../../components/shared/confirm-action-button/confirm-action-button";
 import { ExportArtifact } from "../types";
+import { useExportWindowShortcuts } from "../use-export-window-shortcuts";
 
 const directoryName = (directory: string | null) => {
   if (!directory) return "Choose folder";
@@ -30,6 +39,7 @@ export function ExportTitlebar({
   onExport,
   onFileStemChange,
   onMinimize,
+  onToggleMaximize,
 }: {
   artifact: ExportArtifact | null;
   directory: string | null;
@@ -44,6 +54,7 @@ export function ExportTitlebar({
   onExport?: () => void;
   onFileStemChange?: (fileStem: string) => void;
   onMinimize?: () => void;
+  onToggleMaximize?: () => void;
 }) {
   const styles = inputFieldVariants({ size: "md", variant: "ghost" });
   const canExport =
@@ -52,6 +63,10 @@ export function ExportTitlebar({
     fileStem.trim().length > 0 &&
     !isExportPreparationPending &&
     !isSaving;
+  useExportWindowShortcuts({
+    onCopy: artifact?.kind === "screenshot" && !isSaving ? onCopy : undefined,
+    onExport: canExport ? onExport : undefined,
+  });
 
   return (
     <header
@@ -142,6 +157,20 @@ export function ExportTitlebar({
         <Minus
           className="transform-gpu text-muted transition-[color,transform] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg"
           size={18}
+        />
+      </Button>
+      <Button
+        aria-label="Maximize or restore"
+        className="group"
+        icon
+        onPress={onToggleMaximize}
+        showFocus={false}
+        size="sm"
+        variant="ghost"
+      >
+        <Square
+          className="transform-gpu text-muted transition-[color,transform] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg"
+          size={14}
         />
       </Button>
       <ConfirmActionButton

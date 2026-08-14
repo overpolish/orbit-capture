@@ -29,16 +29,24 @@
 //! [`super::layout`] and the shared output validation, so a new backend never
 //! reimplements them and never inherits Metal-specific assumptions.
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod fallback;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use fallback as backend;
 #[cfg(target_os = "macos")]
 use macos as backend;
+#[cfg(target_os = "windows")]
+use windows as backend;
 
+#[cfg(target_os = "windows")]
+pub(super) use backend::composed_frame_image;
+#[cfg(target_os = "windows")]
+pub(crate) use backend::GpuVideoReader;
 pub(super) use backend::{
   generate_thumbnails, playback_factors, send_frame, source_frame_jpeg, spawn_video, StillDecoder,
   VideoFramePayload, NATIVE_STILLS,

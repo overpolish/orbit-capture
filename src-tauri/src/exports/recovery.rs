@@ -184,6 +184,14 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
   } else {
     crate::recording::PrimaryRecordingKind::Screen
   };
+  #[cfg(target_os = "windows")]
+  let recovered_info = media_preview::recording_info(&path);
+  #[cfg(target_os = "windows")]
+  let (duration_ms, width, height) = recovered_info.map_or((0, 0, 0), |info| {
+    (info.duration_ms, info.width, info.height)
+  });
+  #[cfg(not(target_os = "windows"))]
+  let (duration_ms, width, height) = (0, 0, 0);
   if let Err(error) = present_recording(
     app,
     FinalizeInfo {
@@ -196,13 +204,13 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
       cursor_path,
       has_microphone: false,
       has_system_audio: false,
-      duration_ms: 0,
-      height: 0,
+      duration_ms,
+      height,
       path,
       poster: None,
       primary_kind,
       source_scale_factor: 1.0,
-      width: 0,
+      width,
     },
     suggested_file_stem,
   ) {

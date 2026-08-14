@@ -3,7 +3,6 @@
 
 import { Link, RotateCcw, Unlink, WandSparkles } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Selection, ToggleButtonGroup } from "react-aria-components";
 
 import { cn } from "../../../lib/styling";
 import { Button } from "../../base/button/button";
@@ -97,7 +96,6 @@ export const AspectRatio = ({
   };
 
   const [linked, setLinked] = useState(initialLinked);
-  const [presetId, setPresetId] = useState<string | null>(null);
 
   // Keep a stable ratio while linked, so consecutive edits don't drift.
   const lockedRatioRef = useRef<AspectRatioParts | undefined>(
@@ -176,15 +174,12 @@ export const AspectRatio = ({
 
   const applyPresetRatio = (ratio: AspectRatioParts) => {
     const dimensions = closestDimensionsAtRatio(widthValue, heightValue, ratio);
+    lockedRatioRef.current = ratio;
+    setLinked(true);
     setDimensionValues(dimensions.width, dimensions.height);
   };
 
   const onChangeWidth = (value: number) => {
-    const presetRatio = parseRatioFromId(presetId);
-    if (presetRatio) {
-      adjustToRatio(value, "width", presetRatio);
-      return;
-    }
     if (linked) {
       adjustToRatio(value, "width", getLockedRatio());
       return;
@@ -193,11 +188,6 @@ export const AspectRatio = ({
   };
 
   const onChangeHeight = (value: number) => {
-    const presetRatio = parseRatioFromId(presetId);
-    if (presetRatio) {
-      adjustToRatio(value, "height", presetRatio);
-      return;
-    }
     if (linked) {
       adjustToRatio(value, "height", getLockedRatio());
       return;
@@ -205,14 +195,7 @@ export const AspectRatio = ({
     setHeightValue(value);
   };
 
-  const onPresetSelectionChange = (keys: Selection) => {
-    let id: string | null = null;
-    if (keys !== "all") {
-      const first = [...keys][0] as string | undefined;
-      id = first ?? null;
-    }
-    setPresetId(id);
-
+  const onPressPreset = (id: string) => {
     const ratio = parseRatioFromId(id);
     if (ratio) applyPresetRatio(ratio);
   };
@@ -226,8 +209,10 @@ export const AspectRatio = ({
     height: number,
     aspectRatio: string,
   ) => {
+    const ratio = parseRatioFromId(aspectRatio);
+    if (ratio) lockedRatioRef.current = ratio;
+    setLinked(true);
     setDimensionValues(width, height);
-    setPresetId(aspectRatio);
 
     onApply?.(width, height);
   };
@@ -242,10 +227,7 @@ export const AspectRatio = ({
 
   useEffect(() => {
     let ratioNum: number | undefined = undefined;
-    const preset = parseRatioFromId(presetId);
-    if (preset) {
-      ratioNum = preset.ratioWidth / preset.ratioHeight;
-    } else if (linked) {
+    if (linked) {
       const r =
         lockedRatioRef.current ??
         (widthValue > 0 && heightValue > 0
@@ -262,7 +244,7 @@ export const AspectRatio = ({
     } else {
       lastRatioSentRef.current = ratioNum;
     }
-  }, [presetId, linked, widthValue, heightValue]);
+  }, [linked, widthValue, heightValue]);
 
   const platformIcons = (
     <PlatformPresets
@@ -299,11 +281,11 @@ export const AspectRatio = ({
       />
 
       <ToggleButton
+        aria-label={linked ? "Unlink dimensions" : "Link dimensions"}
         isSelected={linked}
         off={<Unlink size={14} />}
         onChange={(isSelected) => {
           setLinked(isSelected);
-          if (!isSelected) setPresetId(null);
         }}
         variant="ghost"
       >
@@ -319,22 +301,38 @@ export const AspectRatio = ({
     </div>
   );
   const ratioButtons = (
-    <ToggleButtonGroup
-      className="flex flex-row gap-1"
-      onSelectionChange={onPresetSelectionChange}
-      selectedKeys={(presetId ? new Set([presetId]) : new Set()) as Selection}
-      selectionMode="single"
-    >
-      <ToggleButton id="16:9" size="sm">
+    <div className="flex flex-row gap-1">
+      <Button
+        className="border border-muted/30 text-muted"
+        onPress={() => {
+          onPressPreset("16:9");
+        }}
+        size="sm"
+        variant="ghost"
+      >
         16:9
-      </ToggleButton>
-      <ToggleButton id="4:5" size="sm">
+      </Button>
+      <Button
+        className="border border-muted/30 text-muted"
+        onPress={() => {
+          onPressPreset("4:5");
+        }}
+        size="sm"
+        variant="ghost"
+      >
         4:5
-      </ToggleButton>
-      <ToggleButton id="9:16" size="sm">
+      </Button>
+      <Button
+        className="border border-muted/30 text-muted"
+        onPress={() => {
+          onPressPreset("9:16");
+        }}
+        size="sm"
+        variant="ghost"
+      >
         9:16
-      </ToggleButton>
-    </ToggleButtonGroup>
+      </Button>
+    </div>
   );
 
   return (

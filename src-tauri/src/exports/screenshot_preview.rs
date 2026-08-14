@@ -26,6 +26,7 @@ struct PreviewManager {
   pane_target_size: Option<(u32, u32)>,
   session_id: Option<u64>,
   source: Option<Arc<CapturedImage>>,
+  source_token: Option<u64>,
   surface: Option<Arc<RecordingPreviewSurface>>,
 }
 
@@ -44,6 +45,7 @@ impl PreviewManager {
     self.pane_target_size = None;
     self.session_id = None;
     self.source = None;
+    self.source_token = None;
     self.surface = None;
   }
 
@@ -70,9 +72,10 @@ impl PreviewManager {
   }
 
   fn present(&self) -> Result<(), String> {
-    let (Some(surface), Some(source), Some(output)) = (
+    let (Some(surface), Some(source), Some(source_token), Some(output)) = (
       self.surface.as_ref(),
       self.source.as_ref(),
+      self.source_token,
       self.output.as_ref(),
     ) else {
       return Ok(());
@@ -82,7 +85,17 @@ impl PreviewManager {
     }
     let scaled = self.scaled_output(output);
     surface
-      .present_composed(0, 1, source, &scaled, 0.0, None, None, None, false)
+      .present_composed(
+        0,
+        source_token,
+        source,
+        &scaled,
+        0.0,
+        None,
+        None,
+        None,
+        false,
+      )
       .map(|_| ())
   }
 }
@@ -133,6 +146,7 @@ pub fn start_screenshot_preview(
   manager.latest_session_id = session_id;
   manager.session_id = Some(session_id);
   manager.source = Some(source);
+  manager.source_token = Some(artifact_id);
   manager.surface = surface;
   Ok(())
 }
@@ -140,7 +154,7 @@ pub fn start_screenshot_preview(
 #[tauri::command]
 pub fn layout_screenshot_preview_surface(
   state: tauri::State<'_, ScreenshotPreviewState>,
-  backdrop: Option<[f64; 3]>,
+  backdrop: Option<[f64; 4]>,
   panes: Vec<ScreenshotSurfacePane>,
   scale: f64,
   session_id: u64,
@@ -171,7 +185,7 @@ pub fn layout_screenshot_preview_surface(
     return Ok(());
   };
   surface.begin_layout();
-  surface.set_viewport(viewport, backdrop.unwrap_or([0.09, 0.09, 0.10]));
+  surface.set_viewport(viewport, backdrop.unwrap_or([0.09, 0.09, 0.10, 1.0]));
   for pane in panes {
     surface.layout(pane.index, pane.rect);
   }

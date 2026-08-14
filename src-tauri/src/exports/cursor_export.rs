@@ -23,7 +23,10 @@ mod native_macos;
 #[cfg(target_os = "macos")]
 #[path = "cursor_export/platform_macos.rs"]
 mod platform;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+#[path = "cursor_export/platform_windows.rs"]
+mod platform;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[path = "cursor_export/platform_unsupported.rs"]
 mod platform;
 
@@ -78,9 +81,22 @@ pub(super) fn estimated_video_bytes(
   height: u32,
   duration_ms: u64,
   video: VideoExportOptions,
+  source_video_bytes: u64,
+  source_size: (u32, u32),
 ) -> u64 {
   let (width, height) = output_dimensions(width, height, video);
-  video_bitrate(width, height, video.compression).saturating_mul(duration_ms) / 8_000
+  let bitrate_ceiling =
+    video_bitrate(width, height, video.compression).saturating_mul(duration_ms) / 8_000;
+  let output_pixels = f64::from(width) * f64::from(height);
+  let source_pixels = f64::from(source_size.0.max(1)) * f64::from(source_size.1.max(1));
+  let resolution_factor = (output_pixels / source_pixels).powf(0.72);
+  let quality_factor = [0.95, 0.76, 0.56, 0.39, 0.27]
+    .get(video.compression as usize)
+    .copied()
+    .unwrap_or(0.27);
+  let complexity_estimate =
+    (source_video_bytes as f64 * resolution_factor * quality_factor).round() as u64;
+  complexity_estimate.min(bitrate_ceiling)
 }
 
 pub(super) fn export(request: CursorExportRequest<'_>) -> Result<ExportRunResult, String> {
@@ -114,4 +130,58 @@ pub(super) fn needs_composition(
     || (settings.screenshot_image_width_percent - 100.0).abs() > 0.000_001
     || (settings.screenshot_image_x_percent - 50.0).abs() > 0.000_001
     || (settings.screenshot_image_y_percent - 50.0).abs() > 0.000_001
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn composed_estimate_uses_the_source_as_its_complexity_baseline() {
+    let source = 5_422_083;
+    let estimate = estimated_video_bytes(
+      1_920,
+      1_080,
+      8_380,
+      VideoExportOptions {
+        compression: 0,
+        resolution_scale_percent: 100,
+        source_scale_percent: 100,
+      },
+      source,
+      (1_920, 1_080),
+    );
+    assert!(estimate < source);
+    assert!(estimate > source * 9 / 10);
+  }
+
+  #[test]
+  fn composed_estimate_falls_with_resolution_and_compression() {
+    let source = 8_000_000;
+    let original = estimated_video_bytes(
+      1_920,
+      1_080,
+      10_000,
+      VideoExportOptions {
+        compression: 0,
+        resolution_scale_percent: 100,
+        source_scale_percent: 100,
+      },
+      source,
+      (1_920, 1_080),
+    );
+    let smaller = estimated_video_bytes(
+      960,
+      540,
+      10_000,
+      VideoExportOptions {
+        compression: 2,
+        resolution_scale_percent: 100,
+        source_scale_percent: 100,
+      },
+      source,
+      (1_920, 1_080),
+    );
+    assert!(smaller < original);
+  }
 }
