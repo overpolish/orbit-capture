@@ -49,6 +49,16 @@ pub fn sync_capture_affinity(app: &AppHandle, record_orbit_windows: bool) -> tau
   Ok(())
 }
 
+/// Removes a disposable overlay's pixels before Windows runs its native hide
+/// or close transition. This is intentionally reserved for windows that will
+/// be destroyed rather than shown again, because their layered alpha remains
+/// zero afterwards.
+#[cfg(target_os = "windows")]
+pub(crate) fn conceal_disposable_overlay(window: &WebviewWindow) -> tauri::Result<()> {
+  platform::set_opacity(window, 0.0)?;
+  platform::hide(window)
+}
+
 #[derive(Clone, Copy)]
 pub enum WindowLabel {
   Export,

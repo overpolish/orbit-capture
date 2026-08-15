@@ -73,6 +73,13 @@ fn recognition_windows(app: &AppHandle) -> Vec<tauri::WebviewWindow> {
 fn close_recognition_windows(app: &AppHandle, except: Option<&str>) {
   for window in recognition_windows(app) {
     if Some(window.label()) != except {
+      // Windows animates hiding/destruction of a visible top-level window.
+      // Because the OCR surface spans the monitor, that transition makes the
+      // blue text selection visibly slide and shrink. Clear the layered alpha
+      // before either visibility operation so the compositor has no OCR
+      // pixels left to animate. macOS keeps its established close path.
+      #[cfg(target_os = "windows")]
+      let _ = crate::windows::conceal_disposable_overlay(&window);
       let _ = window.close();
     }
   }
