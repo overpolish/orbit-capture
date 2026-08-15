@@ -23,7 +23,7 @@ const screenshot: ExportArtifact = {
   height: 2234,
   id: 1,
   kind: "screenshot",
-  suggestedFileStem: "Orbit Capture 2026-08-08 at 14.32.05",
+  suggestedFileStem: "Screenwide 2026-08-08 at 14.32.05",
   width: 3456,
 };
 const screenshotOutput = defaultScreenshotOutput(3456, 2234);
@@ -58,7 +58,7 @@ const recording: Extract<ExportArtifact, { kind: "recording" }> = {
   path: "/tmp/Recordings/recording-20260808-143205.000.mov",
   primaryKind: "screen",
   sourceScalePercent: 200,
-  suggestedFileStem: "Orbit Capture 2026-08-08 at 14.32.05",
+  suggestedFileStem: "Screenwide 2026-08-08 at 14.32.05",
   width: 3840,
 };
 

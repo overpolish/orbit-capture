@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 [package]
-name = "orbit-capture"
+name = "screenwide"
 version = "0.1.0"
 description = "Reliable screen and audio recording for macOS and Windows"
 authors = ["overpolish"]
@@ -15,7 +15,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "orbit_capture_lib"
+name = "screenwide_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -110,5 +110,5 @@ objc2-foundation = "0.3.2"
 [profile.dev.package."*"]
 opt-level = 3
 
-[profile.dev.package.orbit-capture]
+[profile.dev.package.screenwide]
 opt-level = 1

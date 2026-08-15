@@ -10,13 +10,13 @@ use crate::recording::RecordingStatus;
 use crate::windows;
 
 const DISCARD_MENU_ID: &str = "discard-recording";
-const OPEN_MENU_ID: &str = "open-orbit-capture";
+const OPEN_MENU_ID: &str = "open-screenwide";
 const PAUSE_MENU_ID: &str = "pause-recording";
-const QUIT_MENU_ID: &str = "quit-orbit-capture";
+const QUIT_MENU_ID: &str = "quit-screenwide";
 const RECOGNIZE_TEXT_MENU_ID: &str = "recognize-text";
 const SETTINGS_MENU_ID: &str = "open-settings";
 const STOP_MENU_ID: &str = "stop-recording";
-const TRAY_ID: &str = "orbit-capture";
+const TRAY_ID: &str = "screenwide";
 
 #[cfg(target_os = "windows")]
 fn status_icon(status: RecordingStatus) -> tauri::Result<Image<'static>> {
@@ -44,18 +44,18 @@ fn status_icon(status: RecordingStatus) -> tauri::Result<Image<'static>> {
 
 const fn status_tooltip(status: RecordingStatus) -> &'static str {
   match status {
-    RecordingStatus::Idle => "Orbit Capture",
-    RecordingStatus::Starting => "Orbit Capture - Starting a recording",
-    RecordingStatus::Recording => "Orbit Capture - Recording",
-    RecordingStatus::Paused => "Orbit Capture - Recording paused",
-    RecordingStatus::Stopping => "Orbit Capture - Finishing the recording",
+    RecordingStatus::Idle => "Screenwide",
+    RecordingStatus::Starting => "Screenwide - Starting a recording",
+    RecordingStatus::Recording => "Screenwide - Recording",
+    RecordingStatus::Paused => "Screenwide - Recording paused",
+    RecordingStatus::Stopping => "Screenwide - Finishing the recording",
   }
 }
 
 /// The recording controls join the menu only while there is a recording to
 /// control. Quit always stays, because the tray is not the only way out.
 fn build_menu(app: &AppHandle, status: RecordingStatus) -> tauri::Result<Menu<Wry>> {
-  let mut builder = MenuBuilder::new(app).text(OPEN_MENU_ID, "Open Orbit Capture");
+  let mut builder = MenuBuilder::new(app).text(OPEN_MENU_ID, "Open Screenwide");
 
   if matches!(status, RecordingStatus::Recording | RecordingStatus::Paused) {
     let pause_label = if status == RecordingStatus::Paused {
@@ -87,7 +87,7 @@ fn build_menu(app: &AppHandle, status: RecordingStatus) -> tauri::Result<Menu<Wr
     .item(&recognize_text)
     .text(SETTINGS_MENU_ID, "Settings…")
     .separator()
-    .text(QUIT_MENU_ID, "Quit Orbit Capture")
+    .text(QUIT_MENU_ID, "Quit Screenwide")
     .build()
 }
 

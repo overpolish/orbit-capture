@@ -31,6 +31,6 @@ export const Default: Story = {
       </Button>
     ),
     center: <span className="text-xs text-muted">General</span>,
-    title: "Orbit Capture",
+    title: "Screenwide",
   },
 };

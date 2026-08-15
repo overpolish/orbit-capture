@@ -26,7 +26,7 @@ typedef struct {
   float mesh_colors[5][4];
   uint32_t clip_cursor_at_video_edge;
   uint32_t transparent_background;
-} OrbitCanvas;
+} ScreenwideCanvas;
 
 typedef struct {
   int32_t cursor_x;
@@ -47,18 +47,18 @@ typedef struct {
   uint32_t camera_source_width;
   uint32_t camera_source_height;
   uint32_t camera_drop_shadow;
-} OrbitStillOverlay;
+} ScreenwideStillOverlay;
 
-void *orbit_gpu_still_presenter_create(void);
-int orbit_gpu_still_presenter_present(
+void *screenwide_gpu_still_presenter_create(void);
+int screenwide_gpu_still_presenter_present(
     void *handle, void *metal_layer, uint64_t source_token,
     const uint8_t *source_rgba, uint32_t source_width, uint32_t source_height,
-    const OrbitCanvas *canvas, double seconds, const uint8_t *cursor_rgba,
-    const uint8_t *camera_rgba, const OrbitStillOverlay *overlay);
-int orbit_gpu_still_presenter_present_pixels(
+    const ScreenwideCanvas *canvas, double seconds, const uint8_t *cursor_rgba,
+    const uint8_t *camera_rgba, const ScreenwideStillOverlay *overlay);
+int screenwide_gpu_still_presenter_present_pixels(
     void *handle, void *metal_layer, uint64_t source_token,
-    void *source_pixels, const OrbitCanvas *canvas, double seconds,
+    void *source_pixels, const ScreenwideCanvas *canvas, double seconds,
     const uint8_t *cursor_rgba, const uint8_t *camera_rgba,
     void *camera_pixels,
-    const OrbitStillOverlay *overlay);
-void orbit_gpu_still_presenter_destroy(void *handle);
+    const ScreenwideStillOverlay *overlay);
+void screenwide_gpu_still_presenter_destroy(void *handle);

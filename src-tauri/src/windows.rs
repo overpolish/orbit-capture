@@ -40,10 +40,13 @@ pub use region::{
 };
 
 #[cfg(target_os = "windows")]
-pub fn sync_capture_affinity(app: &AppHandle, record_orbit_windows: bool) -> tauri::Result<()> {
+pub fn sync_capture_affinity(
+  app: &AppHandle,
+  record_screenwide_windows: bool,
+) -> tauri::Result<()> {
   for window in app.webview_windows().values() {
     if platform::is_visible(window)? {
-      platform::set_capture_affinity(window, record_orbit_windows)?;
+      platform::set_capture_affinity(window, record_screenwide_windows)?;
     }
   }
   Ok(())

@@ -79,8 +79,8 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
   let microphone_format = microphone_source.as_ref().map(MicrophoneSource::format);
   let timeline_origin = Arc::new(OnceLock::new());
   let stats = Arc::new(CaptureStats::default());
-  // Orbit Cursor's proven macOS workaround used two independent HEVC
-  // VideoToolbox encoders. A concurrent H.264 + HEVC pair competes for the
+  // Two independent HEVC VideoToolbox encoders keep concurrent video writers
+  // separate. A concurrent H.264 + HEVC pair competes for the
   // hardware path and made the camera writer fall behind by roughly 20%.
   let primary_encoder = if camera_spec.is_some() && !camera_primary {
     VideoEncoder::Hevc
@@ -111,7 +111,7 @@ pub(super) async fn begin(config: CaptureStartupConfig) -> Result<CaptureStart, 
       },
       timeline_origin: Arc::clone(&timeline_origin),
     },
-    "orbit-recording-writer",
+    "screenwide-recording-writer",
   )?;
 
   let CameraWriterSetup {

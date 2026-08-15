@@ -126,7 +126,7 @@ pub(crate) enum PrimaryCaptureSource {
 pub(crate) struct CaptureStartupConfig {
   pub camera: Option<CameraCaptureMode>,
   pub camera_path: Option<PathBuf>,
-  /// Keeps Orbit Capture's own windows in the picture instead of hiding them,
+  /// Keeps Screenwide's own windows in the picture instead of hiding them,
   /// which is how the app records demos of itself.
   pub include_own_windows: bool,
   pub microphone_id: Option<String>,

@@ -31,7 +31,7 @@ impl ConfidenceWorker {
     // current frame, and drops it immediately while this worker is busy.
     let (sender, receiver) = mpsc::sync_channel::<CameraFrame>(0);
     let thread = std::thread::Builder::new()
-      .name("orbit-camera-confidence-windows".to_owned())
+      .name("screenwide-camera-confidence-windows".to_owned())
       .spawn(move || {
         while let Ok(frame) = receiver.recv() {
           let (width, height, rgba) = thumbnail(&frame);

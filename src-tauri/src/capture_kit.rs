@@ -56,8 +56,8 @@ pub fn our_windows(content: &sc::ShareableContent) -> arc::R<ns::Array<sc::Windo
   ns::Array::from_slice_retained(&ours)
 }
 
-/// The exclusion list a display filter should carry. Recording a demo of Orbit
-/// Capture is the one case where its own windows belong in the shot, so the
+/// The exclusion list a display filter should carry. Recording a demo of
+/// Screenwide is the one case where its own windows belong in the shot, so the
 /// list is simply empty and every window on the display is captured.
 pub fn windows_to_exclude(
   content: &sc::ShareableContent,

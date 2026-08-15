@@ -129,7 +129,7 @@ pub(super) fn start(
   let callback_failure_reported = Arc::clone(&failure_reported);
   let (started_tx, started) = mpsc::channel();
   let worker = std::thread::Builder::new()
-    .name("orbit-camera-capture-windows".to_owned())
+    .name("screenwide-camera-capture-windows".to_owned())
     .spawn(move || {
       let requested = RequestedFormat::new::<RgbAFormat>(RequestedFormatType::Exact(format));
       let capture_started = Instant::now();

@@ -245,11 +245,11 @@ mod tests {
   use windows::Win32::System::Com::COINIT_APARTMENTTHREADED;
 
   #[test]
-  #[ignore = "uses the video path in ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST"]
+  #[ignore = "uses the video path in SCREENWIDE_WINDOWS_PREVIEW_TEST"]
   fn decodes_and_seeks_the_recorded_fragmented_mp4() {
-    let path = std::env::var_os("ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST")
+    let path = std::env::var_os("SCREENWIDE_WINDOWS_PREVIEW_TEST")
       .map(std::path::PathBuf::from)
-      .expect("set ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST to a recording");
+      .expect("set SCREENWIDE_WINDOWS_PREVIEW_TEST to a recording");
     let mut reader = NativeVideoReader::open(&path, 640, 360, 0).unwrap();
     let first = reader.frame_at(0).unwrap().unwrap();
     assert!(first.width <= 640 && first.height <= 360);
@@ -260,17 +260,17 @@ mod tests {
     assert_eq!(later.height, first.height);
     let jpeg = encoded_jpeg(&later, 85).unwrap();
     assert!(jpeg.len() > 1_024);
-    if let Some(output) = std::env::var_os("ORBIT_CAPTURE_WINDOWS_PREVIEW_FRAME") {
+    if let Some(output) = std::env::var_os("SCREENWIDE_WINDOWS_PREVIEW_FRAME") {
       std::fs::write(output, jpeg).unwrap();
     }
   }
 
   #[test]
-  #[ignore = "uses the video path in ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST"]
+  #[ignore = "uses the video path in SCREENWIDE_WINDOWS_PREVIEW_TEST"]
   fn decodes_video_from_an_sta_export_worker() {
-    let path = std::env::var_os("ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST")
+    let path = std::env::var_os("SCREENWIDE_WINDOWS_PREVIEW_TEST")
       .map(std::path::PathBuf::from)
-      .expect("set ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST to a recording");
+      .expect("set SCREENWIDE_WINDOWS_PREVIEW_TEST to a recording");
     std::thread::spawn(move || {
       unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
         .ok()

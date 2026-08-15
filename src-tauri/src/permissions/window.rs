@@ -14,7 +14,7 @@ pub fn show(app: &AppHandle) -> tauri::Result<()> {
       WindowLabel::Permissions.as_str(),
       WebviewUrl::App("/permissions".into()),
     )
-    .title("Orbit Capture Permissions")
+    .title("Screenwide Permissions")
     .inner_size(540.0, 432.0)
     .center()
     .always_on_top(true)

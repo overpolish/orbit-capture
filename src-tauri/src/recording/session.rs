@@ -229,7 +229,7 @@ pub(super) fn begin_capture(
   } = capture::begin_blocking(CaptureStartupConfig {
     camera,
     camera_path: camera_path.clone(),
-    include_own_windows: crate::settings::current(app).record_orbit_windows,
+    include_own_windows: crate::settings::current(app).record_screenwide_windows,
     microphone_id: options.microphone_id.clone(),
     monitor,
     on_failure,

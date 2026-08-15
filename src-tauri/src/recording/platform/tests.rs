@@ -279,7 +279,7 @@ impl Outcome {
 /// Where the encoder tests leave their movies, so `ffprobe` can be pointed
 /// at them afterwards.
 fn test_movie(name: &str, container: Container) -> PathBuf {
-  let directory = std::env::temp_dir().join("orbit-capture-tests");
+  let directory = std::env::temp_dir().join("screenwide-tests");
   std::fs::create_dir_all(&directory).unwrap();
   directory.join(format!("{name}.{}", container.format.extension()))
 }
@@ -485,7 +485,7 @@ fn writes_a_large_fragmented_movie_across_a_long_pause() {
 
 /// The environment variable the crash tests below use to tell a child
 /// process that it is the one meant to die.
-const ABANDON: &str = "ORBIT_ABANDON_RECORDING";
+const ABANDON: &str = "SCREENWIDE_ABANDON_RECORDING";
 
 /// Writes for a while and then kills this process outright, leaving the file
 /// exactly as a crash would. It has to be `abort` rather than an early

@@ -1,9 +1,9 @@
 {
-  "name": "orbit-capture",
+  "name": "screenwide",
   "private": true,
   "version": "0.1.0",
   "license": "GPL-3.0-or-later",
-  "packageManager": "pnpm@11.20.0",
+  "packageManager": "pnpm@11.21.0",
   "type": "module",
   "scripts": {
     "build": "pnpm ffmpeg:prepare && tsc && vite build",

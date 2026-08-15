@@ -131,7 +131,7 @@ export function SettingsWindow() {
           <p className="mt-1 text-xs text-muted">
             {section === "general"
               ? "Defaults for capture, export and launch behaviour."
-              : "These work globally while Orbit Capture is running."}
+              : "These work globally while Screenwide is running."}
           </p>
         </header>
         <section className="min-h-0 min-w-0 grow px-6 pb-6">

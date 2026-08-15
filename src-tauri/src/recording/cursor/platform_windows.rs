@@ -209,7 +209,7 @@ pub(super) fn start(stop: Arc<AtomicBool>, sink: EventSink) -> Result<JoinHandle
   let (ready, did_start) = mpsc::channel();
   let worker_stop = Arc::clone(&stop);
   let worker = std::thread::Builder::new()
-    .name("orbit-cursor-recorder".to_owned())
+    .name("screenwide-cursor-recorder".to_owned())
     .spawn(move || run(&worker_stop, &sink, ready))
     .map_err(|error| error.to_string())?;
   match did_start.recv_timeout(START_TIMEOUT) {

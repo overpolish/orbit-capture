@@ -196,12 +196,15 @@ export function useScreenshotPreviewSurface({
     const onTransformed = () => {
       if (!disposed) measure();
     };
-    window.addEventListener("orbit-preview-transformed", onTransformed);
+    window.addEventListener("screenwide-preview-transformed", onTransformed);
     animation = requestAnimationFrame(update);
     return () => {
       disposed = true;
       cancelAnimationFrame(animation);
-      window.removeEventListener("orbit-preview-transformed", onTransformed);
+      window.removeEventListener(
+        "screenwide-preview-transformed",
+        onTransformed,
+      );
       clearBackdropMasks();
     };
   }, [canvasRef, isEnabled]);

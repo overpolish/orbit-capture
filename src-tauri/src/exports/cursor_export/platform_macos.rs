@@ -75,7 +75,7 @@ unsafe extern "C" fn gpu_progress(context: *mut c_void, position_ms: u64) {
 }
 
 unsafe extern "C" {
-  fn orbit_gpu_composite_cursor(
+  fn screenwide_gpu_composite_cursor(
     screen_path: *const c_char,
     cursor_path: *const c_char,
     commands_path: *const c_char,
@@ -211,7 +211,7 @@ fn render_gpu_video(
     on_progress: request.on_progress,
   };
   let result = unsafe {
-    orbit_gpu_composite_cursor(
+    screenwide_gpu_composite_cursor(
       screen.as_ptr(),
       cursor
         .as_ref()

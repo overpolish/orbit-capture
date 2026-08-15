@@ -17,11 +17,11 @@ use windows::Win32::{
 };
 
 #[test]
-#[ignore = "uses the video path in ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST"]
+#[ignore = "uses the video path in SCREENWIDE_WINDOWS_PREVIEW_TEST"]
 fn decoded_preview_frame_stays_on_the_gpu() {
-  let path = std::env::var_os("ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST")
+  let path = std::env::var_os("SCREENWIDE_WINDOWS_PREVIEW_TEST")
     .map(std::path::PathBuf::from)
-    .expect("set ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST to a recording");
+    .expect("set SCREENWIDE_WINDOWS_PREVIEW_TEST to a recording");
   let mut device = None;
   unsafe {
     D3D11CreateDevice(

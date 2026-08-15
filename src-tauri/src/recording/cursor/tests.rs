@@ -41,7 +41,10 @@ fn clock_removes_paused_time() {
 
 #[test]
 fn reader_keeps_complete_lines_before_a_truncated_tail() {
-  let path = std::env::temp_dir().join(format!("orbit-cursor-reader-{}.jsonl", std::process::id()));
+  let path = std::env::temp_dir().join(format!(
+    "screenwide-cursor-reader-{}.jsonl",
+    std::process::id()
+  ));
   std::fs::write(
     &path,
     concat!(
@@ -73,7 +76,10 @@ fn initial_snapshot_starts_at_zero_and_motion_keeps_hardware_cadence() {
   let origin = Instant::now();
   let shared_origin = Arc::new(OnceLock::new());
   shared_origin.set(origin).unwrap();
-  let path = std::env::temp_dir().join(format!("orbit-cursor-stream-{}.jsonl", std::process::id()));
+  let path = std::env::temp_dir().join(format!(
+    "screenwide-cursor-stream-{}.jsonl",
+    std::process::id()
+  ));
   let file = File::create(&path).unwrap();
   let mut stream = StreamWriter {
     clock: CursorClock::new(shared_origin),
@@ -137,7 +143,7 @@ fn windows_sampler_writes_a_live_semantic_snapshot() {
   let origin = Arc::new(OnceLock::new());
   origin.set(Instant::now()).unwrap();
   let path = std::env::temp_dir().join(format!(
-    "orbit-windows-cursor-live-{}.jsonl",
+    "screenwide-windows-cursor-live-{}.jsonl",
     std::process::id()
   ));
   let recorder = CursorRecorder::start(

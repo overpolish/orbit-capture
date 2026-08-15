@@ -1,9 +1,9 @@
 <!-- SPDX-FileCopyrightText: 2026 overpolish -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# Orbit Capture
+# Screenwide
 
-A focused screen and audio recorder for macOS and Windows. Orbit Capture records;
+A focused screen and audio recorder for macOS and Windows. Screenwide records;
 editing will live outside the app.
 
 ## Development
@@ -27,5 +27,5 @@ Create a production bundle with `pnpm tauri build`.
 
 Copyright (C) 2026 overpolish.
 
-Orbit Capture is free software licensed under the GNU General Public License,
+Screenwide is free software licensed under the GNU General Public License,
 version 3 or any later version. See [LICENSE](LICENSE).

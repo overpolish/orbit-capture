@@ -62,7 +62,7 @@ function ShortcutPreview() {
       <input
         aria-label="File name"
         className="rounded border border-muted/30 bg-content px-2 py-1 text-sm outline-none"
-        defaultValue="Orbit Capture"
+        defaultValue="Screenwide"
       />
     </div>
   );

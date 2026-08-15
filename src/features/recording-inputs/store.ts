@@ -14,7 +14,7 @@ import {
   SystemAudioSource,
 } from "./types";
 
-const STORE_NAME = "orbit-capture-recording-inputs";
+const STORE_NAME = "screenwide-recording-inputs";
 
 /** Smooth by default; halving it is an explicit choice to make a smaller file. */
 const DEFAULT_FPS: RecordingFps = 60;

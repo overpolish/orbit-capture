@@ -37,8 +37,8 @@ fn valid_cursor_sidecar(path: &Path) {
 #[test]
 fn keeps_a_reasonable_name_untouched() {
   assert_eq!(
-    sanitize_file_stem("Orbit Capture 2026-08-08 at 14.32.05").as_deref(),
-    Some("Orbit Capture 2026-08-08 at 14.32.05")
+    sanitize_file_stem("Screenwide 2026-08-08 at 14.32.05").as_deref(),
+    Some("Screenwide 2026-08-08 at 14.32.05")
   );
 }
 
@@ -96,7 +96,7 @@ fn caps_an_absurdly_long_name() {
 #[test]
 fn tells_a_preview_from_a_recording_however_far_it_got() {
   let directory = std::env::temp_dir()
-    .join("orbit-capture-tests")
+    .join("screenwide-tests")
     .join("preview-sweep");
   let _ = std::fs::remove_dir_all(&directory);
   std::fs::create_dir_all(&directory).unwrap();
@@ -127,7 +127,7 @@ fn tells_a_preview_from_a_recording_however_far_it_got() {
 /// A directory of this test module's own, so a test that writes files cannot
 /// be confused by anything else on the machine.
 fn test_directory(name: &str) -> PathBuf {
-  let directory = std::env::temp_dir().join("orbit-capture-tests").join(name);
+  let directory = std::env::temp_dir().join("screenwide-tests").join(name);
   let _ = std::fs::remove_dir_all(&directory);
   std::fs::create_dir_all(&directory).unwrap();
   directory
@@ -510,7 +510,7 @@ fn does_nothing_with_an_empty_directory() {
 #[test]
 fn pairs_a_camera_sidecar_with_its_recording() {
   let directory = std::env::temp_dir()
-    .join("orbit-capture-tests")
+    .join("screenwide-tests")
     .join("camera-pair");
   let _ = std::fs::remove_dir_all(&directory);
   std::fs::create_dir_all(&directory).unwrap();
@@ -531,7 +531,7 @@ fn pairs_a_camera_sidecar_with_its_recording() {
 #[test]
 fn sweeps_only_unclaimed_camera_sidecars() {
   let directory = std::env::temp_dir()
-    .join("orbit-capture-tests")
+    .join("screenwide-tests")
     .join("camera-sweep");
   let _ = std::fs::remove_dir_all(&directory);
   std::fs::create_dir_all(&directory).unwrap();

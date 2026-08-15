@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { Input, TextField } from "react-aria-components";
 
-import logoUrl from "../../../assets/orbit-capture-mark.svg";
+import logoUrl from "../../../assets/screenwide-mark.svg";
 import { Button } from "../../../components/base/button/button";
 import { inputFieldVariants } from "../../../components/base/input-fields/input-field";
 import { ConfirmActionButton } from "../../../components/shared/confirm-action-button/confirm-action-button";
@@ -74,7 +74,7 @@ export function ExportTitlebar({
       data-tauri-drag-region="deep"
     >
       <img
-        alt="Orbit Capture"
+        alt="Screenwide"
         className="pointer-events-none size-5 shrink-0 brightness-0 dark:invert"
         data-tauri-drag-region
         draggable={false}

@@ -74,8 +74,8 @@ pub fn list_monitors(app: AppHandle) -> Result<Vec<MonitorDetails>, String> {
     return Err("Tauri and xcap returned different monitor counts".into());
   }
 
-  // Tauri does not expose a capture API identifier, so, as in Orbit Cursor,
-  // monitor ordering is the only cross-API mapping available on both platforms.
+  // Tauri does not expose a capture API identifier, so monitor ordering is the
+  // only cross-API mapping available on both platforms.
   capture_monitors
     .into_iter()
     .zip(tauri_monitors)
@@ -130,7 +130,7 @@ pub async fn list_windows(app: AppHandle) -> Result<Vec<WindowDetails>, String> 
     .path()
     .temp_dir()
     .map_err(|error| error.to_string())?
-    .join("OrbitCapture")
+    .join("Screenwide")
     .join("window-selector");
   tauri::async_runtime::spawn_blocking(move || enumerate_windows(&cache_dir))
     .await
@@ -144,7 +144,7 @@ pub async fn list_applications(app: AppHandle) -> Result<Vec<ApplicationDetails>
     .path()
     .temp_dir()
     .map_err(|error| error.to_string())?
-    .join("OrbitCapture")
+    .join("Screenwide")
     .join("application-sources");
   let applications = platform::audio_applications().await?;
   tauri::async_runtime::spawn_blocking(move || {
@@ -183,7 +183,7 @@ pub async fn list_applications(app: AppHandle) -> Result<Vec<ApplicationDetails>
     .path()
     .temp_dir()
     .map_err(|error| error.to_string())?
-    .join("OrbitCapture")
+    .join("Screenwide")
     .join("application-sources");
   tauri::async_runtime::spawn_blocking(move || enumerate_applications(&cache_dir))
     .await

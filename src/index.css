@@ -185,7 +185,7 @@ html[data-platform="windows"] .window-surface {
   border-radius: 0;
 }
 
-.os-theme-orbit-capture {
+.os-theme-screenwide {
   --os-size: 10px;
   --os-padding-perpendicular: 2px;
   --os-padding-axis: 2px;

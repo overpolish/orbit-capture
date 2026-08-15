@@ -83,7 +83,7 @@ pub(super) fn start(
   let callback_cancelled = Arc::clone(&cancelled);
   let (started_tx, started) = mpsc::channel();
   let worker = std::thread::Builder::new()
-    .name("orbit-camera-capture".to_owned())
+    .name("screenwide-camera-capture".to_owned())
     .spawn(move || {
       let result = run_capture(CameraCaptureContext {
         callback_cancelled,

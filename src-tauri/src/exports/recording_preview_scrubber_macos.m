@@ -4,7 +4,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <CoreVideo/CoreVideo.h>
 
-@interface OrbitPreviewScrubber : NSObject
+@interface ScreenwidePreviewScrubber : NSObject
 @property(nonatomic, strong) AVPlayer *player;
 @property(nonatomic, strong) AVPlayerItemVideoOutput *output;
 // The freshest frame the output vended, kept so repeated pulls at the same
@@ -14,13 +14,13 @@
 @property(nonatomic) CMTime lastVendTime;
 @end
 
-@implementation OrbitPreviewScrubber
+@implementation ScreenwidePreviewScrubber
 - (void)dealloc {
   if (_lastPixels != NULL) CVPixelBufferRelease(_lastPixels);
 }
 @end
 
-void *orbit_preview_scrubber_create(const char *path, uint32_t width, uint32_t height) {
+void *screenwide_preview_scrubber_create(const char *path, uint32_t width, uint32_t height) {
   if (path == NULL || width == 0 || height == 0) return NULL;
   @autoreleasepool {
     NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
@@ -35,7 +35,7 @@ void *orbit_preview_scrubber_create(const char *path, uint32_t width, uint32_t h
       [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:attributes];
     output.suppressesPlayerRendering = YES;
     [item addOutput:output];
-    OrbitPreviewScrubber *scrubber = [OrbitPreviewScrubber new];
+    ScreenwidePreviewScrubber *scrubber = [ScreenwidePreviewScrubber new];
     scrubber.output = output;
     scrubber.player = [AVPlayer playerWithPlayerItem:item];
     scrubber.player.muted = YES;
@@ -47,11 +47,11 @@ void *orbit_preview_scrubber_create(const char *path, uint32_t width, uint32_t h
   }
 }
 
-void *orbit_preview_scrubber_copy_frame(void *handle, int64_t milliseconds, int rough,
+void *screenwide_preview_scrubber_copy_frame(void *handle, int64_t milliseconds, int rough,
                                         uint32_t *out_width, uint32_t *out_height) {
   if (handle == NULL || out_width == NULL || out_height == NULL) return NULL;
   @autoreleasepool {
-    OrbitPreviewScrubber *scrubber = (__bridge OrbitPreviewScrubber *)handle;
+    ScreenwidePreviewScrubber *scrubber = (__bridge ScreenwidePreviewScrubber *)handle;
     CMTime time = CMTimeMake(MAX(milliseconds, 0), 1000);
     // The decoder is persistent, so exact frame seeks do not recreate the
     // asset/player. A broad tolerance collapses a timeline drag onto a few
@@ -124,14 +124,14 @@ void *orbit_preview_scrubber_copy_frame(void *handle, int64_t milliseconds, int 
   }
 }
 
-void orbit_preview_pixel_buffer_release(void *pixels) {
+void screenwide_preview_pixel_buffer_release(void *pixels) {
   if (pixels != NULL) CVPixelBufferRelease((CVPixelBufferRef)pixels);
 }
 
-int orbit_preview_scrubber_resize(void *handle, uint32_t width, uint32_t height) {
+int screenwide_preview_scrubber_resize(void *handle, uint32_t width, uint32_t height) {
   if (handle == NULL || width == 0 || height == 0) return 0;
   @autoreleasepool {
-    OrbitPreviewScrubber *scrubber = (__bridge OrbitPreviewScrubber *)handle;
+    ScreenwidePreviewScrubber *scrubber = (__bridge ScreenwidePreviewScrubber *)handle;
     AVPlayerItem *item = scrubber.player.currentItem;
     if (item == nil) return 0;
     // Swapping the video output keeps the player, its item and the decode
@@ -158,9 +158,9 @@ int orbit_preview_scrubber_resize(void *handle, uint32_t width, uint32_t height)
   }
 }
 
-void orbit_preview_scrubber_destroy(void *handle) {
+void screenwide_preview_scrubber_destroy(void *handle) {
   if (handle == NULL) return;
-  OrbitPreviewScrubber *scrubber = (__bridge_transfer OrbitPreviewScrubber *)handle;
+  ScreenwidePreviewScrubber *scrubber = (__bridge_transfer ScreenwidePreviewScrubber *)handle;
   [scrubber.player pause];
   [scrubber.player.currentItem cancelPendingSeeks];
 }

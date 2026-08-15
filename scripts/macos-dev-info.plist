@@ -7,17 +7,17 @@ SPDX-License-Identifier: GPL-3.0-or-later
 <plist version="1.0">
 <dict>
   <key>CFBundleDisplayName</key>
-  <string>Orbit Capture</string>
+  <string>Screenwide</string>
   <key>CFBundleExecutable</key>
-  <string>orbit-capture</string>
+  <string>screenwide</string>
   <key>CFBundleIconFile</key>
   <string>icon.icns</string>
   <key>CFBundleIdentifier</key>
-  <string>com.orbitcapture.app</string>
+  <string>co.overpolish.screenwide</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>Orbit Capture</string>
+  <string>Screenwide</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -29,10 +29,10 @@ SPDX-License-Identifier: GPL-3.0-or-later
   <key>LSUIElement</key>
   <true/>
   <key>NSAudioCaptureUsageDescription</key>
-  <string>Orbit Capture records system and app audio when you include it in a recording.</string>
+  <string>Screenwide records system and app audio when you include it in a recording.</string>
   <key>NSCameraUsageDescription</key>
-  <string>Orbit Capture uses your camera when you include it in a recording.</string>
+  <string>Screenwide uses your camera when you include it in a recording.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Orbit Capture uses your microphone when you record audio.</string>
+  <string>Screenwide uses your microphone when you record audio.</string>
 </dict>
 </plist>

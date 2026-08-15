@@ -164,7 +164,7 @@ pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
 
 /// Every window this app floats over the desktop is an overlay: always on top,
 /// and off the taskbar. Its capture affinity follows the user's persistent
-/// "record Orbit Capture windows" preference.
+/// "record Screenwide windows" preference.
 #[cfg(target_os = "windows")]
 fn initialize_overlay(window: &WebviewWindow) -> tauri::Result<()> {
   window.set_always_on_top(true)?;
@@ -179,20 +179,21 @@ pub fn prepare_to_show(_window: &WebviewWindow) -> tauri::Result<()> {
 
 #[cfg(target_os = "windows")]
 fn initialize_capture_affinity(window: &WebviewWindow) -> tauri::Result<()> {
-  let record_orbit_windows = crate::settings::current(window.app_handle()).record_orbit_windows;
+  let record_screenwide_windows =
+    crate::settings::current(window.app_handle()).record_screenwide_windows;
   // Tauri can transiently report configured-hidden windows as visible while
   // WebView2 is creating their native surfaces. Changing display affinity in
   // that interval orders those unpainted surfaces onscreen. Hide on both sides
   // of the native call so startup never exposes a blank window shell.
   window.hide()?;
-  set_capture_affinity(window, record_orbit_windows)?;
+  set_capture_affinity(window, record_screenwide_windows)?;
   window.hide()
 }
 
 #[cfg(target_os = "windows")]
 pub fn set_capture_affinity(
   window: &WebviewWindow,
-  record_orbit_windows: bool,
+  record_screenwide_windows: bool,
 ) -> tauri::Result<()> {
   use windows::Win32::{
     Foundation::HWND,
@@ -202,7 +203,7 @@ pub fn set_capture_affinity(
   };
 
   let hwnd = HWND(window.hwnd()?.0);
-  let desired_affinity = if record_orbit_windows {
+  let desired_affinity = if record_screenwide_windows {
     WDA_NONE
   } else {
     WDA_EXCLUDEFROMCAPTURE
@@ -227,8 +228,9 @@ pub fn is_visible(window: &WebviewWindow) -> tauri::Result<bool> {
 
 #[cfg(target_os = "windows")]
 pub fn prepare_to_show(window: &WebviewWindow) -> tauri::Result<()> {
-  let record_orbit_windows = crate::settings::current(window.app_handle()).record_orbit_windows;
-  set_capture_affinity(window, record_orbit_windows)
+  let record_screenwide_windows =
+    crate::settings::current(window.app_handle()).record_screenwide_windows;
+  set_capture_affinity(window, record_screenwide_windows)
 }
 
 #[cfg(target_os = "windows")]

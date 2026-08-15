@@ -10,7 +10,7 @@ import { synchronizeSystemTheme } from "./lib/theme";
 
 synchronizeSystemTheme();
 
-// Orbit Capture provides its own right-click interactions where needed. Never
+// Screenwide provides its own right-click interactions where needed. Never
 // expose the browser context menu from an app webview.
 window.addEventListener("contextmenu", (event) => {
   event.preventDefault();

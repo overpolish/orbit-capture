@@ -109,7 +109,7 @@ fn names_a_still_the_way_the_platform_does() {
     .unwrap();
   assert_eq!(
     capture_file_stem(captured_at),
-    "Orbit Capture 2026-08-08 at 14.32.05"
+    "Screenwide 2026-08-08 at 14.32.05"
   );
 }
 
@@ -121,7 +121,7 @@ fn zero_pads_every_field_of_the_name() {
     .unwrap();
   assert_eq!(
     capture_file_stem(captured_at),
-    "Orbit Capture 2026-01-02 at 09.05.03"
+    "Screenwide 2026-01-02 at 09.05.03"
   );
 }
 

@@ -20,7 +20,7 @@ export type ShortcutSettings = {
 export type GeneralSettings = {
   launchAtLogin: boolean;
   openLocationAfterExport: boolean;
-  recordOrbitWindows: boolean;
+  recordScreenwideWindows: boolean;
   recordingCountdownSeconds: 0 | 3 | 5;
   recordingDirectory: string | null;
   screenshotDirectory: string | null;

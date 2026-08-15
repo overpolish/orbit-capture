@@ -4,13 +4,13 @@
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
 
-void orbit_preview_reader_enable_random_access(void *output_handle) {
+void screenwide_preview_reader_enable_random_access(void *output_handle) {
   if (output_handle == NULL) return;
   AVAssetReaderOutput *output = (__bridge AVAssetReaderOutput *)output_handle;
   output.supportsRandomAccess = YES;
 }
 
-int orbit_preview_reader_reset_range(void *output_handle,
+int screenwide_preview_reader_reset_range(void *output_handle,
                                      int64_t start_milliseconds,
                                      int64_t duration_milliseconds) {
   if (output_handle == NULL) return 0;

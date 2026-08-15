@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Orbit Capture",
+  "productName": "Screenwide",
   "version": "0.1.0",
-  "identifier": "com.orbitcapture.capture",
+  "identifier": "co.overpolish.screenwide",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "export",
-        "title": "Orbit Capture",
+        "title": "Screenwide",
         "url": "/export",
         "width": 1200,
         "height": 800,
@@ -36,7 +36,7 @@
       },
       {
         "label": "settings",
-        "title": "Orbit Capture Settings",
+        "title": "Screenwide Settings",
         "url": "/settings",
         "width": 720,
         "height": 520,
@@ -58,7 +58,7 @@
       },
       {
         "label": "recording-bar",
-        "title": "Orbit Capture Recording Bar",
+        "title": "Screenwide Recording Bar",
         "url": "/recording-bar",
         "width": 648,
         "height": 92,
@@ -79,7 +79,7 @@
       },
       {
         "label": "recording-source-selector",
-        "title": "Orbit Capture Recording Source Selector",
+        "title": "Screenwide Recording Source Selector",
         "url": "/recording-source-selector",
         "width": 300,
         "height": 40,
@@ -100,7 +100,7 @@
       },
       {
         "label": "region-selector",
-        "title": "Orbit Capture Region Selector",
+        "title": "Screenwide Region Selector",
         "url": "/region-selector",
         "acceptFirstMouse": true,
         "alwaysOnTop": true,
@@ -115,7 +115,7 @@
       },
       {
         "label": "recording-options",
-        "title": "Orbit Capture Recording Options",
+        "title": "Screenwide Recording Options",
         "url": "/recording-options",
         "width": 240,
         "height": 300,
@@ -136,7 +136,7 @@
       },
       {
         "label": "standalone-listbox",
-        "title": "Orbit Capture Listbox",
+        "title": "Screenwide Listbox",
         "url": "/standalone-listbox",
         "width": 208,
         "height": 40,
@@ -157,7 +157,7 @@
       },
       {
         "label": "recording-dock",
-        "title": "Orbit Capture Recording Dock",
+        "title": "Screenwide Recording Dock",
         "url": "/recording-dock",
         "width": 198,
         "height": 44,
@@ -182,8 +182,8 @@
         "enable": true,
         "scope": [
           "$APPDATA/Recordings/*",
-          "$TEMP/OrbitCapture/application-sources/**",
-          "$TEMP/OrbitCapture/window-selector/**"
+          "$TEMP/Screenwide/application-sources/**",
+          "$TEMP/Screenwide/window-selector/**"
         ]
       },
       "csp": null

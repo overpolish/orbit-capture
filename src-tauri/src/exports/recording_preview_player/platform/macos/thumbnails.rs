@@ -165,14 +165,14 @@ mod tests {
   use super::*;
 
   #[test]
-  #[ignore = "uses the video path in ORBIT_CAPTURE_THUMBNAIL_BENCHMARK"]
+  #[ignore = "uses the video path in SCREENWIDE_THUMBNAIL_BENCHMARK"]
   fn benchmarks_thirty_minute_native_thumbnail_extraction() {
     use std::{path::Path, time::Instant};
 
     use cidre::cg;
 
-    let path = std::env::var("ORBIT_CAPTURE_THUMBNAIL_BENCHMARK")
-      .expect("set ORBIT_CAPTURE_THUMBNAIL_BENCHMARK to a 30-minute video");
+    let path = std::env::var("SCREENWIDE_THUMBNAIL_BENCHMARK")
+      .expect("set SCREENWIDE_THUMBNAIL_BENCHMARK to a 30-minute video");
     let mut primary = image_generator(Path::new(&path)).expect("the benchmark video should open");
     primary.set_max_size(cg::Size {
       width: 114.0,

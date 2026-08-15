@@ -10,21 +10,25 @@
 use std::{ffi::CString, path::Path};
 
 unsafe extern "C" {
-  fn orbit_preview_scrubber_create(
+  fn screenwide_preview_scrubber_create(
     path: *const std::ffi::c_char,
     width: u32,
     height: u32,
   ) -> *mut std::ffi::c_void;
-  fn orbit_preview_scrubber_copy_frame(
+  fn screenwide_preview_scrubber_copy_frame(
     handle: *mut std::ffi::c_void,
     milliseconds: i64,
     rough: i32,
     width: *mut u32,
     height: *mut u32,
   ) -> *mut std::ffi::c_void;
-  fn orbit_preview_pixel_buffer_release(pixels: *mut std::ffi::c_void);
-  fn orbit_preview_scrubber_resize(handle: *mut std::ffi::c_void, width: u32, height: u32) -> i32;
-  fn orbit_preview_scrubber_destroy(handle: *mut std::ffi::c_void);
+  fn screenwide_preview_pixel_buffer_release(pixels: *mut std::ffi::c_void);
+  fn screenwide_preview_scrubber_resize(
+    handle: *mut std::ffi::c_void,
+    width: u32,
+    height: u32,
+  ) -> i32;
+  fn screenwide_preview_scrubber_destroy(handle: *mut std::ffi::c_void);
 }
 
 pub(super) struct NativePixelFrame {
@@ -41,7 +45,7 @@ impl NativePixelFrame {
 
 impl Drop for NativePixelFrame {
   fn drop(&mut self) {
-    unsafe { orbit_preview_pixel_buffer_release(self.handle) };
+    unsafe { screenwide_preview_pixel_buffer_release(self.handle) };
   }
 }
 
@@ -55,7 +59,7 @@ impl NativeFrameScrubber {
   pub(super) fn open(path: &Path, width: u32, height: u32) -> Result<Self, String> {
     let path = CString::new(path.to_string_lossy().as_bytes())
       .map_err(|_| "The recording path contains an invalid character".to_owned())?;
-    let handle = unsafe { orbit_preview_scrubber_create(path.as_ptr(), width, height) };
+    let handle = unsafe { screenwide_preview_scrubber_create(path.as_ptr(), width, height) };
     if handle.is_null() {
       Err("AVFoundation could not open the recording scrubber".to_owned())
     } else {
@@ -69,7 +73,7 @@ impl NativeFrameScrubber {
     let mut width = 0;
     let mut height = 0;
     let handle = unsafe {
-      orbit_preview_scrubber_copy_frame(
+      screenwide_preview_scrubber_copy_frame(
         self.handle,
         position_ms as i64,
         i32::from(rough),
@@ -93,13 +97,13 @@ impl NativeFrameScrubber {
   /// player construction cost. Returns false when the output swap failed and
   /// the scrubber must be recreated.
   pub(super) fn resize(&self, width: u32, height: u32) -> bool {
-    unsafe { orbit_preview_scrubber_resize(self.handle, width, height) != 0 }
+    unsafe { screenwide_preview_scrubber_resize(self.handle, width, height) != 0 }
   }
 }
 
 impl Drop for NativeFrameScrubber {
   fn drop(&mut self) {
-    unsafe { orbit_preview_scrubber_destroy(self.handle) };
+    unsafe { screenwide_preview_scrubber_destroy(self.handle) };
   }
 }
 

@@ -26,8 +26,8 @@ use crate::exports::recording_preview_player::{
 use crate::screenshots::CapturedImage;
 
 unsafe extern "C" {
-  fn orbit_preview_reader_enable_random_access(output: *mut std::ffi::c_void);
-  fn orbit_preview_reader_reset_range(
+  fn screenwide_preview_reader_enable_random_access(output: *mut std::ffi::c_void);
+  fn screenwide_preview_reader_reset_range(
     output: *mut std::ffi::c_void,
     start_milliseconds: i64,
     duration_milliseconds: i64,
@@ -88,7 +88,7 @@ impl NativeVideoReader {
       .map_err(|error| error.to_string())?;
     output.set_always_copies_sample_data(false);
     unsafe {
-      orbit_preview_reader_enable_random_access(output.as_ptr().cast());
+      screenwide_preview_reader_enable_random_access(output.as_ptr().cast());
     }
     let mut reader = av::AssetReader::with_asset(asset).map_err(|error| error.to_string())?;
     reader
@@ -123,7 +123,7 @@ impl NativeVideoReader {
     self.previous = None;
     self.last_frame = None;
     let reset = unsafe {
-      orbit_preview_reader_reset_range(
+      screenwide_preview_reader_reset_range(
         self.output.as_ptr().cast(),
         start_ms as i64,
         duration_ms.saturating_sub(start_ms).max(1) as i64,

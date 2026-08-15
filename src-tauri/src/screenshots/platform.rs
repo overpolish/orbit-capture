@@ -59,7 +59,7 @@ pub(crate) struct StillOverlay {
 }
 
 unsafe extern "C" {
-  fn orbit_gpu_composite_still(
+  fn screenwide_gpu_composite_still(
     source_rgba: *const u8,
     source_width: u32,
     source_height: u32,
@@ -157,7 +157,7 @@ pub(crate) fn compose_output_layers(
   let mut rgba = vec![0_u8; settings.width as usize * settings.height as usize * 4];
   let mut error = vec![0_i8; 2_048];
   let result = unsafe {
-    orbit_gpu_composite_still(
+    screenwide_gpu_composite_still(
       image.rgba.as_ptr(),
       image.width,
       image.height,
@@ -283,8 +283,8 @@ async fn capture_for_text_recognition(
     .iter()
     .find(|display| display.display_id().0 == monitor_id)
     .ok_or_else(|| "The selected monitor is no longer available".to_owned())?;
-  // Only the recognition overlays are hidden, whatever the "record Orbit
-  // Capture's windows" setting says: their selection marquee sits over the very
+  // Only the recognition overlays are hidden, whatever the "record Screenwide's
+  // windows" setting says: their selection marquee sits over the very
   // text being read, so letting it into the image would corrupt the result.
   let excluded = content
     .windows()

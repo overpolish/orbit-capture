@@ -21,8 +21,8 @@ pub(super) const CAPABILITIES: PreviewCapabilities = PreviewCapabilities {
 };
 
 unsafe extern "C" {
-  fn orbit_preview_surface_create(host_view: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
-  fn orbit_preview_surface_layout(
+  fn screenwide_preview_surface_create(host_view: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+  fn screenwide_preview_surface_layout(
     handle: *mut std::ffi::c_void,
     index: u32,
     x: f64,
@@ -30,7 +30,7 @@ unsafe extern "C" {
     width: f64,
     height: f64,
   );
-  fn orbit_preview_surface_set_viewport(
+  fn screenwide_preview_surface_set_viewport(
     handle: *mut std::ffi::c_void,
     x: f64,
     y: f64,
@@ -40,16 +40,16 @@ unsafe extern "C" {
     green: f64,
     blue: f64,
   );
-  fn orbit_preview_surface_begin_layout(handle: *mut std::ffi::c_void);
-  fn orbit_preview_surface_finish_layout(handle: *mut std::ffi::c_void);
-  fn orbit_preview_surface_present(
+  fn screenwide_preview_surface_begin_layout(handle: *mut std::ffi::c_void);
+  fn screenwide_preview_surface_finish_layout(handle: *mut std::ffi::c_void);
+  fn screenwide_preview_surface_present(
     handle: *mut std::ffi::c_void,
     index: u32,
     rgba: *const u8,
     width: u32,
     height: u32,
   ) -> i32;
-  fn orbit_preview_surface_present_composed(
+  fn screenwide_preview_surface_present_composed(
     handle: *mut std::ffi::c_void,
     index: u32,
     source_token: u64,
@@ -64,7 +64,7 @@ unsafe extern "C" {
     camera_rgba: *const u8,
     overlay: *const StillOverlay,
   ) -> i32;
-  fn orbit_preview_surface_present_composed_pixels(
+  fn screenwide_preview_surface_present_composed_pixels(
     handle: *mut std::ffi::c_void,
     index: u32,
     source_token: u64,
@@ -78,8 +78,8 @@ unsafe extern "C" {
     camera_pixels: *mut std::ffi::c_void,
     overlay: *const StillOverlay,
   ) -> i32;
-  fn orbit_preview_surface_hide(handle: *mut std::ffi::c_void);
-  fn orbit_preview_surface_destroy(handle: *mut std::ffi::c_void);
+  fn screenwide_preview_surface_hide(handle: *mut std::ffi::c_void);
+  fn screenwide_preview_surface_destroy(handle: *mut std::ffi::c_void);
 }
 
 pub(crate) struct RecordingPreviewSurface {
@@ -92,7 +92,7 @@ unsafe impl Sync for RecordingPreviewSurface {}
 impl RecordingPreviewSurface {
   pub(crate) fn from_window(window: &WebviewWindow) -> Result<Self, String> {
     let host_view = window.ns_view().map_err(|error| error.to_string())?;
-    let handle = unsafe { orbit_preview_surface_create(host_view) };
+    let handle = unsafe { screenwide_preview_surface_create(host_view) };
     if handle.is_null() {
       Err("The native recording preview surface could not be created".to_owned())
     } else {
@@ -109,7 +109,7 @@ impl RecordingPreviewSurface {
       backdrop[2] * backdrop[3],
     ];
     unsafe {
-      orbit_preview_surface_set_viewport(
+      screenwide_preview_surface_set_viewport(
         self.handle,
         rect.x,
         rect.y,
@@ -124,7 +124,7 @@ impl RecordingPreviewSurface {
 
   pub(crate) fn begin_layout(&self) {
     unsafe {
-      orbit_preview_surface_begin_layout(self.handle);
+      screenwide_preview_surface_begin_layout(self.handle);
     }
   }
 
@@ -132,13 +132,20 @@ impl RecordingPreviewSurface {
 
   pub(crate) fn layout(&self, index: u32, rect: PreviewSurfaceRect) {
     unsafe {
-      orbit_preview_surface_layout(self.handle, index, rect.x, rect.y, rect.width, rect.height);
+      screenwide_preview_surface_layout(
+        self.handle,
+        index,
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+      );
     }
   }
 
   pub(crate) fn present(&self, index: u32, image: &CapturedImage) -> bool {
     unsafe {
-      orbit_preview_surface_present(
+      screenwide_preview_surface_present(
         self.handle,
         index,
         image.rgba.as_ptr(),
@@ -164,7 +171,7 @@ impl RecordingPreviewSurface {
     let mut canvas = native_canvas(source.width, source.height, settings, true)?;
     canvas.clip_cursor_at_video_edge = u32::from(clip_cursor_at_video_edge);
     Ok(unsafe {
-      orbit_preview_surface_present_composed(
+      screenwide_preview_surface_present_composed(
         self.handle,
         index,
         source_token,
@@ -200,7 +207,7 @@ impl RecordingPreviewSurface {
     let mut canvas = native_canvas(source_size.0, source_size.1, settings, true)?;
     canvas.clip_cursor_at_video_edge = u32::from(clip_cursor_at_video_edge);
     Ok(unsafe {
-      orbit_preview_surface_present_composed_pixels(
+      screenwide_preview_surface_present_composed_pixels(
         self.handle,
         index,
         source_token,
@@ -219,13 +226,13 @@ impl RecordingPreviewSurface {
 
   pub(crate) fn finish_layout(&self) {
     unsafe {
-      orbit_preview_surface_finish_layout(self.handle);
+      screenwide_preview_surface_finish_layout(self.handle);
     }
   }
 
   pub(crate) fn hide(&self) {
     unsafe {
-      orbit_preview_surface_hide(self.handle);
+      screenwide_preview_surface_hide(self.handle);
     }
   }
 }
@@ -233,7 +240,7 @@ impl RecordingPreviewSurface {
 impl Drop for RecordingPreviewSurface {
   fn drop(&mut self) {
     unsafe {
-      orbit_preview_surface_destroy(self.handle);
+      screenwide_preview_surface_destroy(self.handle);
     }
   }
 }

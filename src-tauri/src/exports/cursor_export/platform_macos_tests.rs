@@ -82,8 +82,10 @@ fn mesh_output(width: u32, height: u32) -> crate::screenshots::ScreenshotOutputS
 
 #[test]
 fn exports_composited_cursor_pixels_into_a_real_movie() {
-  let directory =
-    std::env::temp_dir().join(format!("orbit-cursor-export-test-{}", std::process::id()));
+  let directory = std::env::temp_dir().join(format!(
+    "screenwide-cursor-export-test-{}",
+    std::process::id()
+  ));
   let _ = std::fs::remove_dir_all(&directory);
   std::fs::create_dir_all(&directory).unwrap();
   let source = directory.join("source.mov");
@@ -216,8 +218,10 @@ fn exports_composited_cursor_pixels_into_a_real_movie() {
 
 #[test]
 fn exports_camera_and_cursor_through_the_same_gpu_compositor() {
-  let directory =
-    std::env::temp_dir().join(format!("orbit-camera-cursor-test-{}", std::process::id()));
+  let directory = std::env::temp_dir().join(format!(
+    "screenwide-camera-cursor-test-{}",
+    std::process::id()
+  ));
   let _ = std::fs::remove_dir_all(&directory);
   std::fs::create_dir_all(&directory).unwrap();
   let source = directory.join("source.mov");
@@ -361,19 +365,21 @@ fn exports_camera_and_cursor_through_the_same_gpu_compositor() {
 }
 
 #[test]
-#[ignore = "set ORBIT_GPU_BENCH_SOURCE to a 3600 x 2338 recording"]
+#[ignore = "set SCREENWIDE_GPU_BENCH_SOURCE to a 3600 x 2338 recording"]
 fn benchmarks_retina_gpu_cursor_export() {
-  let source = PathBuf::from(std::env::var("ORBIT_GPU_BENCH_SOURCE").unwrap());
-  let duration_ms = std::env::var("ORBIT_GPU_BENCH_DURATION_MS")
+  let source = PathBuf::from(std::env::var("SCREENWIDE_GPU_BENCH_SOURCE").unwrap());
+  let duration_ms = std::env::var("SCREENWIDE_GPU_BENCH_DURATION_MS")
     .ok()
     .and_then(|value| value.parse().ok())
     .unwrap_or(40_908);
-  let resolution_scale_percent = std::env::var("ORBIT_GPU_BENCH_SCALE_PERCENT")
+  let resolution_scale_percent = std::env::var("SCREENWIDE_GPU_BENCH_SCALE_PERCENT")
     .ok()
     .and_then(|value| value.parse().ok())
     .unwrap_or(100);
-  let directory =
-    std::env::temp_dir().join(format!("orbit-gpu-export-benchmark-{}", std::process::id()));
+  let directory = std::env::temp_dir().join(format!(
+    "screenwide-gpu-export-benchmark-{}",
+    std::process::id()
+  ));
   let _ = std::fs::remove_dir_all(&directory);
   std::fs::create_dir_all(&directory).unwrap();
   let cursor_path = directory.join("source.cursor.jsonl");
@@ -454,23 +460,23 @@ fn benchmarks_retina_gpu_cursor_export() {
 }
 
 #[test]
-#[ignore = "set ORBIT_GPU_BENCH_SOURCE to a recording"]
+#[ignore = "set SCREENWIDE_GPU_BENCH_SOURCE to a recording"]
 fn benchmarks_animated_mesh_export() {
-  let source = PathBuf::from(std::env::var("ORBIT_GPU_BENCH_SOURCE").unwrap());
-  let duration_ms = std::env::var("ORBIT_GPU_BENCH_DURATION_MS")
+  let source = PathBuf::from(std::env::var("SCREENWIDE_GPU_BENCH_SOURCE").unwrap());
+  let duration_ms = std::env::var("SCREENWIDE_GPU_BENCH_DURATION_MS")
     .ok()
     .and_then(|value| value.parse().ok())
     .unwrap_or(30_000);
-  let width = std::env::var("ORBIT_GPU_BENCH_WIDTH")
+  let width = std::env::var("SCREENWIDE_GPU_BENCH_WIDTH")
     .ok()
     .and_then(|value| value.parse().ok())
     .unwrap_or(1_920);
-  let height = std::env::var("ORBIT_GPU_BENCH_HEIGHT")
+  let height = std::env::var("SCREENWIDE_GPU_BENCH_HEIGHT")
     .ok()
     .and_then(|value| value.parse().ok())
     .unwrap_or(1_080);
   let directory = std::env::temp_dir().join(format!(
-    "orbit-mesh-export-benchmark-{}",
+    "screenwide-mesh-export-benchmark-{}",
     std::process::id()
   ));
   let _ = std::fs::remove_dir_all(&directory);

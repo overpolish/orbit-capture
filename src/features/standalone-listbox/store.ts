@@ -33,7 +33,7 @@ type StandaloneListboxStore = {
   select: (id: string, selectedIds: string[]) => void;
 };
 
-const STORE_NAME = "orbit-capture-standalone-listbox";
+const STORE_NAME = "screenwide-standalone-listbox";
 const SELECTION_STORE_NAME = `${STORE_NAME}-selection`;
 
 export const useStandaloneListboxStore = create<StandaloneListboxStore>()(

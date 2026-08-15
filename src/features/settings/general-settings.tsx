@@ -158,20 +158,20 @@ export function GeneralSettingsPanel({
         />
       </SettingRow>
       <SettingRow
-        description="Keep Orbit Capture's own windows, like the recording bar, in recordings and screenshots."
-        label="Record Orbit Capture's windows"
+        description="Keep Screenwide's own windows, like the recording bar, in recordings and screenshots."
+        label="Record Screenwide's windows"
       >
         <Checkbox
           isDisabled={isSaving}
-          isSelected={settings.recordOrbitWindows}
-          onChange={(recordOrbitWindows) => {
-            update({ recordOrbitWindows });
+          isSelected={settings.recordScreenwideWindows}
+          onChange={(recordScreenwideWindows) => {
+            update({ recordScreenwideWindows });
           }}
           size="sm"
         />
       </SettingRow>
       <SettingRow
-        description="Start Orbit Capture when you sign in."
+        description="Start Screenwide when you sign in."
         label="Launch at login"
       >
         <Checkbox
@@ -184,7 +184,7 @@ export function GeneralSettingsPanel({
         />
       </SettingRow>
       <SettingRow
-        description="Open the recording controls as soon as Orbit Capture starts."
+        description="Open the recording controls as soon as Screenwide starts."
         label="Show recording bar on launch"
       >
         <Checkbox

@@ -8,25 +8,25 @@
 
 #import "cursor_export/gpu_compositor_macos.h"
 
-@interface OrbitPreviewView : NSView
+@interface ScreenwidePreviewView : NSView
 @property(nonatomic) BOOL active;
 @property(nonatomic) void *compositor;
 @end
 
-@implementation OrbitPreviewView
+@implementation ScreenwidePreviewView
 - (NSView *)hitTest:(NSPoint)point { (void)point; return nil; }
 @end
 
-@interface OrbitPreviewSurface : NSObject
+@interface ScreenwidePreviewSurface : NSObject
 @property(nonatomic, strong) id<MTLDevice> device;
 @property(nonatomic, strong) id<MTLCommandQueue> queue;
 @property(nonatomic, strong) id<MTLComputePipelineState> pipeline;
 @property(nonatomic, strong) NSView *host;
-@property(nonatomic, strong) OrbitPreviewView *container;
-@property(nonatomic, strong) NSMutableArray<OrbitPreviewView *> *views;
+@property(nonatomic, strong) ScreenwidePreviewView *container;
+@property(nonatomic, strong) NSMutableArray<ScreenwidePreviewView *> *views;
 @end
 
-@implementation OrbitPreviewSurface
+@implementation ScreenwidePreviewSurface
 @end
 
 static NSString *const shader = @R"(
@@ -51,8 +51,8 @@ static void on_main(dispatch_block_t block) {
   else dispatch_sync(dispatch_get_main_queue(), block);
 }
 
-static OrbitPreviewView *make_view(OrbitPreviewSurface *surface) {
-  OrbitPreviewView *view = [[OrbitPreviewView alloc] initWithFrame:NSZeroRect];
+static ScreenwidePreviewView *make_view(ScreenwidePreviewSurface *surface) {
+  ScreenwidePreviewView *view = [[ScreenwidePreviewView alloc] initWithFrame:NSZeroRect];
   view.wantsLayer = YES;
   CAMetalLayer *layer = [CAMetalLayer layer];
   layer.device = surface.device;
@@ -67,18 +67,18 @@ static OrbitPreviewView *make_view(OrbitPreviewSurface *surface) {
   layer.colorspace = srgb;
   CGColorSpaceRelease(srgb);
   view.layer = layer;
-  view.compositor = orbit_gpu_still_presenter_create();
+  view.compositor = screenwide_gpu_still_presenter_create();
   view.hidden = YES;
   view.active = NO;
   [surface.container addSubview:view positioned:NSWindowAbove relativeTo:nil];
   return view;
 }
 
-void *orbit_preview_surface_create(void *host_view) {
+void *screenwide_preview_surface_create(void *host_view) {
   if (host_view == NULL) return NULL;
-  __block OrbitPreviewSurface *surface;
+  __block ScreenwidePreviewSurface *surface;
   on_main(^{
-    surface = [OrbitPreviewSurface new];
+    surface = [ScreenwidePreviewSurface new];
     surface.host = (__bridge NSView *)host_view;
     surface.device = MTLCreateSystemDefaultDevice();
     surface.queue = [surface.device newCommandQueue];
@@ -86,7 +86,7 @@ void *orbit_preview_surface_create(void *host_view) {
     id<MTLLibrary> library = [surface.device newLibraryWithSource:shader options:nil error:&error];
     surface.pipeline = [surface.device newComputePipelineStateWithFunction:
       [library newFunctionWithName:@"present_rgba"] error:&error];
-    surface.container = [[OrbitPreviewView alloc] initWithFrame:NSZeroRect];
+    surface.container = [[ScreenwidePreviewView alloc] initWithFrame:NSZeroRect];
     surface.container.wantsLayer = YES;
     surface.container.layer.masksToBounds = YES;
     surface.container.hidden = YES;
@@ -122,12 +122,12 @@ void *orbit_preview_surface_create(void *host_view) {
   return (__bridge_retained void *)surface;
 }
 
-void orbit_preview_surface_set_viewport(void *handle,
+void screenwide_preview_surface_set_viewport(void *handle,
                                         double x, double y,
                                         double width, double height,
                                         double red, double green, double blue) {
   if (handle == NULL) return;
-  OrbitPreviewSurface *surface = (__bridge OrbitPreviewSurface *)handle;
+  ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   on_main(^{
     CGFloat host_height = surface.host.bounds.size.height;
     surface.container.frame = NSMakeRect(x, host_height - y - height, width, height);
@@ -139,21 +139,21 @@ void orbit_preview_surface_set_viewport(void *handle,
   });
 }
 
-void orbit_preview_surface_begin_layout(void *handle) {
+void screenwide_preview_surface_begin_layout(void *handle) {
   if (handle == NULL) return;
-  OrbitPreviewSurface *surface = (__bridge OrbitPreviewSurface *)handle;
+  ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   on_main(^{
-    for (OrbitPreviewView *view in surface.views) view.active = NO;
+    for (ScreenwidePreviewView *view in surface.views) view.active = NO;
   });
 }
 
-void orbit_preview_surface_layout(void *handle, uint32_t index,
+void screenwide_preview_surface_layout(void *handle, uint32_t index,
                                   double x, double y, double width, double height) {
   if (handle == NULL) return;
-  OrbitPreviewSurface *surface = (__bridge OrbitPreviewSurface *)handle;
+  ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   on_main(^{
     while (surface.views.count <= index) [surface.views addObject:make_view(surface)];
-    OrbitPreviewView *view = surface.views[index];
+    ScreenwidePreviewView *view = surface.views[index];
     CGFloat viewport_height = surface.container.bounds.size.height;
     view.frame = NSMakeRect(x, viewport_height - y - height, width, height);
     view.active = YES;
@@ -163,23 +163,23 @@ void orbit_preview_surface_layout(void *handle, uint32_t index,
   });
 }
 
-void orbit_preview_surface_finish_layout(void *handle) {
+void screenwide_preview_surface_finish_layout(void *handle) {
   if (handle == NULL) return;
-  OrbitPreviewSurface *surface = (__bridge OrbitPreviewSurface *)handle;
+  ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   on_main(^{
-    for (OrbitPreviewView *view in surface.views)
+    for (ScreenwidePreviewView *view in surface.views)
       if (!view.active) view.hidden = YES;
   });
 }
 
-int orbit_preview_surface_present(void *handle, uint32_t index,
+int screenwide_preview_surface_present(void *handle, uint32_t index,
                                   const uint8_t *rgba, uint32_t width, uint32_t height) {
   if (handle == NULL || rgba == NULL || width == 0 || height == 0) return 0;
-  OrbitPreviewSurface *surface = (__bridge OrbitPreviewSurface *)handle;
+  ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   // Layout is driven by the webview and may arrive one display tick after
   // playback. Dropping that frame is harmless; ending playback is not.
   if (index >= surface.views.count) return 1;
-  OrbitPreviewView *view = surface.views[index];
+  ScreenwidePreviewView *view = surface.views[index];
   if (!view.active) return 1;
   CAMetalLayer *layer = (CAMetalLayer *)view.layer;
   layer.drawableSize = CGSizeMake(width, height);
@@ -215,20 +215,20 @@ int orbit_preview_surface_present(void *handle, uint32_t index,
   return 1;
 }
 
-int orbit_preview_surface_present_composed(
+int screenwide_preview_surface_present_composed(
     void *handle, uint32_t index, uint64_t source_token,
     const uint8_t *source_rgba, uint32_t source_width, uint32_t source_height,
     uint32_t output_width, uint32_t output_height,
-    const OrbitCanvas *canvas, double seconds, const uint8_t *cursor_rgba,
-    const uint8_t *camera_rgba, const OrbitStillOverlay *overlay) {
+    const ScreenwideCanvas *canvas, double seconds, const uint8_t *cursor_rgba,
+    const uint8_t *camera_rgba, const ScreenwideStillOverlay *overlay) {
   if (handle == NULL || source_rgba == NULL || canvas == NULL) return 0;
-  OrbitPreviewSurface *surface = (__bridge OrbitPreviewSurface *)handle;
+  ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   if (index >= surface.views.count) return 1;
-  OrbitPreviewView *view = surface.views[index];
+  ScreenwidePreviewView *view = surface.views[index];
   if (!view.active) return 1;
   CAMetalLayer *layer = (CAMetalLayer *)view.layer;
   layer.drawableSize = CGSizeMake(MAX(output_width, 2u), MAX(output_height, 2u));
-  int presented = orbit_gpu_still_presenter_present(
+  int presented = screenwide_gpu_still_presenter_present(
       view.compositor, (__bridge void *)layer, source_token, source_rgba,
       source_width, source_height, canvas, seconds, cursor_rgba, camera_rgba,
       overlay);
@@ -241,20 +241,20 @@ int orbit_preview_surface_present_composed(
   return presented;
 }
 
-int orbit_preview_surface_present_composed_pixels(
+int screenwide_preview_surface_present_composed_pixels(
     void *handle, uint32_t index, uint64_t source_token, void *source_pixels,
-    uint32_t output_width, uint32_t output_height, const OrbitCanvas *canvas,
+    uint32_t output_width, uint32_t output_height, const ScreenwideCanvas *canvas,
     double seconds, const uint8_t *cursor_rgba, const uint8_t *camera_rgba,
     void *camera_pixels,
-    const OrbitStillOverlay *overlay) {
+    const ScreenwideStillOverlay *overlay) {
   if (handle == NULL || source_pixels == NULL || canvas == NULL) return 0;
-  OrbitPreviewSurface *surface = (__bridge OrbitPreviewSurface *)handle;
+  ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   if (index >= surface.views.count) return 1;
-  OrbitPreviewView *view = surface.views[index];
+  ScreenwidePreviewView *view = surface.views[index];
   if (!view.active) return 1;
   CAMetalLayer *layer = (CAMetalLayer *)view.layer;
   layer.drawableSize = CGSizeMake(MAX(output_width, 2u), MAX(output_height, 2u));
-  int presented = orbit_gpu_still_presenter_present_pixels(
+  int presented = screenwide_gpu_still_presenter_present_pixels(
       view.compositor, (__bridge void *)layer, source_token, source_pixels,
       canvas, seconds, cursor_rgba, camera_rgba, camera_pixels, overlay);
   if (presented) dispatch_async(dispatch_get_main_queue(), ^{
@@ -266,21 +266,21 @@ int orbit_preview_surface_present_composed_pixels(
   return presented;
 }
 
-void orbit_preview_surface_hide(void *handle) {
+void screenwide_preview_surface_hide(void *handle) {
   if (handle == NULL) return;
-  OrbitPreviewSurface *surface = (__bridge OrbitPreviewSurface *)handle;
+  ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   dispatch_async(dispatch_get_main_queue(), ^{
     surface.container.hidden = YES;
-    for (OrbitPreviewView *view in surface.views) view.hidden = YES;
+    for (ScreenwidePreviewView *view in surface.views) view.hidden = YES;
   });
 }
 
-void orbit_preview_surface_destroy(void *handle) {
+void screenwide_preview_surface_destroy(void *handle) {
   if (handle == NULL) return;
-  OrbitPreviewSurface *surface = (__bridge_transfer OrbitPreviewSurface *)handle;
+  ScreenwidePreviewSurface *surface = (__bridge_transfer ScreenwidePreviewSurface *)handle;
   dispatch_async(dispatch_get_main_queue(), ^{
-    for (OrbitPreviewView *view in surface.views) {
-      orbit_gpu_still_presenter_destroy(view.compositor);
+    for (ScreenwidePreviewView *view in surface.views) {
+      screenwide_gpu_still_presenter_destroy(view.compositor);
       view.compositor = NULL;
     }
     [surface.container removeFromSuperview];

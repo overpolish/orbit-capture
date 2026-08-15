@@ -4,7 +4,7 @@
 import { Disc, Mic, PersonStanding, Video } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 
-import logoUrl from "../../assets/orbit-capture-mark.svg";
+import logoUrl from "../../assets/screenwide-mark.svg";
 import { Button } from "../../components/base/button/button";
 
 import { restartApp } from "./api";
@@ -28,7 +28,7 @@ export function PermissionsWindow() {
       <div className="mb-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <img
-            alt="Orbit Capture"
+            alt="Screenwide"
             className="size-7 shrink-0 brightness-0 dark:invert"
             draggable={false}
             src={logoUrl}
@@ -51,7 +51,7 @@ export function PermissionsWindow() {
                 size="sm"
                 variant="soft"
               >
-                Restart Orbit Capture
+                Restart Screenwide
               </Button>
             </motion.div>
           ) : null}

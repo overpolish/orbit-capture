@@ -21,7 +21,7 @@ fn main() {
       .file("src/exports/recording_preview_scrubber_macos.m")
       .file("src/exports/recording_preview_surface_macos.m")
       .flag("-fobjc-arc")
-      .compile("orbit_capture_gpu_compositor");
+      .compile("screenwide_gpu_compositor");
     for framework in [
       "AVFoundation",
       "AppKit",

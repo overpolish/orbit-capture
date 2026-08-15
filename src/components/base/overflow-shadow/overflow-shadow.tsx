@@ -184,7 +184,7 @@ export const OverflowShadow = ({
           },
           scrollbars: {
             autoHide: "scroll",
-            theme: "os-theme-orbit-capture",
+            theme: "os-theme-screenwide",
             visibility: hideScrollbar ? "hidden" : "visible",
           },
         }}

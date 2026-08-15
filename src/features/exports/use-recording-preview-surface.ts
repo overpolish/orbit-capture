@@ -153,7 +153,7 @@ export function useRecordingPreviewSurface({
           queueMicrotask(() => {
             if (!disposed) {
               window.dispatchEvent(
-                new Event("orbit-preview-transform-committed"),
+                new Event("screenwide-preview-transform-committed"),
               );
             }
           });
@@ -184,7 +184,7 @@ export function useRecordingPreviewSurface({
         .finally(() => {
           if (!disposed && next.acknowledgeTransform) {
             window.dispatchEvent(
-              new Event("orbit-preview-transform-committed"),
+              new Event("screenwide-preview-transform-committed"),
             );
           }
           inFlight = false;
@@ -302,12 +302,15 @@ export function useRecordingPreviewSurface({
       event.preventDefault();
       measure(true);
     };
-    window.addEventListener("orbit-preview-transformed", onTransformed);
+    window.addEventListener("screenwide-preview-transformed", onTransformed);
     animation = requestAnimationFrame(update);
     return () => {
       disposed = true;
       cancelAnimationFrame(animation);
-      window.removeEventListener("orbit-preview-transformed", onTransformed);
+      window.removeEventListener(
+        "screenwide-preview-transformed",
+        onTransformed,
+      );
       clearBackdropMasks();
     };
   }, [

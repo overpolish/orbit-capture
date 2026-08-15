@@ -479,7 +479,7 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
   let device = capture::create_device()?;
   let stopped_at = Arc::new(OnceLock::new());
   let (commands, first_frame, worker) = spawn_writer(
-    "orbit-windows-recording-writer",
+    "screenwide-windows-recording-writer",
     WriterConfig {
       device: device.clone(),
       establish_timeline_origin: !camera_selected,
@@ -511,7 +511,7 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
     if let Some(spec) = camera_spec.take() {
       let camera_path = camera_path.ok_or_else(|| "The camera has nowhere to record".to_owned())?;
       let (camera_commands, camera_ready, camera_worker) = spawn_writer(
-        "orbit-windows-camera-writer",
+        "screenwide-windows-camera-writer",
         WriterConfig {
           device: device.clone(),
           establish_timeline_origin: false,
@@ -682,7 +682,7 @@ mod tests {
       .expect("the camera has no supported recording mode");
     let resolution = format.resolution();
     let path = std::env::temp_dir().join(format!(
-      "orbit-capture-windows-camera-{}.mp4",
+      "screenwide-windows-camera-{}.mp4",
       std::process::id()
     ));
     let _ = std::fs::remove_file(&path);
@@ -748,11 +748,11 @@ mod tests {
     let resolution = format.resolution();
     let directory = std::env::temp_dir();
     let screen_path = directory.join(format!(
-      "orbit-capture-windows-screen-camera-{}.mp4",
+      "screenwide-windows-screen-camera-{}.mp4",
       std::process::id()
     ));
     let camera_path = directory.join(format!(
-      "orbit-capture-windows-camera-sidecar-{}.mp4",
+      "screenwide-windows-camera-sidecar-{}.mp4",
       std::process::id()
     ));
     let _ = std::fs::remove_file(&screen_path);
@@ -811,7 +811,7 @@ mod tests {
     let monitor = xcap::Monitor::all().unwrap().into_iter().next().unwrap();
     let monitor_id = monitor.id().unwrap();
     let path = std::env::temp_dir().join(format!(
-      "orbit-capture-windows-recording-{}.mp4",
+      "screenwide-windows-recording-{}.mp4",
       std::process::id()
     ));
     let _ = std::fs::remove_file(&path);

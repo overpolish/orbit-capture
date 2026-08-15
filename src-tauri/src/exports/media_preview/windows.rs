@@ -55,7 +55,7 @@ impl Drop for Runtime {
 pub(in crate::exports) fn recording_info(path: &Path) -> Option<RecordingInfo> {
   let path = path.to_path_buf();
   std::thread::Builder::new()
-    .name("orbit-recording-metadata-windows".to_owned())
+    .name("screenwide-recording-metadata-windows".to_owned())
     .spawn(move || recording_info_result(&path))
     .ok()?
     .join()
@@ -98,22 +98,22 @@ mod tests {
   use windows::Win32::System::Com::COINIT_APARTMENTTHREADED;
 
   #[test]
-  #[ignore = "uses the video path in ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST"]
+  #[ignore = "uses the video path in SCREENWIDE_WINDOWS_PREVIEW_TEST"]
   fn reads_recording_metadata_without_ffprobe() {
-    let path = std::env::var_os("ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST")
+    let path = std::env::var_os("SCREENWIDE_WINDOWS_PREVIEW_TEST")
       .map(std::path::PathBuf::from)
-      .expect("set ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST to a recording");
+      .expect("set SCREENWIDE_WINDOWS_PREVIEW_TEST to a recording");
     let info = recording_info_result(&path).unwrap();
     assert!(info.duration_ms > 1_000);
     assert!(info.width > 0 && info.height > 0);
   }
 
   #[test]
-  #[ignore = "uses the video path in ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST"]
+  #[ignore = "uses the video path in SCREENWIDE_WINDOWS_PREVIEW_TEST"]
   fn reads_recording_metadata_from_an_sta_caller() {
-    let path = std::env::var_os("ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST")
+    let path = std::env::var_os("SCREENWIDE_WINDOWS_PREVIEW_TEST")
       .map(std::path::PathBuf::from)
-      .expect("set ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST to a recording");
+      .expect("set SCREENWIDE_WINDOWS_PREVIEW_TEST to a recording");
     let info = std::thread::spawn(move || {
       unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
         .ok()
@@ -130,11 +130,11 @@ mod tests {
   }
 
   #[test]
-  #[ignore = "uses the audio path in ORBIT_CAPTURE_WINDOWS_AUDIO_TEST"]
+  #[ignore = "uses the audio path in SCREENWIDE_WINDOWS_AUDIO_TEST"]
   fn reads_audio_only_metadata_without_ffprobe() {
-    let path = std::env::var_os("ORBIT_CAPTURE_WINDOWS_AUDIO_TEST")
+    let path = std::env::var_os("SCREENWIDE_WINDOWS_AUDIO_TEST")
       .map(std::path::PathBuf::from)
-      .expect("set ORBIT_CAPTURE_WINDOWS_AUDIO_TEST to an audio recording");
+      .expect("set SCREENWIDE_WINDOWS_AUDIO_TEST to an audio recording");
     let info = recording_info(&path).unwrap();
     assert!(info.duration_ms > 100);
     assert_eq!((info.width, info.height), (0, 0));

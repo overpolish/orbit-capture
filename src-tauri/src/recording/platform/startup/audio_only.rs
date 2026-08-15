@@ -32,7 +32,7 @@ pub(super) async fn begin(
     Arc::clone(&on_failure),
   )?;
   let worker = std::thread::Builder::new()
-    .name("orbit-audio-writer".to_owned())
+    .name("screenwide-audio-writer".to_owned())
     .spawn(move || writer.run(&inbox, first_frame))
     .map_err(|error| error.to_string())?;
 

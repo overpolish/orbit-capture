@@ -64,7 +64,7 @@ impl RawSink {
     let (sender, packets) = mpsc::sync_channel(128);
     let worker_path = path.clone();
     let worker = thread::Builder::new()
-      .name("orbit-windows-audio-writer".to_owned())
+      .name("screenwide-windows-audio-writer".to_owned())
       .spawn(move || write_raw(worker_path, sample_rate, channels, origin, packets))
       .map_err(|error| error.to_string())?;
     Ok(Self {
@@ -329,7 +329,7 @@ fn start_system(
   let thread_stop = Arc::clone(&stop);
   let (ready_tx, ready_rx) = mpsc::sync_channel(1);
   let thread = thread::Builder::new()
-    .name("orbit-windows-system-audio".to_owned())
+    .name("screenwide-windows-system-audio".to_owned())
     .spawn(move || {
       capture_system(
         process_id,

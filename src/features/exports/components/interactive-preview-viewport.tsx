@@ -100,7 +100,7 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
     // The native pane layout listens for this and measures synchronously, so
     // the surface below tracks a pan in the same frame instead of trailing by
     // an animation-frame of scheduling order.
-    const transformed = new Event("orbit-preview-transformed", {
+    const transformed = new Event("screenwide-preview-transformed", {
       bubbles: true,
       cancelable: true,
     });
@@ -222,10 +222,13 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
       nativeTransformPendingRef.current = false;
       applyTransform(false);
     };
-    window.addEventListener("orbit-preview-transform-committed", committed);
+    window.addEventListener(
+      "screenwide-preview-transform-committed",
+      committed,
+    );
     return () => {
       window.removeEventListener(
-        "orbit-preview-transform-committed",
+        "screenwide-preview-transform-committed",
         committed,
       );
     };

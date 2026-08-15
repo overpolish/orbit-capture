@@ -4,7 +4,7 @@
 import { Minus, X } from "lucide-react";
 import { ReactNode } from "react";
 
-import logoUrl from "../../../assets/orbit-capture-mark.svg";
+import logoUrl from "../../../assets/screenwide-mark.svg";
 import { Button } from "../../base/button/button";
 
 export function WindowTitlebar({
@@ -28,7 +28,7 @@ export function WindowTitlebar({
       data-tauri-drag-region="deep"
     >
       <img
-        alt="Orbit Capture"
+        alt="Screenwide"
         className="pointer-events-none size-5 shrink-0 brightness-0 dark:invert"
         data-tauri-drag-region
         draggable={false}

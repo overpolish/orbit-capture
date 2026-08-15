@@ -50,8 +50,7 @@ pub(super) fn prepare(
       height: spec.height,
       fps: spec.fps,
       // Both concurrent video writers use HEVC so VideoToolbox can keep
-      // independent hardware-backed sessions, matching Orbit Cursor's
-      // multi-video capture path on macOS.
+      // independent hardware-backed sessions for multi-video capture on macOS.
       encoder: VideoEncoder::Hevc,
       system_audio: false,
       microphone_format: None,
@@ -62,7 +61,7 @@ pub(super) fn prepare(
       source: VideoSource::Camera,
       timeline_origin: Arc::clone(timeline_origin),
     },
-    "orbit-camera-writer",
+    "screenwide-camera-writer",
   )?;
   let stream = camera::start(
     spec,

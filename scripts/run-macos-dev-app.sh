@@ -14,8 +14,8 @@ esac
 
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 workspace_directory=$(dirname -- "$script_directory")
-app_directory="$(dirname -- "$binary")/Orbit Capture.app"
-app_executable="$app_directory/Contents/MacOS/orbit-capture"
+app_directory="$(dirname -- "$binary")/Screenwide.app"
+app_executable="$app_directory/Contents/MacOS/screenwide"
 
 mkdir -p "$app_directory/Contents/MacOS" "$app_directory/Contents/Resources"
 cp "$script_directory/macos-dev-info.plist" "$app_directory/Contents/Info.plist"

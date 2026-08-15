@@ -13,7 +13,7 @@ use super::{
 /// A directory of this module's own, so a test that writes files cannot be
 /// confused by anything else on the machine.
 fn test_directory(name: &str) -> PathBuf {
-  let directory = std::env::temp_dir().join("orbit-capture-tests").join(name);
+  let directory = std::env::temp_dir().join("screenwide-tests").join(name);
   let _ = std::fs::remove_dir_all(&directory);
   std::fs::create_dir_all(&directory).unwrap();
   directory

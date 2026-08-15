@@ -46,9 +46,7 @@ const hashes = {
 const target = triples[`${platform}-${arch}`];
 
 if (!target) {
-  throw new Error(
-    `Orbit Capture does not package FFmpeg for ${platform}-${arch}`,
-  );
+  throw new Error(`Screenwide does not package FFmpeg for ${platform}-${arch}`);
 }
 if (typeof source !== "string" || source.length === 0) {
   throw new Error("ffmpeg-static did not provide a binary for this platform");

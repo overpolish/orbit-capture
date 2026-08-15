@@ -6,7 +6,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { MonitorDetails, RecordingMode, Region, WindowDetails } from "./types";
 
-const STORE_NAME = "orbit-capture-recording-source";
+const STORE_NAME = "screenwide-recording-source";
 
 type RecordingSourceStore = {
   isRegionEditing: boolean;

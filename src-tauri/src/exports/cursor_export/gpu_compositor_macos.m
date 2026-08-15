@@ -8,14 +8,14 @@
 
 #import "gpu_compositor_macos.h"
 
-typedef bool (*OrbitShouldCancel)(void *context);
-typedef void (*OrbitProgress)(void *context, uint64_t position_ms);
+typedef bool (*ScreenwideShouldCancel)(void *context);
+typedef void (*ScreenwideProgress)(void *context, uint64_t position_ms);
 
 typedef struct {
   uint64_t frame;
   int x;
   int y;
-} OrbitCursorPosition;
+} ScreenwideCursorPosition;
 
 typedef struct {
   int32_t x;
@@ -30,7 +30,7 @@ typedef struct {
   uint32_t crop_height;
   uint32_t crop_radius;
   uint32_t clip_at_video_edge;
-} OrbitOverlayUniforms;
+} ScreenwideOverlayUniforms;
 
 typedef struct {
   uint32_t crop_x;
@@ -43,7 +43,7 @@ typedef struct {
   uint32_t frame_height;
   uint32_t radius;
   uint32_t drop_shadow;
-} OrbitCameraOverlay;
+} ScreenwideCameraOverlay;
 
 typedef struct {
   uint32_t crop_x;
@@ -58,7 +58,7 @@ typedef struct {
   uint32_t source_width;
   uint32_t source_height;
   uint32_t drop_shadow;
-} OrbitCameraUniforms;
+} ScreenwideCameraUniforms;
 
 static NSString *const shader_source = @R"METAL(
 #include <metal_stdlib>
@@ -769,30 +769,30 @@ static NSArray<NSValue *> *read_positions(NSString *path, NSError **error) {
   [contents enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) {
     (void)stop;
     double seconds = 0.0;
-    OrbitCursorPosition position = {0, -100000, -100000};
+    ScreenwideCursorPosition position = {0, -100000, -100000};
     if (sscanf(line.UTF8String, "%lf overlay@cursor x %d, overlay@cursor y %d;",
                &seconds, &position.x, &position.y) == 3) {
       position.frame = (uint64_t)llround(seconds * 60.0);
       [positions
           addObject:[NSValue valueWithBytes:&position
-                                   objCType:@encode(OrbitCursorPosition)]];
+                                   objCType:@encode(ScreenwideCursorPosition)]];
     }
   }];
   return positions;
 }
 
-static OrbitCursorPosition position_at(NSArray<NSValue *> *positions,
+static ScreenwideCursorPosition position_at(NSArray<NSValue *> *positions,
                                        NSUInteger *index, uint64_t frame) {
   while (*index + 1 < positions.count) {
-    OrbitCursorPosition next;
+    ScreenwideCursorPosition next;
     [positions[*index + 1] getValue:&next size:sizeof(next)];
     if (next.frame > frame)
       break;
     ++*index;
   }
-  OrbitCursorPosition position = {0, -100000, -100000};
+  ScreenwideCursorPosition position = {0, -100000, -100000};
   if (positions.count > 0) {
-    OrbitCursorPosition candidate;
+    ScreenwideCursorPosition candidate;
     [positions[*index] getValue:&candidate size:sizeof(candidate)];
     if (candidate.frame <= frame)
       position = candidate;
@@ -818,7 +818,7 @@ reader_output(AVAssetReader *reader, AVAssetTrack *track, OSType format,
   output.alwaysCopiesSampleData = NO;
   if (![reader canAddOutput:output]) {
     if (error != NULL) {
-      *error = [NSError errorWithDomain:@"OrbitCaptureGPUCompositor"
+      *error = [NSError errorWithDomain:@"ScreenwideGPUCompositor"
                                    code:1
                                userInfo:@{
                                  NSLocalizedDescriptionKey :
@@ -843,16 +843,16 @@ static id<MTLTexture> texture(CVMetalTextureCacheRef cache,
   return CVMetalTextureGetTexture(*reference);
 }
 
-int orbit_gpu_composite_cursor(const char *screen_path, const char *cursor_path,
+int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_path,
                                const char *commands_path,
                                const char *camera_path,
-                               const OrbitCameraOverlay *camera_overlay,
-                               const OrbitCanvas *canvas,
+                               const ScreenwideCameraOverlay *camera_overlay,
+                               const ScreenwideCanvas *canvas,
                                const char *output_path, uint32_t source_width,
                                uint32_t source_height, uint32_t output_width,
                                uint32_t output_height, uint64_t bitrate,
-                               void *context, OrbitShouldCancel should_cancel,
-                               OrbitProgress progress, char *error_text,
+                               void *context, ScreenwideShouldCancel should_cancel,
+                               ScreenwideProgress progress, char *error_text,
                                size_t error_capacity) {
   (void)source_width;
   (void)source_height;
@@ -1079,7 +1079,7 @@ int orbit_gpu_composite_cursor(const char *screen_path, const char *cursor_path,
             destination == NULL) {
           CFRelease(screen_sample);
           error =
-              [NSError errorWithDomain:@"OrbitCaptureGPUCompositor"
+              [NSError errorWithDomain:@"ScreenwideGPUCompositor"
                                   code:2
                               userInfo:@{
                                 NSLocalizedDescriptionKey :
@@ -1143,9 +1143,9 @@ int orbit_gpu_composite_cursor(const char *screen_path, const char *cursor_path,
           id<MTLTexture> cursor_texture =
               texture(texture_cache, cursor_pixels, MTLPixelFormatBGRA8Unorm,
                       cursor_width, cursor_height, 0, &cursor_ref);
-          OrbitCursorPosition position =
+          ScreenwideCursorPosition position =
               position_at(positions, &position_index, cursor_frame);
-          OrbitOverlayUniforms uniforms = {
+          ScreenwideOverlayUniforms uniforms = {
               position.x,
               position.y,
               (uint32_t)cursor_width,
@@ -1188,7 +1188,7 @@ int orbit_gpu_composite_cursor(const char *screen_path, const char *cursor_path,
           id<MTLTexture> camera_texture =
               texture(texture_cache, camera_pixels, MTLPixelFormatBGRA8Unorm,
                       camera_width, camera_height, 0, &camera_ref);
-          OrbitCameraUniforms camera_uniforms = {
+          ScreenwideCameraUniforms camera_uniforms = {
               camera_overlay->crop_x,
               camera_overlay->crop_y,
               camera_overlay->crop_width,
@@ -1250,7 +1250,7 @@ int orbit_gpu_composite_cursor(const char *screen_path, const char *cursor_path,
         if (command.status == MTLCommandBufferStatusError ||
             ![adaptor appendPixelBuffer:destination withPresentationTime:pts]) {
           error = command.error ?: writer.error ?:
-              [NSError errorWithDomain:@"OrbitCaptureGPUCompositor"
+              [NSError errorWithDomain:@"ScreenwideGPUCompositor"
                                   code:3
                               userInfo:@{NSLocalizedDescriptionKey :
                                            @"The GPU encoder rejected a video frame"}];
@@ -1316,16 +1316,16 @@ int orbit_gpu_composite_cursor(const char *screen_path, const char *cursor_path,
   }
 }
 
-int orbit_gpu_composite_still(const uint8_t *source_rgba,
+int screenwide_gpu_composite_still(const uint8_t *source_rgba,
                               uint32_t source_width,
                               uint32_t source_height,
-                              const OrbitCanvas *canvas,
+                              const ScreenwideCanvas *canvas,
                               uint32_t output_width,
                               uint32_t output_height,
                               double seconds,
                               const uint8_t *cursor_rgba,
                               const uint8_t *camera_rgba,
-                              const OrbitStillOverlay *overlay,
+                              const ScreenwideStillOverlay *overlay,
                               uint8_t *output_rgba,
                               char *error_text,
                               size_t error_capacity) {
@@ -1371,7 +1371,7 @@ int orbit_gpu_composite_still(const uint8_t *source_rgba,
     id<MTLBuffer> uniforms = [device newBufferWithBytes:canvas
                                                  length:sizeof(*canvas)
                                                 options:MTLResourceStorageModeShared];
-    OrbitStillOverlay empty_overlay = {0};
+    ScreenwideStillOverlay empty_overlay = {0};
     if (overlay == NULL) overlay = &empty_overlay;
     id<MTLBuffer> cursor = cursor_rgba == NULL
         ? [device newBufferWithLength:4 options:MTLResourceStorageModeShared]
@@ -1420,7 +1420,7 @@ int orbit_gpu_composite_still(const uint8_t *source_rgba,
   }
 }
 
-@interface OrbitStillPresenter : NSObject
+@interface ScreenwideStillPresenter : NSObject
 @property(nonatomic, strong) id<MTLDevice> device;
 @property(nonatomic, strong) id<MTLCommandQueue> queue;
 @property(nonatomic, strong) id<MTLComputePipelineState> pipeline;
@@ -1436,15 +1436,15 @@ int orbit_gpu_composite_still(const uint8_t *source_rgba,
 @property(nonatomic) uint32_t cameraHeight;
 @end
 
-@implementation OrbitStillPresenter
+@implementation ScreenwideStillPresenter
 - (void)dealloc {
   if (_textureCache != NULL) CFRelease(_textureCache);
 }
 @end
 
-void *orbit_gpu_still_presenter_create(void) {
+void *screenwide_gpu_still_presenter_create(void) {
   @autoreleasepool {
-    OrbitStillPresenter *presenter = [OrbitStillPresenter new];
+    ScreenwideStillPresenter *presenter = [ScreenwideStillPresenter new];
     presenter.device = MTLCreateSystemDefaultDevice();
     NSError *error = nil;
     id<MTLLibrary> library =
@@ -1464,7 +1464,7 @@ void *orbit_gpu_still_presenter_create(void) {
   }
 }
 
-static id<MTLTexture> preview_texture(OrbitStillPresenter *presenter,
+static id<MTLTexture> preview_texture(ScreenwideStillPresenter *presenter,
                                       CVPixelBufferRef pixels,
                                       CVMetalTextureRef *reference) {
   size_t width = CVPixelBufferGetWidth(pixels);
@@ -1476,7 +1476,7 @@ static id<MTLTexture> preview_texture(OrbitStillPresenter *presenter,
       ? CVMetalTextureGetTexture(*reference) : nil;
 }
 
-static id<MTLBuffer> unpack_pixels(OrbitStillPresenter *presenter,
+static id<MTLBuffer> unpack_pixels(ScreenwideStillPresenter *presenter,
                                    CVPixelBufferRef pixels,
                                    id<MTLCommandBuffer> command,
                                    CVMetalTextureRef *reference) {
@@ -1499,16 +1499,16 @@ static id<MTLBuffer> unpack_pixels(OrbitStillPresenter *presenter,
   return output;
 }
 
-int orbit_gpu_still_presenter_present_pixels(
+int screenwide_gpu_still_presenter_present_pixels(
     void *handle, void *metal_layer, uint64_t source_token,
-    void *source_pixels_handle, const OrbitCanvas *canvas, double seconds,
+    void *source_pixels_handle, const ScreenwideCanvas *canvas, double seconds,
     const uint8_t *cursor_rgba, const uint8_t *camera_rgba,
     void *camera_pixels_handle,
-    const OrbitStillOverlay *overlay) {
+    const ScreenwideStillOverlay *overlay) {
   if (handle == NULL || metal_layer == NULL || source_pixels_handle == NULL ||
       canvas == NULL) return 0;
   @autoreleasepool {
-    OrbitStillPresenter *presenter = (__bridge OrbitStillPresenter *)handle;
+    ScreenwideStillPresenter *presenter = (__bridge ScreenwideStillPresenter *)handle;
     CAMetalLayer *layer = (__bridge CAMetalLayer *)metal_layer;
     CVPixelBufferRef source_pixels = (CVPixelBufferRef)source_pixels_handle;
     uint32_t source_width = (uint32_t)CVPixelBufferGetWidth(source_pixels);
@@ -1525,7 +1525,7 @@ int orbit_gpu_still_presenter_present_pixels(
       presenter.sourceWidth = source_width;
       presenter.sourceHeight = source_height;
     }
-    OrbitStillOverlay empty_overlay = {0};
+    ScreenwideStillOverlay empty_overlay = {0};
     if (overlay == NULL) overlay = &empty_overlay;
     id<MTLBuffer> uniforms = [presenter.device newBufferWithBytes:canvas
       length:sizeof(*canvas) options:MTLResourceStorageModeShared];
@@ -1589,15 +1589,15 @@ int orbit_gpu_still_presenter_present_pixels(
   }
 }
 
-int orbit_gpu_still_presenter_present(
+int screenwide_gpu_still_presenter_present(
     void *handle, void *metal_layer, uint64_t source_token,
     const uint8_t *source_rgba, uint32_t source_width, uint32_t source_height,
-    const OrbitCanvas *canvas, double seconds, const uint8_t *cursor_rgba,
-    const uint8_t *camera_rgba, const OrbitStillOverlay *overlay) {
+    const ScreenwideCanvas *canvas, double seconds, const uint8_t *cursor_rgba,
+    const uint8_t *camera_rgba, const ScreenwideStillOverlay *overlay) {
   if (handle == NULL || metal_layer == NULL || source_rgba == NULL ||
       canvas == NULL || source_width == 0 || source_height == 0) return 0;
   @autoreleasepool {
-    OrbitStillPresenter *presenter = (__bridge OrbitStillPresenter *)handle;
+    ScreenwideStillPresenter *presenter = (__bridge ScreenwideStillPresenter *)handle;
     CAMetalLayer *layer = (__bridge CAMetalLayer *)metal_layer;
     if (presenter.source == nil || presenter.sourceToken != source_token ||
         presenter.sourceWidth != source_width || presenter.sourceHeight != source_height) {
@@ -1610,7 +1610,7 @@ int orbit_gpu_still_presenter_present(
     }
     id<CAMetalDrawable> drawable = [layer nextDrawable];
     if (drawable == nil) return 0;
-    OrbitStillOverlay empty_overlay = {0};
+    ScreenwideStillOverlay empty_overlay = {0};
     if (overlay == NULL) overlay = &empty_overlay;
     id<MTLBuffer> uniforms = [presenter.device newBufferWithBytes:canvas
       length:sizeof(*canvas) options:MTLResourceStorageModeShared];
@@ -1651,6 +1651,6 @@ int orbit_gpu_still_presenter_present(
   }
 }
 
-void orbit_gpu_still_presenter_destroy(void *handle) {
+void screenwide_gpu_still_presenter_destroy(void *handle) {
   if (handle != NULL) CFBridgingRelease(handle);
 }

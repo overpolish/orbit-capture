@@ -53,17 +53,17 @@ impl Renderer {
       })?;
     let (device, queue) = adapter
       .request_device(&wgpu::DeviceDescriptor {
-        label: Some("Orbit Capture mesh renderer"),
+        label: Some("Screenwide mesh renderer"),
         ..Default::default()
       })
       .await
       .map_err(|error| format!("The graphics device could not be opened: {error}"))?;
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label: Some("Orbit Capture mesh shader"),
+      label: Some("Screenwide mesh shader"),
       source: wgpu::ShaderSource::Wgsl(SHADER.into()),
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-      label: Some("Orbit Capture mesh pipeline"),
+      label: Some("Screenwide mesh pipeline"),
       layout: None,
       module: &shader,
       entry_point: Some("main"),
@@ -81,12 +81,12 @@ impl Renderer {
     let uniform_buffer = self
       .device
       .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Orbit Capture mesh parameters"),
+        label: Some("Screenwide mesh parameters"),
         contents: bytemuck::bytes_of(uniforms),
         usage: wgpu::BufferUsages::UNIFORM,
       });
     let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-      label: Some("Orbit Capture mesh output"),
+      label: Some("Screenwide mesh output"),
       size: wgpu::Extent3d {
         width,
         height,
@@ -101,7 +101,7 @@ impl Renderer {
     });
     let view = texture.create_view(&Default::default());
     let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-      label: Some("Orbit Capture mesh bindings"),
+      label: Some("Screenwide mesh bindings"),
       layout: &self.pipeline.get_bind_group_layout(0),
       entries: &[
         wgpu::BindGroupEntry {
@@ -118,7 +118,7 @@ impl Renderer {
     let bytes_per_row = unpadded_bytes_per_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
       * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let output = self.device.create_buffer(&wgpu::BufferDescriptor {
-      label: Some("Orbit Capture mesh readback"),
+      label: Some("Screenwide mesh readback"),
       size: u64::from(bytes_per_row) * u64::from(height),
       usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
       mapped_at_creation: false,
@@ -126,11 +126,11 @@ impl Renderer {
     let mut encoder = self
       .device
       .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("Orbit Capture mesh commands"),
+        label: Some("Screenwide mesh commands"),
       });
     {
       let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-        label: Some("Orbit Capture mesh pass"),
+        label: Some("Screenwide mesh pass"),
         timestamp_writes: None,
       });
       pass.set_pipeline(&self.pipeline);

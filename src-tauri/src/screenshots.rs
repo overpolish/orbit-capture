@@ -98,7 +98,7 @@ pub enum ScreenshotDestination {
 /// the moment they started, so a session's files sit together in order.
 pub fn capture_file_stem(captured_at: NaiveDateTime) -> String {
   captured_at
-    .format("Orbit Capture %Y-%m-%d at %H.%M.%S")
+    .format("Screenwide %Y-%m-%d at %H.%M.%S")
     .to_string()
 }
 
@@ -145,7 +145,7 @@ pub(crate) async fn capture(
   show_cursor: bool,
 ) -> Result<CapturedImage, String> {
   // Read as the shutter fires, the same way a recording reads it as it starts.
-  let include_own_windows = crate::settings::current(app).record_orbit_windows;
+  let include_own_windows = crate::settings::current(app).record_screenwide_windows;
 
   #[cfg(target_os = "macos")]
   {

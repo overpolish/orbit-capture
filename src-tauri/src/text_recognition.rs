@@ -216,7 +216,7 @@ pub async fn capture_text_region(
   #[cfg(target_os = "windows")]
   set_recognition_capture_protected(
     &window,
-    !crate::settings::current(&app).record_orbit_windows,
+    !crate::settings::current(&app).record_screenwide_windows,
   )?;
   let image = image?;
   let image_png = screenshots::encoding::encode_truecolor_png(&image)?;

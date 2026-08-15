@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "macos-permissions",
-  "description": "macOS permission access for Orbit Capture",
+  "description": "macOS permission access for Screenwide",
   "windows": [
     "export",
     "recording-bar",

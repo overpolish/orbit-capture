@@ -16,7 +16,7 @@ pub struct GeneralSettings {
   pub recording_directory: Option<PathBuf>,
   pub screenshot_directory: Option<PathBuf>,
   pub open_location_after_export: bool,
-  pub record_orbit_windows: bool,
+  pub record_screenwide_windows: bool,
   pub show_recording_confidence_checks: bool,
   pub launch_at_login: bool,
   pub show_recording_bar_on_launch: bool,
@@ -29,7 +29,7 @@ impl Default for GeneralSettings {
       recording_directory: None,
       screenshot_directory: None,
       open_location_after_export: false,
-      record_orbit_windows: false,
+      record_screenwide_windows: false,
       show_recording_confidence_checks: true,
       launch_at_login: false,
       show_recording_bar_on_launch: true,
@@ -126,16 +126,17 @@ pub fn set_general_settings(
   }
   #[cfg(target_os = "windows")]
   let capture_affinity_changed =
-    settings.record_orbit_windows != current_settings.record_orbit_windows;
+    settings.record_screenwide_windows != current_settings.record_screenwide_windows;
   #[cfg(target_os = "windows")]
   if capture_affinity_changed {
-    crate::windows::sync_capture_affinity(&app, settings.record_orbit_windows)
+    crate::windows::sync_capture_affinity(&app, settings.record_screenwide_windows)
       .map_err(|error| error.to_string())?;
   }
   if let Err(error) = write(&app, &settings) {
     #[cfg(target_os = "windows")]
     if capture_affinity_changed {
-      let _ = crate::windows::sync_capture_affinity(&app, current_settings.record_orbit_windows);
+      let _ =
+        crate::windows::sync_capture_affinity(&app, current_settings.record_screenwide_windows);
     }
     return Err(error);
   }
