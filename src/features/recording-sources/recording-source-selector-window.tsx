@@ -184,7 +184,10 @@ export function RecordingSourceSelectorWindow() {
                   <WindowSelector
                     error={windowsError}
                     isLoading={windowsLoading}
-                    onSelect={setSelectedWindow}
+                    onSelect={(window) => {
+                      setSelectedWindow(window);
+                      void collapseRecordingSourceSelector();
+                    }}
                     selectedWindow={selectedWindow}
                     windows={windows}
                   />

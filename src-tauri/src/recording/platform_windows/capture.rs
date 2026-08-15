@@ -11,7 +11,8 @@ use windows::Graphics::Capture::{
   Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession,
 };
 use windows::Graphics::DirectX::{Direct3D11::IDirect3DDevice, DirectXPixelFormat};
-use windows::Win32::Foundation::HMODULE;
+use windows::Graphics::SizeInt32;
+use windows::Win32::Foundation::{HMODULE, HWND};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
   D3D11CreateDevice, ID3D11Device, ID3D11Texture2D, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -25,6 +26,36 @@ use windows::Win32::System::WinRT::Direct3D11::{
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 
 use super::writer::{Command, Frame};
+
+#[derive(Clone, Copy)]
+pub(super) enum CaptureTarget {
+  Monitor(u32),
+  Window(u32),
+}
+
+impl CaptureTarget {
+  fn item(self) -> Result<GraphicsCaptureItem, String> {
+    let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
+      .map_err(|error| error.to_string())?;
+    unsafe {
+      match self {
+        Self::Monitor(id) => interop.CreateForMonitor(HMONITOR(id as usize as *mut c_void)),
+        Self::Window(id) => interop.CreateForWindow(HWND(id as usize as *mut c_void)),
+      }
+    }
+    .map_err(|error| error.to_string())
+  }
+}
+
+pub(super) fn target_size(target: CaptureTarget) -> Result<(u32, u32), String> {
+  let size = target.item()?.Size().map_err(|error| error.to_string())?;
+  let width = u32::try_from(size.Width).unwrap_or_default() & !1;
+  let height = u32::try_from(size.Height).unwrap_or_default() & !1;
+  if width < 2 || height < 2 {
+    return Err("The selected capture source has no recordable area".to_owned());
+  }
+  Ok((width, height))
+}
 
 pub(super) fn create_device() -> Result<ID3D11Device, String> {
   let mut device = None;
@@ -55,16 +86,17 @@ pub(super) struct CaptureObjects {
 impl CaptureObjects {
   pub(super) fn start(
     device: ID3D11Device,
-    monitor_id: u32,
+    target: CaptureTarget,
+    width: u32,
+    height: u32,
     show_cursor: bool,
     commands: SyncSender<Command>,
   ) -> Result<Self, String> {
-    let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
-      .map_err(|error| error.to_string())?;
-    let monitor = HMONITOR(monitor_id as usize as *mut c_void);
-    let item = unsafe { interop.CreateForMonitor::<GraphicsCaptureItem>(monitor) }
-      .map_err(|error| error.to_string())?;
-    let size = item.Size().map_err(|error| error.to_string())?;
+    let item = target.item()?;
+    let size = SizeInt32 {
+      Width: i32::try_from(width).map_err(|_| "The capture width is too large")?,
+      Height: i32::try_from(height).map_err(|_| "The capture height is too large")?,
+    };
     let dxgi = device
       .cast::<IDXGIDevice>()
       .map_err(|error| error.to_string())?;

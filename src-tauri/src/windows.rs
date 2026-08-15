@@ -203,7 +203,14 @@ fn selector_frames(
   ))
 }
 
-fn animate_selector(window: WebviewWindow, from: SelectorFrame, to: SelectorFrame) {
+fn animate_selector<F>(
+  window: WebviewWindow,
+  from: SelectorFrame,
+  to: SelectorFrame,
+  on_complete: F,
+) where
+  F: FnOnce() + Send + 'static,
+{
   let animation = SELECTOR_ANIMATION.fetch_add(1, Ordering::Relaxed) + 1;
   tauri::async_runtime::spawn_blocking(move || {
     for step in 1..=ANIMATION_STEPS {
@@ -226,6 +233,10 @@ fn animate_selector(window: WebviewWindow, from: SelectorFrame, to: SelectorFram
       let _ = window.set_position(position);
       let _ = window.set_size(size);
       std::thread::sleep(Duration::from_millis(10));
+    }
+
+    if SELECTOR_ANIMATION.load(Ordering::Relaxed) == animation {
+      on_complete();
     }
   });
 }
@@ -310,7 +321,7 @@ pub fn toggle_recording_source_selector(
     "recording-source-selector://expanded",
     placement,
   )?;
-  animate_selector(window, collapsed, expanded);
+  animate_selector(window, collapsed, expanded, || {});
 
   Ok(())
 }
@@ -473,12 +484,14 @@ pub fn collapse_recording_source_selector(app: AppHandle) -> tauri::Result<()> {
     position: window.outer_position()?.to_logical(scale),
     size: window.outer_size()?.to_logical(scale),
   };
-  app.emit_to(
-    WindowLabel::RecordingSourceSelector.as_str(),
-    "recording-source-selector://collapsed",
-    (),
-  )?;
-  animate_selector(window, current, collapsed);
+  let event_app = app.clone();
+  animate_selector(window, current, collapsed, move || {
+    let _ = event_app.emit_to(
+      WindowLabel::RecordingSourceSelector.as_str(),
+      "recording-source-selector://collapsed",
+      (),
+    );
+  });
 
   Ok(())
 }

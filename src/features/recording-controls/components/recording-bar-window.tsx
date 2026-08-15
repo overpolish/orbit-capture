@@ -26,6 +26,7 @@ import {
   finishRecordingBarDrag,
   hideRecordingUi,
   hideRegionSelector,
+  listWindows,
   recordingUiVisible,
   setRecordingSourceSelectorVisible,
   showRegionSelector,
@@ -45,6 +46,28 @@ const RECORDING_ERROR_EVENT = "recording://error";
 const SHORTCUT_ACTION_EVENT = "global-shortcut://action";
 /** How long the screenshot button holds its outcome before going back to idle. */
 const SCREENSHOT_FEEDBACK_MS = 2000;
+
+const validateSelectedWindow = async () => {
+  const selected = useRecordingSourceStore.getState().selectedWindow;
+  if (!selected) return;
+
+  try {
+    const available = await listWindows();
+    const { selectedWindow, setSelectedWindow } =
+      useRecordingSourceStore.getState();
+    if (!selectedWindow) return;
+    if (
+      !available.some(
+        (window) =>
+          window.id === selectedWindow.id && window.pid === selectedWindow.pid,
+      )
+    ) {
+      setSelectedWindow(null);
+    }
+  } catch (error) {
+    console.error("Could not validate the selected window", error);
+  }
+};
 
 const synchronizeRecordingUi = async (
   mode = useRecordingSourceStore.getState().recordingMode,
@@ -164,6 +187,7 @@ export function RecordingBarWindow() {
         receivedVisibilityEvent = true;
         setIsRecordingUiVisible(true);
         void synchronizeRecordingUi();
+        void validateSelectedWindow();
       }),
       listen("recording-ui://hidden", () => {
         receivedVisibilityEvent = true;
@@ -191,6 +215,7 @@ export function RecordingBarWindow() {
         .then((visible) => {
           if (!disposed && !receivedVisibilityEvent) {
             setIsRecordingUiVisible(visible);
+            if (visible) void validateSelectedWindow();
           }
         })
         .catch(() => {});

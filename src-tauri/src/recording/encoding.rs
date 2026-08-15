@@ -226,6 +226,19 @@ impl Timeline {
       .max(0)
   }
 
+  /// Produces a video timestamp from the monotonic wall clock and advances
+  /// the same ordering guard used by source-timestamped frames. Windows uses
+  /// this for change-driven windows and GPU-cropped regions, keeping their
+  /// presentation cadence fixed even when capture delivery is uneven.
+  pub fn wall_frame_pts_ns(&mut self, wall_ns: i64) -> i64 {
+    let mut pts = self.wall_pts_ns(wall_ns);
+    if let Some(last) = self.last_pts_ns {
+      pts = pts.max(last.saturating_add(ONE_NS));
+    }
+    self.last_pts_ns = Some(pts);
+    pts
+  }
+
   /// Where the movie ends, in its own timeline. This is also the point the
   /// cached final frame is appended at, so a static screen still produces a
   /// movie as long as the user watched it.

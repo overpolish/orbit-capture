@@ -16,8 +16,10 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use capture::CaptureObjects;
+use capture::{CaptureObjects, CaptureTarget};
 use writer::{Command, WriterConfig};
+
+use crate::capture_geometry::{physical_capture_rect, video_capture_rect, CaptureRect};
 
 use super::encoding::FinalizeInfo;
 use super::{
@@ -303,8 +305,17 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
     return Err("No camera is selected to record".to_owned());
   }
   let camera_selected = camera_spec.is_some();
-  let mut screen_source = None;
-  let (width, height, fps, primary_kind, source_scale_factor, cursor_source) = match primary {
+  let mut graphics_source = None;
+  let mut source_crop: Option<CaptureRect> = None;
+  let (
+    width,
+    height,
+    fps,
+    primary_kind,
+    source_scale_factor,
+    cursor_source,
+    wall_timestamped_frames,
+  ) = match primary {
     PrimaryCaptureSource::Screen {
       fps,
       monitor_id,
@@ -323,7 +334,12 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
       if width < 2 || height < 2 {
         return Err("The selected monitor has no recordable area".to_owned());
       }
-      screen_source = Some((monitor_id, show_cursor));
+      graphics_source = Some((
+        CaptureTarget::Monitor(monitor_id),
+        width,
+        height,
+        show_cursor,
+      ));
       (
         width,
         height,
@@ -340,6 +356,100 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
           x: f64::from(monitor_x),
           y: f64::from(monitor_y),
         }),
+        false,
+      )
+    }
+    PrimaryCaptureSource::Region {
+      fps,
+      monitor_id,
+      region,
+      show_cursor,
+    } => {
+      let monitor = xcap::Monitor::all()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|monitor| monitor.id().ok() == Some(monitor_id))
+        .ok_or_else(|| "The selected monitor is no longer available".to_owned())?;
+      let source_scale_factor = monitor.scale_factor().map_err(|error| error.to_string())?;
+      let monitor_x = monitor.x().map_err(|error| error.to_string())?;
+      let monitor_y = monitor.y().map_err(|error| error.to_string())?;
+      let monitor_width = monitor.width().map_err(|error| error.to_string())?;
+      let monitor_height = monitor.height().map_err(|error| error.to_string())?;
+      let crop = physical_capture_rect(
+        region,
+        f64::from(source_scale_factor),
+        monitor_width,
+        monitor_height,
+      )
+      .and_then(video_capture_rect)
+      .ok_or_else(|| "The selected region is too small or outside the monitor".to_owned())?;
+      source_crop = Some(crop);
+      graphics_source = Some((
+        CaptureTarget::Monitor(monitor_id),
+        monitor_width,
+        monitor_height,
+        show_cursor,
+      ));
+      (
+        crop.width,
+        crop.height,
+        fps,
+        super::encoding::PrimaryRecordingKind::Screen,
+        source_scale_factor,
+        Some(CursorSource {
+          height: f64::from(crop.height),
+          kind: CursorSourceKind::Region,
+          platform_id: monitor_id.to_string(),
+          video_height: crop.height,
+          video_width: crop.width,
+          width: f64::from(crop.width),
+          x: f64::from(monitor_x) + f64::from(crop.x),
+          y: f64::from(monitor_y) + f64::from(crop.y),
+        }),
+        true,
+      )
+    }
+    PrimaryCaptureSource::Window {
+      fps,
+      show_cursor,
+      window_id,
+    } => {
+      let window = xcap::Window::all()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|window| window.id().ok() == Some(window_id))
+        .ok_or_else(|| "The selected window is no longer available".to_owned())?;
+      if window.is_minimized().unwrap_or(true) {
+        return Err("The selected window is minimized".to_owned());
+      }
+      let target = CaptureTarget::Window(window_id);
+      let (width, height) = capture::target_size(target)?;
+      let window_x = window.x().map_err(|error| error.to_string())?;
+      let window_y = window.y().map_err(|error| error.to_string())?;
+      let window_width = window.width().map_err(|error| error.to_string())?;
+      let window_height = window.height().map_err(|error| error.to_string())?;
+      let source_scale_factor = window
+        .current_monitor()
+        .and_then(|monitor| monitor.scale_factor())
+        .unwrap_or(1.0);
+      graphics_source = Some((target, width, height, show_cursor));
+      (
+        width,
+        height,
+        fps,
+        super::encoding::PrimaryRecordingKind::Screen,
+        source_scale_factor,
+        Some(CursorSource {
+          height: f64::from(window_height),
+          kind: CursorSourceKind::Window,
+          platform_id: window_id.to_string(),
+          video_height: height,
+          video_width: width,
+          width: f64::from(window_width),
+          x: f64::from(window_x),
+          y: f64::from(window_y),
+        }),
+        true,
       )
     }
     PrimaryCaptureSource::Camera => {
@@ -351,6 +461,7 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
         super::encoding::PrimaryRecordingKind::Camera,
         1.0,
         None,
+        false,
       )
     }
     _ => return Err("This recording source is not yet available on Windows".to_owned()),
@@ -377,8 +488,10 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
       on_failure: Arc::clone(&on_failure),
       path,
       primary_kind,
+      source_crop,
       stopped_at: Arc::clone(&stopped_at),
       timeline_origin: Arc::clone(&timeline_origin),
+      wall_timestamped_frames,
       width,
     },
   )?;
@@ -407,8 +520,10 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
           on_failure: Arc::clone(&on_failure),
           path: camera_path.clone(),
           primary_kind: super::encoding::PrimaryRecordingKind::Camera,
+          source_crop: None,
           stopped_at: Arc::clone(&session.stopped_at),
           timeline_origin: Arc::clone(&timeline_origin),
+          wall_timestamped_frames: false,
           width: spec.width,
         },
       )?;
@@ -429,12 +544,14 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
       });
     }
   }
-  if let Some((monitor_id, show_cursor)) = screen_source {
+  if let Some((target, capture_width, capture_height, show_cursor)) = graphics_source {
     // Match the user's capture choice exactly. Cursor metadata remains a
     // separate editable layer even when native pixels include the pointer.
     session.capture = Some(CaptureObjects::start(
       device,
-      monitor_id,
+      target,
+      capture_width,
+      capture_height,
       show_cursor,
       commands,
     )?);
@@ -471,11 +588,15 @@ type WriterSpawn = (
 
 fn spawn_writer(name: &str, config: WriterConfig) -> Result<WriterSpawn, String> {
   let (commands, command_rx) = mpsc::sync_channel(8);
+  let (initialized_tx, initialized) = mpsc::channel();
   let (first_frame_tx, first_frame) = mpsc::channel();
   let worker = std::thread::Builder::new()
     .name(name.to_owned())
-    .spawn(move || writer::run(config, command_rx, first_frame_tx))
+    .spawn(move || writer::run(config, command_rx, initialized_tx, first_frame_tx))
     .map_err(|error| error.to_string())?;
+  initialized
+    .recv()
+    .map_err(|_| "The recording writer stopped during startup".to_owned())??;
   Ok((commands, first_frame, worker))
 }
 

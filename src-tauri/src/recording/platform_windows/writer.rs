@@ -3,22 +3,103 @@
 
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use windows::core::{Interface, PCWSTR};
-use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
+use windows::Win32::Graphics::Direct3D11::{
+  ID3D11Device, ID3D11Resource, ID3D11Texture2D, D3D11_BIND_RENDER_TARGET,
+  D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+};
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
+use crate::capture_geometry::CaptureRect;
 use crate::recording::encoding::{bitrate_bps, FailureReport, FinalizeInfo, Timeline};
 use crate::recording::PrimaryRecordingKind;
 
 const NANOS_PER_100NS: i64 = 100;
 
+fn frame_cadence(fps: u32) -> Duration {
+  Duration::from_nanos(1_000_000_000_u64 / u64::from(fps.max(1)))
+}
+
 fn win<T>(result: windows::core::Result<T>) -> Result<T, String> {
   result.map_err(|error| error.to_string())
 }
 
+/// Takes ownership of window content before WGC can recycle its frame-pool
+/// surface. The copy never leaves the GPU; Media Foundation may safely retain
+/// samples that refer to this immutable texture while a later WGC frame is
+/// being cached.
+fn snapshot_frame(device: &ID3D11Device, mut frame: Frame) -> Result<Frame, String> {
+  let mut source_description = D3D11_TEXTURE2D_DESC::default();
+  unsafe { frame.texture.GetDesc(&mut source_description) };
+  let description = D3D11_TEXTURE2D_DESC {
+    Usage: D3D11_USAGE_DEFAULT,
+    BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE).0 as u32,
+    CPUAccessFlags: 0,
+    MiscFlags: 0,
+    ..source_description
+  };
+  let mut texture = None;
+  unsafe { device.CreateTexture2D(&description, None, Some(&mut texture)) }
+    .map_err(|error| error.to_string())?;
+  let texture = texture.ok_or_else(|| "Direct3D created no cached window frame".to_owned())?;
+  let context = unsafe { device.GetImmediateContext() }.map_err(|error| error.to_string())?;
+  let source = frame
+    .texture
+    .cast::<ID3D11Resource>()
+    .map_err(|error| error.to_string())?;
+  let target = texture
+    .cast::<ID3D11Resource>()
+    .map_err(|error| error.to_string())?;
+  unsafe { context.CopyResource(&target, &source) };
+  frame.texture = texture;
+  Ok(frame)
+}
+
+/// Copies a monitor-local region into an encoder-sized texture without
+/// mapping either surface to the CPU.
+fn crop_frame(device: &ID3D11Device, mut frame: Frame, crop: CaptureRect) -> Result<Frame, String> {
+  let mut source_description = D3D11_TEXTURE2D_DESC::default();
+  unsafe { frame.texture.GetDesc(&mut source_description) };
+  let description = D3D11_TEXTURE2D_DESC {
+    Width: crop.width,
+    Height: crop.height,
+    Usage: D3D11_USAGE_DEFAULT,
+    BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE).0 as u32,
+    CPUAccessFlags: 0,
+    MiscFlags: 0,
+    ..source_description
+  };
+  let mut texture = None;
+  unsafe { device.CreateTexture2D(&description, None, Some(&mut texture)) }
+    .map_err(|error| error.to_string())?;
+  let texture = texture.ok_or_else(|| "Direct3D created no cropped region frame".to_owned())?;
+  let context = unsafe { device.GetImmediateContext() }.map_err(|error| error.to_string())?;
+  let source = frame
+    .texture
+    .cast::<ID3D11Resource>()
+    .map_err(|error| error.to_string())?;
+  let target = texture
+    .cast::<ID3D11Resource>()
+    .map_err(|error| error.to_string())?;
+  let source_box = D3D11_BOX {
+    left: crop.x,
+    top: crop.y,
+    front: 0,
+    right: crop.x.saturating_add(crop.width),
+    bottom: crop.y.saturating_add(crop.height),
+    back: 1,
+  };
+  unsafe {
+    context.CopySubresourceRegion(&target, 0, 0, 0, 0, &source, 0, Some(&source_box));
+  }
+  frame.texture = texture;
+  Ok(frame)
+}
+
+#[derive(Clone)]
 pub(super) struct Frame {
   pub(super) source_100ns: i64,
   pub(super) texture: ID3D11Texture2D,
@@ -43,9 +124,11 @@ pub(super) struct WriterConfig {
   pub(super) on_failure: FailureReport,
   pub(super) path: PathBuf,
   pub(super) primary_kind: PrimaryRecordingKind,
+  pub(super) source_crop: Option<CaptureRect>,
   pub(super) establish_timeline_origin: bool,
   pub(super) stopped_at: Arc<OnceLock<Instant>>,
   pub(super) timeline_origin: Arc<OnceLock<Instant>>,
+  pub(super) wall_timestamped_frames: bool,
   pub(super) width: u32,
 }
 
@@ -279,6 +362,29 @@ impl Writer {
     if after_stop(&self.config.stopped_at, frame.wall) {
       return false;
     }
+    let frame = if let Some(crop) = self.config.source_crop {
+      match crop_frame(&self.config.device, frame, crop) {
+        Ok(frame) => frame,
+        Err(error) => {
+          let reason = format!("Direct3D could not crop the region frame: {error}");
+          (self.config.on_failure)(reason.clone());
+          self.failed = Some(reason);
+          return false;
+        }
+      }
+    } else if self.config.wall_timestamped_frames {
+      match snapshot_frame(&self.config.device, frame) {
+        Ok(frame) => frame,
+        Err(error) => {
+          let reason = format!("Direct3D could not cache the window frame: {error}");
+          (self.config.on_failure)(reason.clone());
+          self.failed = Some(reason);
+          return false;
+        }
+      }
+    } else {
+      frame
+    };
     if self.timeline.is_paused() {
       self.tail = Some(frame);
       return false;
@@ -302,11 +408,34 @@ impl Writer {
         .timeline
         .start_at(source_ns.saturating_sub(offset_ns), self.elapsed_ns(origin));
     }
+    if self.config.wall_timestamped_frames && !is_first {
+      self.tail = Some(frame);
+      return false;
+    }
     let wall_ns = self.elapsed_ns(frame.wall);
-    let pts_ns = self.timeline.frame_pts_ns(source_ns, wall_ns);
+    let pts_ns = if self.config.wall_timestamped_frames {
+      self.timeline.wall_frame_pts_ns(wall_ns)
+    } else {
+      self.timeline.frame_pts_ns(source_ns, wall_ns)
+    };
     let appended = self.append(&frame, pts_ns, self.frame_duration_100ns);
     self.tail = Some(frame);
     is_first && appended
+  }
+
+  fn tick(&mut self, at: Instant) {
+    if self.timeline.is_paused() || !self.timeline.has_started() {
+      return;
+    }
+    let Some(frame) = self.tail.clone() else {
+      return;
+    };
+    if after_stop(&self.config.stopped_at, at) {
+      return;
+    }
+    let wall_ns = self.elapsed_ns(at);
+    let pts_ns = self.timeline.wall_frame_pts_ns(wall_ns);
+    self.append(&frame, pts_ns, self.frame_duration_100ns);
   }
 
   fn finish(&mut self, at: Instant) -> Result<FinalizeInfo, String> {
@@ -348,11 +477,13 @@ fn after_stop(stopped_at: &OnceLock<Instant>, frame_at: Instant) -> bool {
 pub(super) fn run(
   config: WriterConfig,
   commands: mpsc::Receiver<Command>,
+  initialized: mpsc::Sender<Result<(), String>>,
   first_frame: mpsc::Sender<Result<(), String>>,
 ) {
   let _media_foundation = match MediaFoundation::start() {
     Ok(runtime) => runtime,
     Err(error) => {
+      let _ = initialized.send(Err(error.clone()));
       let _ = first_frame.send(Err(error));
       return;
     }
@@ -360,26 +491,94 @@ pub(super) fn run(
   let mut writer = match Writer::new(config) {
     Ok(writer) => writer,
     Err(error) => {
+      let _ = initialized.send(Err(error.clone()));
       let _ = first_frame.send(Err(error));
       return;
     }
   };
+  let _ = initialized.send(Ok(()));
   let mut announced = false;
-  while let Ok(command) = commands.recv() {
+  let cadence = frame_cadence(writer.config.fps);
+  let mut next_tick: Option<Instant> = None;
+  let mut pending = None;
+  loop {
+    // A continuously changing window can keep the frame channel readable at
+    // all times. Honour an elapsed presentation deadline before reading more
+    // capture work so incoming WGC frames cannot starve the fixed-rate clock.
+    if let Some(deadline) = next_tick {
+      if Instant::now() >= deadline {
+        writer.tick(deadline);
+        next_tick = Some(deadline + cadence);
+        continue;
+      }
+    }
+    let command = match pending.take() {
+      Some(command) => Some(command),
+      None => match next_tick {
+        Some(deadline) => {
+          match commands.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(command) => Some(command),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+              writer.tick(deadline);
+              next_tick = Some(deadline + cadence);
+              None
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+          }
+        }
+        None => match commands.recv() {
+          Ok(command) => Some(command),
+          Err(_) => return,
+        },
+      },
+    };
+    let Some(command) = command else { continue };
     match command {
-      Command::Frame(frame) => {
+      Command::Frame(mut frame) => {
+        // Window and cropped-region capture only need the newest texture
+        // before the next presentation tick. Discarding stale queued surfaces
+        // prevents startup or crop/encoder pressure from becoming a permanent
+        // multi-frame cursor delay. Full-screen and camera capture retain
+        // every frame and keep their existing source-timestamp path.
+        if writer.config.wall_timestamped_frames {
+          loop {
+            match commands.try_recv() {
+              Ok(Command::Frame(newer)) => frame = newer,
+              Ok(command) => {
+                pending = Some(command);
+                break;
+              }
+              Err(mpsc::TryRecvError::Empty) => break,
+              Err(mpsc::TryRecvError::Disconnected) => return,
+            }
+          }
+        }
         if writer.frame(frame) && !announced {
           announced = true;
           let _ = first_frame.send(Ok(()));
+          if writer.config.wall_timestamped_frames {
+            next_tick = Some(Instant::now() + cadence);
+          }
+        } else if !announced {
+          if let Some(error) = writer.failed.clone() {
+            let _ = first_frame.send(Err(error));
+            return;
+          }
         }
       }
       Command::Pause(at) => {
         let elapsed = writer.elapsed_ns(at);
         writer.timeline.pause(elapsed);
+        if writer.config.wall_timestamped_frames {
+          next_tick = None;
+        }
       }
       Command::Resume(at) => {
         let elapsed = writer.elapsed_ns(at);
         writer.timeline.resume(elapsed);
+        if writer.config.wall_timestamped_frames && writer.timeline.has_started() {
+          next_tick = Some(at + cadence);
+        }
       }
       Command::Stop { at, reply } => {
         let _ = reply.send(writer.finish(at));
@@ -407,5 +606,11 @@ mod tests {
       &stopped_at,
       base + Duration::from_secs(1) + Duration::from_nanos(1)
     ));
+  }
+
+  #[test]
+  fn repeat_cadence_matches_selected_frame_rate() {
+    assert_eq!(frame_cadence(30), Duration::from_nanos(33_333_333));
+    assert_eq!(frame_cadence(60), Duration::from_nanos(16_666_666));
   }
 }
