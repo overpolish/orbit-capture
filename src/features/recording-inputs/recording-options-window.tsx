@@ -106,21 +106,29 @@ export function RecordingOptionsWindow() {
       : [];
     setCameras(nextCameras);
     const current = useRecordingInputStore.getState();
-    const camera =
-      nextCameras.find((item) => item.id === current.selectedCamera?.id) ??
-      nextCameras.find((item) => item.isDefault) ??
-      firstOrNull(nextCameras);
+    const detectedCamera = nextCameras.find(
+      (item) => item.id === current.selectedCamera?.id,
+    );
+    // Preserve a missing selection so the bar can warn instead of silently
+    // switching the user's recording to a different device.
+    const camera = current.selectedCamera
+      ? (detectedCamera ?? current.selectedCamera)
+      : (nextCameras.find((item) => item.isDefault) ??
+        firstOrNull(nextCameras));
+    const cameraIsMissing = current.selectedCamera && !detectedCamera;
     const mode =
-      camera?.modes.find(
-        (item) => item.id === current.cameraModeIdById[camera.id],
-      ) ??
-      camera?.modes.find(
-        (item) =>
-          item.width === current.selectedCameraMode?.width &&
-          item.height === current.selectedCameraMode.height,
-      ) ??
-      camera?.modes.find((item) => item.isDefault) ??
-      firstOrNull(camera?.modes ?? []);
+      cameraIsMissing && current.selectedCameraMode
+        ? current.selectedCameraMode
+        : (camera?.modes.find(
+            (item) => item.id === current.cameraModeIdById[camera.id],
+          ) ??
+          camera?.modes.find(
+            (item) =>
+              item.width === current.selectedCameraMode?.width &&
+              item.height === current.selectedCameraMode.height,
+          ) ??
+          camera?.modes.find((item) => item.isDefault) ??
+          firstOrNull(camera?.modes ?? []));
     setSelectedCameraSelection(camera, mode);
     return nextCameras;
   }, [cameraGranted, fps, setSelectedCameraSelection]);
@@ -150,12 +158,13 @@ export function RecordingOptionsWindow() {
       : [];
     setMicrophones(nextMicrophones);
     const current = useRecordingInputStore.getState();
-    const microphone =
-      nextMicrophones.find(
-        (item) => item.id === current.selectedMicrophone?.id,
-      ) ??
-      nextMicrophones.find((item) => item.isDefault) ??
-      firstOrNull(nextMicrophones);
+    const detectedMicrophone = nextMicrophones.find(
+      (item) => item.id === current.selectedMicrophone?.id,
+    );
+    const microphone = current.selectedMicrophone
+      ? (detectedMicrophone ?? current.selectedMicrophone)
+      : (nextMicrophones.find((item) => item.isDefault) ??
+        firstOrNull(nextMicrophones));
     setSelectedMicrophone(microphone);
     return nextMicrophones;
   }, [microphoneGranted, setSelectedMicrophone]);
@@ -172,10 +181,10 @@ export function RecordingOptionsWindow() {
     );
     const systemAudio = selectedAll
       ? [ALL_SYSTEM_AUDIO]
-      : nextAudioSources.filter((source) =>
-          current.selectedSystemAudio.some(
-            (selected) => selected.id === source.id,
-          ),
+      : current.selectedSystemAudio.map(
+          (selected) =>
+            nextAudioSources.find((source) => source.id === selected.id) ??
+            selected,
         );
 
     setSelectedSystemAudio(

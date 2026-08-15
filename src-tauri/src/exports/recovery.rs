@@ -190,17 +190,29 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
   let (duration_ms, width, height) = recovered_info.map_or((0, 0, 0), |info| {
     (info.duration_ms, info.width, info.height)
   });
+  #[cfg(target_os = "windows")]
+  let recovered_camera = camera_path.map(|path| {
+    let info = media_preview::recording_info(&path);
+    crate::recording::CameraFinalizeInfo {
+      duration_ms: info.map_or(0, |value| value.duration_ms),
+      height: info.map_or(0, |value| value.height),
+      path,
+      width: info.map_or(0, |value| value.width),
+    }
+  });
   #[cfg(not(target_os = "windows"))]
   let (duration_ms, width, height) = (0, 0, 0);
+  #[cfg(not(target_os = "windows"))]
+  let recovered_camera = camera_path.map(|path| crate::recording::CameraFinalizeInfo {
+    duration_ms: 0,
+    height: 0,
+    path,
+    width: 0,
+  });
   if let Err(error) = present_recording(
     app,
     FinalizeInfo {
-      camera: camera_path.map(|path| crate::recording::CameraFinalizeInfo {
-        duration_ms: 0,
-        height: 0,
-        path,
-        width: 0,
-      }),
+      camera: recovered_camera,
       cursor_path,
       has_microphone: false,
       has_system_audio: false,

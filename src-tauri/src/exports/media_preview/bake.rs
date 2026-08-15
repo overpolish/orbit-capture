@@ -118,6 +118,7 @@ mod tests {
     let frame_height_percent = frame_height * 100.0 / screen_preview.1;
 
     let geometry = bake_geometry(BakedVideoExportOptions {
+      camera_drop_shadow: false,
       camera_height: 1_328,
       camera_width: 1_760,
       overlay: CameraOverlaySettings {

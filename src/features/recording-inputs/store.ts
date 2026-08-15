@@ -4,8 +4,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { ScreenshotDestination } from "../screenshots/api";
-
 import {
   CameraDevice,
   CameraResolution,
@@ -76,7 +74,6 @@ type RecordingInputStore = {
   cameraModeIdById: Record<string, string>;
   fps: RecordingFps;
   inputs: RecordingInputs;
-  screenshotDestination: ScreenshotDestination;
   selectedCamera: CameraDevice | null;
   selectedCameraMode: CameraResolution | null;
   selectedMicrophone: InputDevice | null;
@@ -84,7 +81,6 @@ type RecordingInputStore = {
   setCameraFlipped: (cameraId: string, flipped: boolean) => void;
   setFps: (fps: RecordingFps) => void;
   setInput: (input: keyof RecordingInputs, selected: boolean) => void;
-  setScreenshotDestination: (destination: ScreenshotDestination) => void;
   setSelectedCameraMode: (mode: CameraResolution | null) => void;
   setSelectedCameraSelection: (
     camera: CameraDevice | null,
@@ -106,7 +102,6 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
         showCursor: true,
         systemAudio: false,
       },
-      screenshotDestination: "clipboard",
       selectedCamera: null,
       selectedCameraMode: null,
       selectedMicrophone: null,
@@ -126,9 +121,6 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
         set((state) => ({
           inputs: { ...state.inputs, [input]: selected },
         }));
-      },
-      setScreenshotDestination: (screenshotDestination) => {
-        set({ screenshotDestination });
       },
       setSelectedCameraMode: (selectedCameraMode) => {
         set((state) => ({

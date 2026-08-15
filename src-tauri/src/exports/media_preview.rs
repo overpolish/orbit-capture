@@ -31,8 +31,8 @@ mod tools;
 mod windows;
 
 pub use audio::prepare;
-#[cfg(target_os = "macos")]
-pub(in crate::exports) use bake::bake_geometry;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(in crate::exports) use bake::{bake_geometry, BakeGeometry};
 #[cfg(target_os = "macos")]
 pub(in crate::exports) use encode::remux_error;
 pub use encode::{
@@ -97,6 +97,7 @@ pub struct VideoExportOptions {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BakedVideoExportOptions {
+  pub camera_drop_shadow: bool,
   pub camera_height: u32,
   pub camera_width: u32,
   pub overlay: super::CameraOverlaySettings,

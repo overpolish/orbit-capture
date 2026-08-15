@@ -111,6 +111,7 @@ pub(super) fn camera_still_overlay(
 ) -> Result<StillOverlay, String> {
   let camera = camera.ok_or_else(|| "Camera pixels are missing from the preview".to_owned())?;
   let geometry = media_preview::bake_geometry(media_preview::BakedVideoExportOptions {
+    camera_drop_shadow,
     camera_height: camera.height,
     camera_width: camera.width,
     overlay: settings,

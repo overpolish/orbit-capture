@@ -38,6 +38,12 @@ pub fn layout_recording_preview_surface(
     1.0
   };
   let mut sizes_changed = false;
+  let needs_initial_frame = panes.iter().any(|pane| {
+    manager
+      .pane_target_sizes
+      .get(pane.index as usize)
+      .is_none_or(|size| *size == (0, 0))
+  });
   for pane in &panes {
     let index = pane.index as usize;
     if manager.pane_target_sizes.len() <= index {
@@ -67,10 +73,11 @@ pub fn layout_recording_preview_surface(
     surface.layout(pane.index, pane.rect);
   }
   surface.finish_layout();
-  // Metal redraws paused frames at the new drawable size. Windows keeps a
-  // full-resolution swap chain and DirectComposition transforms it, so a
-  // wheel gesture needs no secondary decode, draw, or swap-chain resize.
-  if sizes_changed && !manager.is_playing && !cfg!(target_os = "windows") {
+  // The decoder can produce its first still before the DOM has supplied a
+  // native pane, in which case there is nowhere to present it. Ask for that
+  // initial frame again once the first real layout exists. Later Windows
+  // zooms keep the cached full-resolution swap chain and need no re-decode.
+  if sizes_changed && !manager.is_playing && (!cfg!(target_os = "windows") || needs_initial_frame) {
     if let Some(decoder) = &manager.still_decoder {
       decoder.seek(
         manager.position_ms,

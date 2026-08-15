@@ -10,6 +10,7 @@
 
 use super::platform::VideoFramePayload;
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub(super) const PREVIEW_FPS: u64 = 30;
 
 pub(super) struct VideoFrame {

@@ -7,6 +7,7 @@ use std::{
     mpsc, Arc, Mutex,
   },
   time::Duration,
+  time::Instant,
 };
 
 use nokhwa::{
@@ -61,6 +62,7 @@ impl CameraPreviewManager {
 
 struct CameraPreviewWorker {
   cancelled: Arc<AtomicBool>,
+  delivery: Option<PreviewDelivery>,
   thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -70,31 +72,121 @@ impl CameraPreviewWorker {
     if let Some(thread) = self.thread.take() {
       let _ = thread.join();
     }
+    if let Some(delivery) = self.delivery.take() {
+      delivery.stop();
+    }
   }
 }
 
 #[derive(Default)]
 pub struct CameraPreviewState(Mutex<CameraPreviewManager>);
 
+const PREVIEW_MAX_WIDTH: u32 = 384;
+const PREVIEW_MAX_HEIGHT: u32 = 240;
+const PREVIEW_INTERVAL: Duration = Duration::from_millis(33);
+
+fn preview_dimensions(width: u32, height: u32) -> (u32, u32) {
+  let scale = (f64::from(PREVIEW_MAX_WIDTH) / f64::from(width.max(1)))
+    .min(f64::from(PREVIEW_MAX_HEIGHT) / f64::from(height.max(1)))
+    .min(1.0);
+  (
+    (f64::from(width) * scale).round().max(1.0) as u32,
+    (f64::from(height) * scale).round().max(1.0) as u32,
+  )
+}
+
 fn frame_payload(frame: Buffer) -> Result<Vec<u8>, String> {
   let resolution = frame.resolution();
-  let is_mjpeg = frame.source_frame_format() == FrameFormat::MJPEG;
-  let frame_data = match frame.source_frame_format() {
-    FrameFormat::MJPEG => frame.buffer().to_vec(),
-    FrameFormat::YUYV => {
-      crate::camera_frames::yuyv_to_rgba(frame.buffer(), resolution.width(), resolution.height())?
-    }
-    _ => frame
-      .decode_image::<RgbAFormat>()
-      .map_err(|error| error.to_string())?
-      .into_raw(),
+  let source_size = (resolution.width(), resolution.height());
+  let target_size = preview_dimensions(source_size.0, source_size.1);
+  let preserve_mjpeg =
+    frame.source_frame_format() == FrameFormat::MJPEG && source_size == target_size;
+  let (width, height, frame_data, rgba) = if preserve_mjpeg {
+    (source_size.0, source_size.1, frame.buffer().to_vec(), false)
+  } else {
+    let decoded = match frame.source_frame_format() {
+      FrameFormat::YUYV => image::RgbaImage::from_raw(
+        source_size.0,
+        source_size.1,
+        crate::camera_frames::yuyv_to_rgba(frame.buffer(), source_size.0, source_size.1)?,
+      )
+      .ok_or_else(|| "The camera preview produced an incomplete image".to_owned())?,
+      _ => frame
+        .decode_image::<RgbAFormat>()
+        .map_err(|error| error.to_string())?,
+    };
+    let decoded = if source_size == target_size {
+      decoded
+    } else {
+      image::imageops::resize(
+        &decoded,
+        target_size.0,
+        target_size.1,
+        image::imageops::FilterType::Triangle,
+      )
+    };
+    (target_size.0, target_size.1, decoded.into_raw(), true)
   };
   let mut payload = Vec::with_capacity(9 + frame_data.len());
-  payload.extend_from_slice(&resolution.width().to_le_bytes());
-  payload.extend_from_slice(&resolution.height().to_le_bytes());
-  payload.push(u8::from(!is_mjpeg));
+  payload.extend_from_slice(&width.to_le_bytes());
+  payload.extend_from_slice(&height.to_le_bytes());
+  payload.push(u8::from(rgba));
   payload.extend(frame_data);
   Ok(payload)
+}
+
+struct PreviewDelivery {
+  sender: Option<mpsc::SyncSender<Buffer>>,
+  thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl PreviewDelivery {
+  fn spawn(channel: Channel) -> Result<Self, String> {
+    let (sender, receiver) = mpsc::sync_channel::<Buffer>(0);
+    let thread = std::thread::Builder::new()
+      .name("camera-preview-delivery".to_owned())
+      .spawn(move || {
+        let mut last_sent = None;
+        while let Ok(frame) = receiver.recv() {
+          let now = Instant::now();
+          if last_sent.is_some_and(|last| now.duration_since(last) < PREVIEW_INTERVAL) {
+            continue;
+          }
+          let Ok(payload) = frame_payload(frame) else {
+            continue;
+          };
+          if channel.send(InvokeResponseBody::Raw(payload)).is_err() {
+            break;
+          }
+          last_sent = Some(now);
+        }
+      })
+      .map_err(|error| error.to_string())?;
+    Ok(Self {
+      sender: Some(sender),
+      thread: Some(thread),
+    })
+  }
+
+  fn sender(&self) -> mpsc::SyncSender<Buffer> {
+    self.sender.as_ref().expect("delivery is active").clone()
+  }
+
+  fn stop(mut self) {
+    self.sender.take();
+    if let Some(thread) = self.thread.take() {
+      let _ = thread.join();
+    }
+  }
+}
+
+impl Drop for PreviewDelivery {
+  fn drop(&mut self) {
+    self.sender.take();
+    if let Some(thread) = self.thread.take() {
+      let _ = thread.join();
+    }
+  }
 }
 
 fn build_camera_preview(
@@ -121,6 +213,8 @@ fn build_camera_preview(
   let cancelled = Arc::new(AtomicBool::new(false));
   let owner_cancelled = Arc::clone(&cancelled);
   let callback_cancelled = Arc::clone(&cancelled);
+  let delivery = PreviewDelivery::spawn(channel)?;
+  let preview_frames = delivery.sender();
   let (started_tx, started) = mpsc::channel();
   let thread = std::thread::Builder::new()
     .name("camera-preview".to_owned())
@@ -130,11 +224,7 @@ fn build_camera_preview(
         if callback_cancelled.load(Ordering::Acquire) {
           return;
         }
-        if let Ok(payload) = frame_payload(frame) {
-          if channel.send(InvokeResponseBody::Raw(payload)).is_err() {
-            callback_cancelled.store(true, Ordering::Release);
-          }
-        }
+        let _ = preview_frames.try_send(frame);
       }) {
         Ok(camera) => camera,
         Err(error) => {
@@ -160,6 +250,7 @@ fn build_camera_preview(
 
   let worker = CameraPreviewWorker {
     cancelled,
+    delivery: Some(delivery),
     thread: Some(thread),
   };
   started
@@ -230,5 +321,12 @@ mod tests {
     assert_eq!(&payload[4..8], &1_u32.to_le_bytes());
     assert_eq!(payload[8], 0);
     assert_eq!(&payload[9..], &[0xff, 0xd8, 0xff, 0xd9]);
+  }
+
+  #[test]
+  fn bounds_large_previews_without_changing_their_aspect() {
+    assert_eq!(preview_dimensions(3_840, 2_160), (384, 216));
+    assert_eq!(preview_dimensions(1_080, 1_920), (135, 240));
+    assert_eq!(preview_dimensions(320, 180), (320, 180));
   }
 }

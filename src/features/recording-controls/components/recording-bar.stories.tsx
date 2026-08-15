@@ -32,10 +32,6 @@ export const ScreenshotOnly: Story = {
   args: { isLocked: true },
 };
 
-export const ScreenshotSavesToFile: Story = {
-  args: { screenshotToClipboard: false },
-};
-
 /** Mid-save: the button is inert and pulsing until the file actually exists. */
 export const ScreenshotPending: Story = {
   args: { screenshotState: "pending" },
@@ -47,6 +43,18 @@ export const ScreenshotDone: Story = {
 
 export const ScreenshotFailed: Story = {
   args: { screenshotState: "failed" },
+};
+
+export const ClipboardScreenshotPending: Story = {
+  args: { screenshotAction: "clipboard", screenshotState: "pending" },
+};
+
+export const ClipboardScreenshotDone: Story = {
+  args: { screenshotAction: "clipboard", screenshotState: "done" },
+};
+
+export const ClipboardScreenshotFailed: Story = {
+  args: { screenshotAction: "clipboard", screenshotState: "failed" },
 };
 
 export const OptionalPermissionsLocked: Story = {
@@ -61,6 +69,29 @@ export const InputsEnabled: Story = {
       showCursor: true,
       systemAudio: true,
     },
+  },
+};
+
+export const MissingEnabledInputs: Story = {
+  args: {
+    hasCameraWarning: true,
+    hasMicrophoneWarning: true,
+    hasSystemAudioWarning: true,
+    initialInputs: {
+      camera: true,
+      microphone: true,
+      showCursor: true,
+      systemAudio: true,
+    },
+  },
+};
+
+/** Missing sources stay quiet until their corresponding input is enabled. */
+export const MissingDisabledInputs: Story = {
+  args: {
+    hasCameraWarning: true,
+    hasMicrophoneWarning: true,
+    hasSystemAudioWarning: true,
   },
 };
 
@@ -80,8 +111,15 @@ export const CameraOnly: Story = {
   args: { initialMode: "camera" },
 };
 
-export const CameraOnlyEnabled: Story = {
-  args: { initialInputs: { camera: true }, initialMode: "camera" },
+export const CameraOnlyPreservesScreenCameraOff: Story = {
+  args: { initialInputs: { camera: false }, initialMode: "camera" },
+};
+
+export const CameraOnlyMissing: Story = {
+  args: {
+    hasCameraWarning: true,
+    initialMode: "camera",
+  },
 };
 
 export const CameraOnlyPermissionLocked: Story = {
@@ -102,6 +140,23 @@ export const AudioOnlyWithMicrophone: Story = {
 export const AudioOnlyWithSystemAudio: Story = {
   args: {
     initialInputs: { systemAudio: true },
+    initialMode: "audio",
+  },
+};
+
+export const AudioOnlyWithAllSourcesMissing: Story = {
+  args: {
+    hasMicrophoneWarning: true,
+    hasSystemAudioWarning: true,
+    initialInputs: { microphone: true, systemAudio: true },
+    initialMode: "audio",
+  },
+};
+
+export const AudioOnlyWithOneValidSource: Story = {
+  args: {
+    hasMicrophoneWarning: true,
+    initialInputs: { microphone: true, systemAudio: true },
     initialMode: "audio",
   },
 };

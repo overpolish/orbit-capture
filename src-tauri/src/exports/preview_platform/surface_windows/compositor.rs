@@ -36,6 +36,7 @@ use windows::{
 };
 
 use crate::exports::cursor_effects::GpuCursor;
+use crate::exports::media_preview::BakeGeometry;
 use crate::screenshots::{
   output_placement, parse_hex_colour, validate_mesh, ScreenshotOutputSettings,
 };
@@ -54,12 +55,16 @@ cbuffer Canvas : register(b0) {
   float4 cursor_geometry; // source-space anchor x/y, artwork width/height
   float4 cursor_effects; // reserved x/y, rotation radians, scale
   float4 cursor_blur; // source-space frame delta x/y
+  float4 camera_frame; // output-space x/y/width/height
+  float4 camera_crop; // camera source-space x/y/width/height
+  float4 camera_effects; // radius, enabled, shadow sigma, reserved
   float4 native_cursor_hotspots[8]; // normalized atlas hotspot x/y
   uint4 options; // seed, mesh enabled, point count, shadow enabled
   uint4 cursor_options; // artwork, enabled, clip to video, reserved
 };
 Texture2D source_image : register(t0);
 Texture2DArray native_cursor_images : register(t1);
+Texture2D camera_image : register(t2);
 SamplerState linear_sampler : register(s0);
 
 float hash(float2 position, uint seed) {
@@ -192,6 +197,27 @@ float4 ps_main(float4 position : SV_Position) : SV_Target {
     float4 video = source_image.Sample(linear_sampler, uv);
     result = lerp(result, float4(video.rgb, 1.0), video.a * image_alpha);
   }
+  if (camera_effects.y != 0.0) {
+    float camera_alpha = rounded_coverage(pixel, camera_frame, camera_effects.x);
+    if (camera_effects.z > 1.0) {
+      float2 shadow_pixel = pixel - float2(0, camera_effects.z * 0.35);
+      float distance = max(rounded_distance(
+        shadow_pixel, camera_frame, camera_effects.x), 0.0);
+      float shadow = (36.0 / 255.0) * exp(
+        -0.5 * distance * distance / (camera_effects.z * camera_effects.z));
+      result.rgb *= 1.0 - shadow * (1.0 - camera_alpha);
+    }
+    float2 camera_local = (pixel - camera_frame.xy) / camera_frame.zw;
+    if (camera_alpha > 0.0 && all(camera_local >= 0.0) && all(camera_local <= 1.0)) {
+      float2 camera_source_pixel = camera_crop.xy + camera_local * camera_crop.zw;
+      uint camera_width, camera_height;
+      camera_image.GetDimensions(camera_width, camera_height);
+      float2 camera_uv = camera_source_pixel / float2(camera_width, camera_height);
+      float4 camera = camera_image.Sample(linear_sampler, camera_uv);
+      result.rgb = lerp(result.rgb, camera.rgb, camera.a * camera_alpha);
+      result.a = camera.a * camera_alpha + result.a * (1.0 - camera.a * camera_alpha);
+    }
+  }
   float4 cursor = cursor_layer(pixel);
   if (cursor_options.z != 0) cursor.a *= image_alpha;
   result.rgb = lerp(result.rgb, cursor.rgb, cursor.a);
@@ -222,6 +248,9 @@ struct Constants {
   cursor_geometry: [f32; 4],
   cursor_effects: [f32; 4],
   cursor_blur: [f32; 4],
+  camera_frame: [f32; 4],
+  camera_crop: [f32; 4],
+  camera_effects: [f32; 4],
   native_cursor_hotspots: [[f32; 4]; 8],
   options: [u32; 4],
   cursor_options: [u32; 4],
@@ -236,6 +265,7 @@ pub(super) struct Compositor {
   vertex_shader: ID3D11VertexShader,
 }
 
+#[derive(Clone)]
 pub(super) struct SourceTexture {
   pub(super) size: (u32, u32),
   texture: ID3D11Texture2D,
@@ -654,7 +684,8 @@ impl Compositor {
     })
   }
 
-  pub(super) fn draw(
+  #[allow(clippy::too_many_arguments)]
+  pub(super) fn draw_with_camera(
     &self,
     context: &ID3D11DeviceContext,
     target: &ID3D11Texture2D,
@@ -662,6 +693,7 @@ impl Compositor {
     settings: &ScreenshotOutputSettings,
     seconds: f64,
     cursor: Option<GpuCursor>,
+    camera: Option<(&SourceTexture, BakeGeometry, bool)>,
   ) -> Result<(), String> {
     let placement = output_placement(source.size.0, source.size.1, settings)?;
     let mut mesh_points = [[0.0; 4]; 8];
@@ -763,6 +795,31 @@ impl Compositor {
       cursor_blur: cursor.map_or([0.0; 4], |cursor| {
         [cursor.blur_delta_x, cursor.blur_delta_y, 0.0, 0.0]
       }),
+      camera_frame: camera.map_or([0.0; 4], |(_, geometry, _)| {
+        [
+          geometry.frame_x as f32,
+          geometry.frame_y as f32,
+          geometry.frame_width as f32,
+          geometry.frame_height as f32,
+        ]
+      }),
+      camera_crop: camera.map_or([0.0; 4], |(_, geometry, _)| {
+        [
+          geometry.crop_x as f32,
+          geometry.crop_y as f32,
+          geometry.crop_width as f32,
+          geometry.crop_height as f32,
+        ]
+      }),
+      camera_effects: camera.map_or([0.0; 4], |(_, geometry, drop_shadow)| {
+        let shortest = geometry.frame_width.min(geometry.frame_height) as f32;
+        let sigma = if drop_shadow {
+          (shortest * 0.055).clamp(3.0, 110.0)
+        } else {
+          0.0
+        };
+        [geometry.radius as f32, 1.0, sigma, 0.0]
+      }),
       native_cursor_hotspots: self.cursor_hotspots,
       options: [
         settings.mesh_seed,
@@ -815,11 +872,15 @@ impl Compositor {
       context.PSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
       context.PSSetShaderResources(
         0,
-        Some(&[Some(source.view.clone()), Some(self.cursor_view.clone())]),
+        Some(&[
+          Some(source.view.clone()),
+          Some(self.cursor_view.clone()),
+          camera.map(|(camera, _, _)| camera.view.clone()),
+        ]),
       );
       context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
       context.Draw(3, 0);
-      context.PSSetShaderResources(0, Some(&[None, None]));
+      context.PSSetShaderResources(0, Some(&[None, None, None]));
       context.OMSetRenderTargets(None, None);
     }
     Ok(())

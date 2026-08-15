@@ -42,6 +42,8 @@ pub(super) struct WriterConfig {
   pub(super) height: u32,
   pub(super) on_failure: FailureReport,
   pub(super) path: PathBuf,
+  pub(super) primary_kind: PrimaryRecordingKind,
+  pub(super) establish_timeline_origin: bool,
   pub(super) stopped_at: Arc<OnceLock<Instant>>,
   pub(super) timeline_origin: Arc<OnceLock<Instant>>,
   pub(super) width: u32,
@@ -284,7 +286,21 @@ impl Writer {
     let is_first = !self.timeline.has_started();
     let source_ns = frame.source_100ns.saturating_mul(NANOS_PER_100NS);
     if is_first {
-      let _ = self.config.timeline_origin.set(frame.wall);
+      if self.config.establish_timeline_origin {
+        let _ = self.config.timeline_origin.set(frame.wall);
+      }
+      let Some(origin) = self.config.timeline_origin.get().copied() else {
+        // A secondary camera can become ready before the primary screen. Its
+        // warm frames are deliberately discarded until the primary track
+        // establishes the shared zero used by preview and export.
+        self.tail = Some(frame);
+        return false;
+      };
+      let offset_ns =
+        i64::try_from(frame.wall.saturating_duration_since(origin).as_nanos()).unwrap_or(i64::MAX);
+      self
+        .timeline
+        .start_at(source_ns.saturating_sub(offset_ns), self.elapsed_ns(origin));
     }
     let wall_ns = self.elapsed_ns(frame.wall);
     let pts_ns = self.timeline.frame_pts_ns(source_ns, wall_ns);
@@ -316,7 +332,7 @@ impl Writer {
       height: self.config.height,
       path: self.config.path.clone(),
       poster: None,
-      primary_kind: PrimaryRecordingKind::Screen,
+      primary_kind: self.config.primary_kind,
       source_scale_factor: 1.0,
       width: self.config.width,
     })

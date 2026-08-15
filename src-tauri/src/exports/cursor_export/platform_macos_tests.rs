@@ -287,6 +287,7 @@ fn exports_camera_and_cursor_through_the_same_gpu_compositor() {
     camera: Some((
       &camera,
       BakedVideoExportOptions {
+        camera_drop_shadow: false,
         camera_height: 120,
         camera_width: 160,
         overlay: CameraOverlaySettings {

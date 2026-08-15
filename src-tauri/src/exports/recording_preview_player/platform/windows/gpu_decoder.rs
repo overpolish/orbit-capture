@@ -18,6 +18,12 @@ use super::decoder::MediaFoundation;
 use crate::exports::preview_platform::RecordingPreviewSurface;
 
 const HUNDRED_NS_PER_MS: i64 = 10_000;
+// Media Foundation may position a fragmented MP4 at the first keyframe after
+// an exact request. Near EOF that can mean no sample at all, leaving the
+// compositor's previous frame visible. Rewind beyond the encoder's observed
+// one-second GOP and decode forward to the requested presentation timestamp,
+// matching macOS's preroll strategy while keeping every frame on the GPU.
+const SEEK_PREROLL_MS: u64 = 1_500;
 const VIDEO_STREAM: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
 
 fn win<T>(result: windows::core::Result<T>) -> Result<T, String> {
@@ -131,15 +137,16 @@ impl GpuVideoReader {
 
   pub(super) fn seek(&mut self, position_ms: u64) -> Result<(), String> {
     win(unsafe { self.reader.Flush(VIDEO_STREAM) })?;
+    let seek_ms = position_ms.saturating_sub(SEEK_PREROLL_MS);
     let position = PROPVARIANT::from(
-      i64::try_from(position_ms)
+      i64::try_from(seek_ms)
         .unwrap_or(i64::MAX / HUNDRED_NS_PER_MS)
         .saturating_mul(HUNDRED_NS_PER_MS),
     );
     win(unsafe { self.reader.SetCurrentPosition(&GUID::zeroed(), &position) })?;
     self.last_frame = None;
     self.last_sample = None;
-    self.last_timestamp_ms = position_ms;
+    self.last_timestamp_ms = seek_ms;
     Ok(())
   }
 

@@ -10,8 +10,7 @@ use std::{
 
 use tauri::ipc::Channel;
 
-use super::gpu_decoder::GpuVideoReader;
-use crate::exports::preview_platform::ComposedFrame;
+use super::{gpu_decoder::GpuVideoReader, present_native_frame};
 use crate::exports::recording_preview_player::{PlayerSources, RecordingPreviewPlayerEvent};
 
 enum DecoderCommand {
@@ -76,19 +75,17 @@ fn run(
   event_channel: Channel<RecordingPreviewPlayerEvent>,
   _frame_channel: Channel,
 ) {
-  if sources.camera_path.is_some() {
-    let _ = event_channel.send(RecordingPreviewPlayerEvent::Error {
-      message: "Windows camera preview is not available yet".to_owned(),
-    });
-    return;
-  }
   let Some(surface) = sources.preview_surface.clone() else {
     let _ = event_channel.send(RecordingPreviewPlayerEvent::Error {
       message: "Windows GPU preview has no native presentation surface".to_owned(),
     });
     return;
   };
-  let mut reader: Option<GpuVideoReader> = None;
+  let mut paths = vec![sources.screen_path.clone()];
+  if let Some(path) = &sources.camera_path {
+    paths.push(path.clone());
+  }
+  let mut readers = (0..paths.len()).map(|_| None).collect::<Vec<_>>();
   let mut pending = None;
   while let Ok(mut command) = pending.take().map_or_else(|| receiver.recv(), Ok) {
     while let Ok(next) = receiver.try_recv() {
@@ -102,76 +99,69 @@ fn run(
     else {
       break;
     };
-    if reader.is_none() {
-      match GpuVideoReader::open(&sources.screen_path, position_ms, surface.clone()) {
-        Ok(opened) => {
-          reader = Some(opened);
+    let mut presented = true;
+    for (index, (path, reader)) in paths.iter().zip(readers.iter_mut()).enumerate() {
+      // Repeated SetCurrentPosition calls can leave Media Foundation's D3D
+      // source reader at a premature EOF even though later samples exist.
+      // A settled seek must be authoritative, so give it a fresh native GPU
+      // reader. Rough seeks keep their warm reader unless it demonstrably
+      // falls behind, preserving fast drag feedback.
+      if reader.is_none() || !rough {
+        match GpuVideoReader::open(path, position_ms, surface.clone()) {
+          Ok(opened) => *reader = Some(opened),
+          Err(message) => {
+            let _ = event_channel.send(RecordingPreviewPlayerEvent::Error { message });
+            presented = false;
+            break;
+          }
         }
-        Err(message) => {
+      } else if let Some(reader) = reader.as_mut() {
+        if should_seek(reader.last_timestamp_ms(), position_ms, rough) {
+          if let Err(message) = reader.seek(position_ms) {
+            let _ = event_channel.send(RecordingPreviewPlayerEvent::Error { message });
+            presented = false;
+            break;
+          }
+        }
+      }
+      let decoded = match reader
+        .as_mut()
+        .and_then(|reader| reader.frame_at(position_ms).transpose())
+      {
+        Some(Ok(frame)) => Some(frame),
+        Some(Err(message)) => {
           let _ = event_channel.send(RecordingPreviewPlayerEvent::Error { message });
-          continue;
+          presented = false;
+          break;
         }
-      }
-    } else if let Some(reader) = reader.as_mut() {
-      let current = reader.last_timestamp_ms();
-      if should_seek(current, position_ms, rough) {
-        if let Err(message) = reader.seek(position_ms) {
-          let _ = event_channel.send(RecordingPreviewPlayerEvent::Error { message });
-          continue;
+        None => None,
+      };
+      let needs_reopen = decoded
+        .as_ref()
+        .is_none_or(|frame| frame_is_stale(frame.timestamp_ms, position_ms));
+      let frame = if needs_reopen {
+        match GpuVideoReader::open(path, position_ms, surface.clone()).and_then(|mut opened| {
+          let frame = opened.frame_at(position_ms)?;
+          *reader = Some(opened);
+          frame.ok_or_else(|| "Media Foundation returned no frame after reopening".to_owned())
+        }) {
+          Ok(recovered) => recovered,
+          Err(message) => {
+            let _ = event_channel.send(RecordingPreviewPlayerEvent::Error { message });
+            presented = false;
+            break;
+          }
         }
+      } else {
+        decoded.expect("a non-stale decoded frame exists")
+      };
+      if sources.playing.load(Ordering::Acquire) {
+        presented = false;
+        break;
       }
+      presented &= present_native_frame(&sources, index as u32, &frame);
     }
-    let Some(reader) = reader.as_mut() else {
-      continue;
-    };
-    let frame = match reader.frame_at(position_ms) {
-      Ok(Some(frame)) => frame,
-      Ok(None) => continue,
-      Err(message) => {
-        let _ = event_channel.send(RecordingPreviewPlayerEvent::Error { message });
-        continue;
-      }
-    };
-    if sources.playing.load(Ordering::Acquire) {
-      continue;
-    }
-    let settings = sources.composition_settings.as_ref().and_then(|settings| {
-      settings
-        .read()
-        .ok()
-        .map(|settings| settings.recording_output.primary.clone())
-    });
-    if settings.is_some_and(|settings| {
-      let cursor_settings = sources
-        .cursor_settings
-        .read()
-        .map(|settings| *settings)
-        .unwrap_or_default();
-      let cursor = sources
-        .cursor
-        .as_deref()
-        .filter(|_| cursor_settings.bake)
-        .and_then(|cursor| {
-          cursor.gpu_cursor(
-            frame.timestamp_ms,
-            (frame.width, frame.height),
-            cursor_settings,
-          )
-        });
-      surface
-        .present_composed_texture(
-          0,
-          &frame.texture,
-          frame.subresource,
-          (frame.width, frame.height),
-          &settings,
-          ComposedFrame {
-            cursor,
-            seconds: frame.timestamp_ms as f64 / 1_000.0,
-          },
-        )
-        .unwrap_or(false)
-    }) {
+    if presented {
       let _ = event_channel.send(RecordingPreviewPlayerEvent::Ready {
         position_ms,
         request_id,
@@ -185,6 +175,11 @@ fn run(
 // growing queue of intermediate frames to decode. The final (non-rough) seek
 // always resets to the exact requested position.
 const MAX_SEQUENTIAL_SCRUB_MS: u64 = 250;
+const MAX_STILL_LAG_MS: u64 = 100;
+
+fn frame_is_stale(frame_ms: u64, position_ms: u64) -> bool {
+  frame_ms.saturating_add(MAX_STILL_LAG_MS) < position_ms
+}
 
 fn should_seek(current_ms: u64, position_ms: u64, rough: bool) -> bool {
   !rough
@@ -194,7 +189,7 @@ fn should_seek(current_ms: u64, position_ms: u64, rough: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
-  use super::should_seek;
+  use super::{frame_is_stale, should_seek};
 
   #[test]
   fn rough_scrubs_only_decode_short_forward_steps_sequentially() {
@@ -207,5 +202,11 @@ mod tests {
   fn settled_scrubs_always_seek_exactly() {
     assert!(should_seek(4_000, 4_001, false));
     assert!(should_seek(4_000, 4_000, false));
+  }
+
+  #[test]
+  fn a_gpu_reader_that_hits_early_eof_is_reopened() {
+    assert!(frame_is_stale(17_891, 19_480));
+    assert!(!frame_is_stale(19_430, 19_480));
   }
 }

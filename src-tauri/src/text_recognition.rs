@@ -4,11 +4,12 @@
 use serde::Serialize;
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::recording::Region;
 use crate::screenshots::{self, ScreenshotTarget};
+use crate::windows::WindowLabel;
 
 #[cfg(target_os = "macos")]
 mod platform_macos;
@@ -78,12 +79,22 @@ fn close_recognition_windows(app: &AppHandle, except: Option<&str>) {
 }
 
 pub fn dismiss(app: &AppHandle) {
+  let had_windows = !recognition_windows(app).is_empty();
   close_recognition_windows(app, None);
-  *app
+  let had_capture = app
     .state::<TextRecognitionState>()
     .0
     .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .take()
+    .is_some();
+  if had_windows || had_capture {
+    let _ = app.emit_to(
+      WindowLabel::RecordingBar.as_str(),
+      "text-recognition://ended",
+      (),
+    );
+  }
 }
 
 #[cfg(target_os = "windows")]
@@ -141,6 +152,12 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
       .map_err(|error| error.to_string())?;
     crate::windows::show(&window, index == 0).map_err(|error| error.to_string())?;
   }
+
+  let _ = app.emit_to(
+    WindowLabel::RecordingBar.as_str(),
+    "text-recognition://started",
+    (),
+  );
 
   Ok(())
 }

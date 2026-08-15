@@ -99,7 +99,11 @@ pub fn temp_file_name(started_at: NaiveDateTime) -> String {
 
 pub fn camera_temp_file_name(started_at: NaiveDateTime) -> String {
   started_at
-    .format("camera-%Y%m%d-%H%M%S%.3f.mov")
+    .format(if cfg!(target_os = "windows") {
+      "camera-%Y%m%d-%H%M%S%.3f.mp4"
+    } else {
+      "camera-%Y%m%d-%H%M%S%.3f.mov"
+    })
     .to_string()
 }
 

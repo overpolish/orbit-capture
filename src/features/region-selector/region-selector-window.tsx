@@ -71,16 +71,18 @@ export function RegionSelectorWindow() {
         width: wholePixelSize(draft.size.width),
       },
     };
-    setRegion(persisted);
+    if (!isScreenshotCapture) setRegion(persisted);
 
     return persisted;
-  }, [draft, setRegion]);
+  }, [draft, isScreenshotCapture, setRegion]);
 
   useEffect(() => {
-    // Cross-window storage updates replace the persisted region.
+    // Cross-window storage updates replace the persisted region. Toggling a
+    // screenshot session also restores that region before and after its local
+    // one-off draft is used.
     // eslint-disable-next-line @eslint-react/set-state-in-effect
     setDraft(region);
-  }, [region]);
+  }, [isScreenshotCapture, region]);
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
@@ -134,9 +136,14 @@ export function RegionSelectorWindow() {
     // The overlay keeps a local draft so dragging does not write storage per frame.
     // eslint-disable-next-line @eslint-react/set-state-in-effect
     setDraft(fitted);
-    if (JSON.stringify(fitted) !== JSON.stringify(region)) setRegion(fitted);
+    if (
+      !isScreenshotCapture &&
+      JSON.stringify(fitted) !== JSON.stringify(region)
+    ) {
+      setRegion(fitted);
+    }
     void showRegionSelector(activeMonitor);
-  }, [activeMonitor, region, setRegion]);
+  }, [activeMonitor, isScreenshotCapture, region, setRegion]);
 
   useEffect(() => {
     if (!activeMonitor) return;
@@ -169,7 +176,7 @@ export function RegionSelectorWindow() {
       },
     };
     setDraft(centered);
-    setRegion(centered);
+    if (!isScreenshotCapture) setRegion(centered);
   };
 
   const finish = useCallback(() => {
@@ -240,7 +247,9 @@ export function RegionSelectorWindow() {
         isEditing={isRegionEditing}
         onChange={setDraft}
         onDrawingChange={setIsDrawing}
-        onFinish={setRegion}
+        onFinish={(nextRegion) => {
+          if (!isScreenshotCapture) setRegion(nextRegion);
+        }}
       />
 
       <Rnd

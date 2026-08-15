@@ -7,9 +7,8 @@ import {
   Check,
   Circle,
   CircleX,
-  FolderDown,
+  ClipboardCopy,
   ImageDown,
-  Images,
   Lock,
   Mic,
   MicOff,
@@ -29,15 +28,18 @@ import { cn } from "../../../lib/styling";
 import { RecordingFps, RecordingInputs } from "../../recording-inputs/types";
 import { RecordingMode } from "../../recording-sources/types";
 import { canStartRecording } from "../can-record";
-import { RecordingStatus, ScreenshotState } from "../types";
+import { RecordingStatus, ScreenshotAction, ScreenshotState } from "../types";
 
 import { RecordingBarInputToggle as InputToggle } from "./recording-bar-input-toggle";
 import { RecordingModePicker } from "./recording-mode-picker";
 
 type RecordingBarProps = {
   fps?: RecordingFps;
+  hasCameraWarning?: boolean;
+  hasMicrophoneWarning?: boolean;
   hasSelectedMonitor?: boolean;
   hasSelectedWindow?: boolean;
+  hasSystemAudioWarning?: boolean;
   initialFps?: RecordingFps;
   initialInputs?: Partial<RecordingInputs>;
   initialMode?: RecordingMode;
@@ -58,9 +60,9 @@ type RecordingBarProps = {
   onPointerUp?: () => void;
   onRecord?: () => void;
   onScreenshot?: () => void;
-  onScreenshotToClipboardChange?: (toClipboard: boolean) => void;
+  onScreenshotToClipboard?: () => void;
+  screenshotAction?: ScreenshotAction;
   screenshotState?: ScreenshotState;
-  screenshotToClipboard?: boolean;
   status?: RecordingStatus;
 };
 
@@ -73,8 +75,11 @@ const defaultInputs: RecordingInputs = {
 
 export function RecordingBar({
   fps: controlledFps,
+  hasCameraWarning = false,
+  hasMicrophoneWarning = false,
   hasSelectedMonitor = false,
   hasSelectedWindow = false,
+  hasSystemAudioWarning = false,
   initialFps = 60,
   initialInputs,
   initialMode = "screen",
@@ -95,9 +100,9 @@ export function RecordingBar({
   onPointerUp,
   onRecord,
   onScreenshot,
-  onScreenshotToClipboardChange,
+  onScreenshotToClipboard,
+  screenshotAction = "export",
   screenshotState = "idle",
-  screenshotToClipboard = true,
   status = "idle",
 }: RecordingBarProps) {
   const [uncontrolledMode, setUncontrolledMode] =
@@ -132,13 +137,20 @@ export function RecordingBar({
   // keeps a stale window from starting a second one.
   const isRecordingActive = status !== "idle";
   const isCapturingStill = screenshotState === "pending";
+  const exportScreenshotState =
+    screenshotAction === "export" ? screenshotState : "idle";
+  const clipboardScreenshotState =
+    screenshotAction === "clipboard" ? screenshotState : "idle";
   const canScreenshot =
     isScreenCapture && !isScreenshotLocked && !isRecordingActive;
   const canRecord =
     !isRecordingActive &&
     canStartRecording({
+      hasCameraWarning,
+      hasMicrophoneWarning,
       hasSelectedMonitor,
       hasSelectedWindow,
+      hasSystemAudioWarning,
       inputs,
       isCameraLocked: Boolean(isCameraLocked),
       isMicrophoneLocked: Boolean(isMicrophoneLocked),
@@ -150,7 +162,14 @@ export function RecordingBar({
     <main
       className="window-surface flex h-full min-h-[92px] w-full min-w-[648px] items-center justify-center overflow-hidden rounded-[10px] bg-content/92 p-2 text-content-fg"
       data-tauri-drag-region="deep"
-      onPointerDown={onInteract}
+      onKeyDownCapture={(event) => {
+        if (optionsButtonRef.current?.contains(event.target as Node)) return;
+        onInteract?.();
+      }}
+      onPointerDownCapture={(event) => {
+        if (optionsButtonRef.current?.contains(event.target as Node)) return;
+        onInteract?.();
+      }}
       onPointerUpCapture={onPointerUp}
     >
       <Overlay
@@ -190,6 +209,7 @@ export function RecordingBar({
       <div className="mr-2 flex min-w-24 flex-col">
         <div className="flex justify-between px-2">
           <InputToggle
+            hasWarning={hasSystemAudioWarning}
             isDisabled={isRecordingActive}
             isSelected={inputs.systemAudio}
             label="System audio"
@@ -198,8 +218,10 @@ export function RecordingBar({
             onChange={(selected) => {
               setInput("systemAudio", selected);
             }}
+            warningLabel="One or more selected system audio applications are not detected"
           />
           <InputToggle
+            hasWarning={hasMicrophoneWarning}
             isDisabled={isRecordingActive}
             isLocked={isMicrophoneLocked}
             isSelected={inputs.microphone}
@@ -210,11 +232,14 @@ export function RecordingBar({
               setInput("microphone", selected);
             }}
             onLockedPress={onMicrophoneLockedPress}
+            warningLabel="Selected microphone is not detected"
           />
           <InputToggle
+            hasWarning={hasCameraWarning}
             isDisabled={isAudioOnly || isRecordingActive}
             isLocked={isCameraLocked}
-            isSelected={!isAudioOnly && inputs.camera}
+            isReadOnly={mode === "camera"}
+            isSelected={mode === "camera" || (!isAudioOnly && inputs.camera)}
             label="Camera"
             off={<CameraOff size={16} />}
             on={<Camera size={16} />}
@@ -222,6 +247,7 @@ export function RecordingBar({
               setInput("camera", selected);
             }}
             onLockedPress={onCameraLockedPress}
+            warningLabel="Selected camera is not detected"
           />
           <InputToggle
             isDisabled={!isScreenCapture || isRecordingActive}
@@ -270,30 +296,42 @@ export function RecordingBar({
           showFocus={false}
           variant="ghost"
         >
-          {screenshotState === "done" ? (
+          {exportScreenshotState === "done" ? (
             <Check className="text-success" size={40} strokeWidth={3} />
           ) : (
             <ImageDown
               className={cn(
                 "origin-center transform-gpu backface-hidden will-change-transform transition-[color,transform] group-data-[hovered]:scale-110",
                 isCapturingStill && "animate-pulse text-muted",
-                screenshotState === "failed" && "text-error",
+                exportScreenshotState === "failed" && "text-error",
               )}
               size={40}
             />
           )}
         </Button>
 
-        <InputToggle
-          isDisabled={!canScreenshot}
-          isSelected={screenshotToClipboard}
-          label="Copy screenshot to clipboard"
-          off={<FolderDown size={16} />}
-          on={<Images size={16} />}
-          onChange={(selected) => {
-            onScreenshotToClipboardChange?.(selected);
-          }}
-        />
+        <Button
+          aria-label="Copy screenshot to clipboard"
+          className="group cursor-default"
+          isDisabled={!canScreenshot || isCapturingStill}
+          onPress={onScreenshotToClipboard}
+          showFocus={false}
+          size="sm"
+          variant="ghost"
+        >
+          {clipboardScreenshotState === "done" ? (
+            <Check className="text-success" size={16} strokeWidth={3} />
+          ) : (
+            <ClipboardCopy
+              className={cn(
+                "origin-center transform-gpu backface-hidden will-change-transform transition-[color,transform] group-data-[hovered]:scale-110",
+                isCapturingStill && "animate-pulse text-muted",
+                clipboardScreenshotState === "failed" && "text-error",
+              )}
+              size={16}
+            />
+          )}
+        </Button>
       </div>
 
       <Sparkles

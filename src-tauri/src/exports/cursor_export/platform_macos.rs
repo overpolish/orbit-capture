@@ -32,6 +32,7 @@ struct GpuCameraOverlay {
   frame_width: u32,
   frame_height: u32,
   radius: u32,
+  drop_shadow: u32,
 }
 
 #[repr(C)]
@@ -137,6 +138,11 @@ fn render_gpu_video(
         frame_width: scaled(geometry.frame_width, scale_x),
         frame_height: scaled(geometry.frame_height, scale_y),
         radius: scaled(geometry.radius, scale_x.min(scale_y)),
+        drop_shadow: u32::from(
+          request
+            .camera
+            .is_some_and(|(_, options)| options.camera_drop_shadow),
+        ),
       }
     });
   let output = c_path(path)?;

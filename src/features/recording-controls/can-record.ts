@@ -5,8 +5,11 @@ import { RecordingInputs } from "../recording-inputs/types";
 import { RecordingMode } from "../recording-sources/types";
 
 export type RecordingReadiness = {
+  hasCameraWarning: boolean;
+  hasMicrophoneWarning: boolean;
   hasSelectedMonitor: boolean;
   hasSelectedWindow: boolean;
+  hasSystemAudioWarning: boolean;
   inputs: RecordingInputs;
   isCameraLocked: boolean;
   isMicrophoneLocked: boolean;
@@ -35,8 +38,11 @@ const implementedModes: RecordingMode[] = [
  * could start a recording that had nothing to capture.
  */
 export const canStartRecording = ({
+  hasCameraWarning,
+  hasMicrophoneWarning,
   hasSelectedMonitor,
   hasSelectedWindow,
+  hasSystemAudioWarning,
   inputs,
   isCameraLocked,
   isMicrophoneLocked,
@@ -47,9 +53,12 @@ export const canStartRecording = ({
 
   switch (mode) {
     case "audio":
-      return inputs.systemAudio || (inputs.microphone && !isMicrophoneLocked);
+      return (
+        (inputs.systemAudio && !hasSystemAudioWarning) ||
+        (inputs.microphone && !isMicrophoneLocked && !hasMicrophoneWarning)
+      );
     case "camera":
-      return inputs.camera && !isCameraLocked;
+      return !isCameraLocked && !hasCameraWarning;
     case "window":
       return !isScreenLocked && hasSelectedWindow;
     default:

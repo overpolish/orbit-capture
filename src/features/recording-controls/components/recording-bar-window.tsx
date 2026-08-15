@@ -26,6 +26,7 @@ import {
   finishRecordingBarDrag,
   hideRecordingUi,
   hideRegionSelector,
+  recordingUiVisible,
   setRecordingSourceSelectorVisible,
   showRegionSelector,
 } from "../../recording-sources/api";
@@ -35,7 +36,8 @@ import { ShortcutAction } from "../../settings/types";
 import { startRecording } from "../api";
 import { screenshotTarget, startRecordingOptions } from "../recording-request";
 import { selectStatus, useRecordingStore } from "../store";
-import { RecordingError, ScreenshotState } from "../types";
+import { RecordingError, ScreenshotAction, ScreenshotState } from "../types";
+import { useRecordingInputAvailability } from "../use-recording-input-availability";
 
 import { RecordingBar } from "./recording-bar";
 
@@ -83,10 +85,16 @@ export function RecordingBarWindow() {
   const hydrated = usePermissionStore((state) => state.hydrated);
   const permissions = usePermissionStore((state) => state.permissions);
   const status = useRecordingStore(selectStatus);
-  const [screenshotState, setScreenshotState] =
-    useState<ScreenshotState>("idle");
+  const [screenshotFeedback, setScreenshotFeedback] = useState<{
+    action: ScreenshotAction;
+    state: ScreenshotState;
+  }>({ action: "export", state: "idle" });
+  const [isOcrActive, setIsOcrActive] = useState(false);
+  const [isRecordingUiVisible, setIsRecordingUiVisible] = useState(false);
   const screenshotResetRef = useRef<number | undefined>(undefined);
   const {
+    isRegionEditing,
+    isScreenshotCapture,
     recordingMode,
     selectedMonitor,
     selectedWindow,
@@ -96,11 +104,32 @@ export function RecordingBarWindow() {
   const {
     fps,
     inputs,
-    screenshotDestination,
+    selectedCamera,
+    selectedMicrophone,
+    selectedSystemAudio,
     setFps,
     setInput,
-    setScreenshotDestination,
   } = useRecordingInputStore((state) => state);
+  const inputAvailability = useRecordingInputAvailability({
+    active:
+      isRecordingUiVisible &&
+      !isOcrActive &&
+      !isRegionEditing &&
+      !isScreenshotCapture &&
+      screenshotFeedback.state !== "pending" &&
+      status === "idle",
+    cameraEnabled: inputs.camera || recordingMode === "camera",
+    cameraPermissionGranted: hydrated && permissions.camera.granted,
+    fps,
+    microphoneEnabled: inputs.microphone,
+    microphonePermissionGranted: hydrated && permissions.microphone.granted,
+    screenRecordingPermissionGranted:
+      hydrated && permissions.screenRecording.granted,
+    selectedCamera,
+    selectedMicrophone,
+    selectedSystemAudio,
+    systemAudioEnabled: inputs.systemAudio,
+  });
 
   useEffect(() => {
     // Editing, and any screenshot session that outlived a previous run, belong
@@ -124,23 +153,87 @@ export function RecordingBarWindow() {
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
+    let unlistenHidden: UnlistenFn | undefined;
+    let unlistenOcrEnded: UnlistenFn | undefined;
+    let unlistenOcrStarted: UnlistenFn | undefined;
     let disposed = false;
+    let receivedVisibilityEvent = false;
 
-    void listen("recording-ui://shown", () => {
-      void synchronizeRecordingUi();
-    }).then((listener) => {
+    void Promise.all([
+      listen("recording-ui://shown", () => {
+        receivedVisibilityEvent = true;
+        setIsRecordingUiVisible(true);
+        void synchronizeRecordingUi();
+      }),
+      listen("recording-ui://hidden", () => {
+        receivedVisibilityEvent = true;
+        setIsRecordingUiVisible(false);
+      }),
+      listen("text-recognition://started", () => {
+        setIsOcrActive(true);
+      }),
+      listen("text-recognition://ended", () => {
+        setIsOcrActive(false);
+      }),
+    ]).then(([shown, hidden, ocrStarted, ocrEnded]) => {
       if (disposed) {
-        listener();
+        shown();
+        hidden();
+        ocrStarted();
+        ocrEnded();
       } else {
-        unlisten = listener;
+        unlisten = shown;
+        unlistenHidden = hidden;
+        unlistenOcrStarted = ocrStarted;
+        unlistenOcrEnded = ocrEnded;
       }
+      void recordingUiVisible()
+        .then((visible) => {
+          if (!disposed && !receivedVisibilityEvent) {
+            setIsRecordingUiVisible(visible);
+          }
+        })
+        .catch(() => {});
     });
 
     return () => {
       disposed = true;
       unlisten?.();
+      unlistenHidden?.();
+      unlistenOcrEnded?.();
+      unlistenOcrStarted?.();
     };
   }, []);
+
+  const takeScreenshot = (destination: ScreenshotAction) => {
+    const target = screenshotTarget();
+    if (!target) return;
+
+    window.clearTimeout(screenshotResetRef.current);
+    setScreenshotFeedback({ action: destination, state: "pending" });
+    captureStill({
+      destination,
+      showCursor: inputs.showCursor,
+      target,
+    })
+      .then(() => {
+        // Opening the export window is its own success feedback. Clipboard
+        // capture stays on the bar, so acknowledge it here instead.
+        setScreenshotFeedback({
+          action: destination,
+          state: destination === "clipboard" ? "done" : "idle",
+        });
+      })
+      .catch((error: unknown) => {
+        console.error("Could not take the screenshot", error);
+        setScreenshotFeedback({ action: destination, state: "failed" });
+      })
+      .finally(() => {
+        screenshotResetRef.current = window.setTimeout(() => {
+          setScreenshotFeedback({ action: destination, state: "idle" });
+        }, SCREENSHOT_FEEDBACK_MS);
+      });
+  };
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
@@ -188,8 +281,11 @@ export function RecordingBarWindow() {
   return (
     <RecordingBar
       fps={fps}
+      hasCameraWarning={inputAvailability.cameraMissing}
+      hasMicrophoneWarning={inputAvailability.microphoneMissing}
       hasSelectedMonitor={selectedMonitor !== null}
       hasSelectedWindow={selectedWindow !== null}
+      hasSystemAudioWarning={inputAvailability.systemAudioMissing}
       initialMode={recordingMode}
       inputs={inputs}
       isCameraLocked={!hydrated || !canRecordCamera}
@@ -214,9 +310,10 @@ export function RecordingBarWindow() {
       }}
       onModeChange={(mode) => {
         setRecordingMode(mode);
-        void collapseRecordingSourceSelector().then(() =>
-          synchronizeRecordingUi(mode, selectedMonitor),
-        );
+        void Promise.all([
+          collapseRecordingSourceSelector(),
+          hideRecordingOptions(),
+        ]).then(() => synchronizeRecordingUi(mode, selectedMonitor));
       }}
       onOptions={(anchorX) => {
         void collapseRecordingSourceSelector().then(() =>
@@ -232,41 +329,13 @@ export function RecordingBarWindow() {
         });
       }}
       onScreenshot={() => {
-        const target = screenshotTarget();
-        if (!target) return;
-
-        // The check has to mean the file exists. Saving encodes a few hundred
-        // milliseconds of pixels, so claiming success on the press would be a
-        // lie for exactly the case that takes long enough to notice.
-        window.clearTimeout(screenshotResetRef.current);
-        setScreenshotState("pending");
-        captureStill({
-          destination: screenshotDestination,
-          showCursor: inputs.showCursor,
-          target,
-        })
-          .then(() => {
-            // With the clipboard off the export window opens instead, and its
-            // appearance is the feedback; a check would claim a file exists.
-            setScreenshotState(
-              screenshotDestination === "clipboard" ? "done" : "idle",
-            );
-          })
-          .catch((error: unknown) => {
-            console.error("Could not take the screenshot", error);
-            setScreenshotState("failed");
-          })
-          .finally(() => {
-            screenshotResetRef.current = window.setTimeout(() => {
-              setScreenshotState("idle");
-            }, SCREENSHOT_FEEDBACK_MS);
-          });
+        takeScreenshot("export");
       }}
-      onScreenshotToClipboardChange={(toClipboard) => {
-        setScreenshotDestination(toClipboard ? "clipboard" : "export");
+      onScreenshotToClipboard={() => {
+        takeScreenshot("clipboard");
       }}
-      screenshotState={screenshotState}
-      screenshotToClipboard={screenshotDestination !== "export"}
+      screenshotAction={screenshotFeedback.action}
+      screenshotState={screenshotFeedback.state}
       status={status}
     />
   );

@@ -69,6 +69,7 @@ pub(super) fn save_baked_recording(
   duration_ms: u64,
   screen_size: (u32, u32),
   overlay: CameraOverlaySettings,
+  camera_drop_shadow: bool,
   video_settings: (u8, u16, u16),
   cursor: Option<(&Path, cursor_effects::CursorEffectSettings)>,
   output: &ScreenshotOutputSettings,
@@ -90,6 +91,7 @@ pub(super) fn save_baked_recording(
     candidate.exists()
   });
   let baked = media_preview::BakedVideoExportOptions {
+    camera_drop_shadow,
     camera_height: camera.height,
     camera_width: camera.width,
     overlay,

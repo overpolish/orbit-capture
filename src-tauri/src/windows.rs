@@ -320,6 +320,11 @@ pub fn hide_recording_bar(app: &AppHandle) -> tauri::Result<()> {
   RECORDING_CONTROLS_VISIBLE.store(false, Ordering::Relaxed);
   if let Some(bar) = app.get_webview_window(WindowLabel::RecordingBar.as_str()) {
     platform::hide(&bar)?;
+    app.emit_to(
+      WindowLabel::RecordingBar.as_str(),
+      "recording-ui://hidden",
+      (),
+    )?;
   }
 
   Ok(())
@@ -584,6 +589,11 @@ pub fn show_recording_ui(app: &AppHandle) -> tauri::Result<()> {
 
 pub fn is_recording_ui_visible() -> bool {
   RECORDING_CONTROLS_VISIBLE.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+pub fn recording_ui_visible() -> bool {
+  is_recording_ui_visible()
 }
 pub fn hide_instead_of_close(app: &AppHandle, label: WindowLabel) {
   if let Some(window) = app.get_webview_window(label.as_str()) {

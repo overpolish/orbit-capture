@@ -218,6 +218,7 @@ pub async fn save_export(
               *duration_ms,
               (*width, *height),
               camera_overlay,
+              camera_output.drop_shadow,
               (compression, resolution_scale_percent, *source_scale_percent),
               baked_cursor.map(|cursor| (cursor, cursor_effects)),
               primary_output,

@@ -42,7 +42,8 @@ fn decoded_preview_frame_stays_on_the_gpu() {
   let multithread: ID3D10Multithread = device.cast().unwrap();
   let _ = unsafe { multithread.SetMultithreadProtected(true) };
   let mut reader = GpuVideoReader::open_with_device(&path, 0, device.clone()).unwrap();
-  let frame = reader.frame_at(0).unwrap().unwrap();
+  reader.seek(4_000).unwrap();
+  let frame = reader.frame_at(4_000).unwrap().unwrap();
   let mut description = D3D11_TEXTURE2D_DESC::default();
   unsafe { frame.texture.GetDesc(&mut description) };
   let negotiated = reader.dimensions();
@@ -69,22 +70,22 @@ fn decoded_preview_frame_stays_on_the_gpu() {
   unsafe { context.CopySubresourceRegion(&target, 0, 0, 0, 0, &source, frame.subresource, None) };
   let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
   unsafe { context.Map(&target, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) }.unwrap();
-  let first_rows = unsafe {
+  let pixels = unsafe {
     std::slice::from_raw_parts(
       mapped.pData.cast::<u8>(),
-      (mapped.RowPitch as usize * description.Height as usize).min(256 * 1_024),
+      mapped.RowPitch as usize * description.Height as usize,
     )
   };
   let mut values = std::collections::BTreeSet::new();
-  values.extend(first_rows.iter().copied());
+  values.extend(pixels.iter().copied());
   unsafe { context.Unmap(&target, 0) };
   assert!(
     values.len() > 16,
     "decoded GPU texture is effectively uniform: {values:?}"
   );
 
-  reader.seek(4_000).unwrap();
-  for target_ms in [4_000, 5_000, 6_000, 7_000, 8_000] {
+  for target_ms in [5_000, 8_000, 12_000, 16_000, 18_000, 20_000, 22_000] {
+    reader.seek(target_ms).unwrap();
     let frame = reader.frame_at(target_ms).unwrap().unwrap();
     println!(
       "requested {target_ms} ms, decoded {} ms",

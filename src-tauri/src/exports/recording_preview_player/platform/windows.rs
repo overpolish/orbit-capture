@@ -26,7 +26,6 @@ use self::gpu_decoder::GpuFrame;
 pub(crate) use self::gpu_decoder::GpuVideoReader;
 use super::super::{video::VideoFrame, PlayerSources};
 use crate::exports::preview_platform::ComposedFrame;
-use crate::exports::recording_preview_player::video::PREVIEW_FPS;
 
 pub(crate) const NATIVE_STILLS: bool = true;
 pub(crate) type StillDecoder = still::NativeStillDecoder;
@@ -34,33 +33,26 @@ pub(crate) type StillDecoder = still::NativeStillDecoder;
 pub(crate) enum VideoFramePayload {
   Native {
     frame: GpuFrame,
+    index: u32,
     presented: Option<SyncSender<()>>,
   },
 }
 
-pub(crate) fn send_frame(
-  _channel: &Channel,
-  sources: &PlayerSources,
-  _request_id: u64,
-  payload: VideoFramePayload,
-) -> bool {
-  let VideoFramePayload::Native { frame, presented } = payload;
-  let result = sources.preview_surface.as_ref().is_some_and(|surface| {
-    let settings = sources.composition_settings.as_ref().and_then(|settings| {
-      settings
-        .read()
-        .ok()
-        .map(|settings| settings.recording_output.primary.clone())
-    });
+pub(super) fn present_native_frame(sources: &PlayerSources, index: u32, frame: &GpuFrame) -> bool {
+  sources.preview_surface.as_ref().is_some_and(|surface| {
+    let settings = sources
+      .composition_settings
+      .as_ref()
+      .and_then(|settings| settings.read().ok().map(|settings| settings.clone()));
     settings.is_some_and(|settings| {
       let cursor_settings = sources
         .cursor_settings
         .read()
         .map(|settings| *settings)
         .unwrap_or_default();
-      let cursor = sources
-        .cursor
-        .as_deref()
+      let cursor = (index == 0)
+        .then_some(())
+        .and(sources.cursor.as_deref())
         .filter(|_| cursor_settings.bake)
         .and_then(|cursor| {
           cursor.gpu_cursor(
@@ -69,21 +61,56 @@ pub(crate) fn send_frame(
             cursor_settings,
           )
         });
-      surface
-        .present_composed_texture(
-          0,
-          &frame.texture,
-          frame.subresource,
-          (frame.width, frame.height),
-          &settings,
-          ComposedFrame {
-            cursor,
-            seconds: frame.timestamp_ms as f64 / 1_000.0,
-          },
-        )
-        .unwrap_or(false)
+      let composed = ComposedFrame {
+        cursor,
+        seconds: frame.timestamp_ms as f64 / 1_000.0,
+      };
+      if settings.bake_camera && sources.camera_path.is_some() {
+        surface
+          .present_baked_camera_texture(
+            index,
+            &frame.texture,
+            frame.subresource,
+            (frame.width, frame.height),
+            &settings.recording_output.primary,
+            settings.camera_overlay,
+            settings.recording_output.camera.drop_shadow,
+            composed,
+          )
+          .unwrap_or(false)
+      } else {
+        let output = if index == 0 {
+          &settings.recording_output.primary
+        } else {
+          &settings.recording_output.camera
+        };
+        surface
+          .present_composed_texture(
+            index,
+            &frame.texture,
+            frame.subresource,
+            (frame.width, frame.height),
+            output,
+            composed,
+          )
+          .unwrap_or(false)
+      }
     })
-  });
+  })
+}
+
+pub(crate) fn send_frame(
+  _channel: &Channel,
+  sources: &PlayerSources,
+  _request_id: u64,
+  payload: VideoFramePayload,
+) -> bool {
+  let VideoFramePayload::Native {
+    frame,
+    index,
+    presented,
+  } = payload;
+  let result = present_native_frame(sources, index, &frame);
   if let Some(presented) = presented {
     let _ = presented.send(());
   }
@@ -100,14 +127,17 @@ pub(crate) fn spawn_video(
   _child: Arc<Mutex<Option<Child>>>,
   sender: SyncSender<VideoFrame>,
 ) -> Result<std::thread::JoinHandle<()>, String> {
-  if sources.camera_path.is_some() {
-    return Err("Windows camera preview is not available yet".to_owned());
-  }
   if sources.playback_layout.panes.is_empty() {
     return Err("The recording has no video pane".to_owned());
   }
-  let path = sources.screen_path.clone();
-  let duration_ms = sources.duration_ms;
+  let mut paths = vec![(0_u32, sources.screen_path.clone(), sources.duration_ms)];
+  if let Some(path) = &sources.camera_path {
+    paths.push((
+      1,
+      path.clone(),
+      sources.camera_duration_ms.unwrap_or(sources.duration_ms),
+    ));
+  }
   let surface = sources
     .preview_surface
     .clone()
@@ -117,23 +147,43 @@ pub(crate) fn spawn_video(
   let thread = std::thread::Builder::new()
     .name("recording-preview-video-windows".to_owned())
     .spawn(move || {
-      let mut reader = match GpuVideoReader::open(&path, start_ms, surface) {
-        Ok(reader) => reader,
-        Err(error) => {
-          let _ = startup_tx.send(Err(error));
-          return;
-        }
-      };
+      let mut streams = Vec::with_capacity(paths.len());
+      for (index, path, duration_ms) in paths {
+        let mut reader = match GpuVideoReader::open(&path, start_ms, surface.clone()) {
+          Ok(reader) => reader,
+          Err(error) => {
+            let _ = startup_tx.send(Err(error));
+            return;
+          }
+        };
+        let pending = match reader.frame_at(start_ms) {
+          Ok(frame) => frame,
+          Err(error) => {
+            let _ = startup_tx.send(Err(error));
+            return;
+          }
+        };
+        streams.push((index, duration_ms, reader, pending));
+      }
       let _ = startup_tx.send(Ok(()));
-      let mut index = 0_u64;
       while !cancelled.load(Ordering::Acquire) {
-        let target_ms = start_ms.saturating_add(index * 1_000 / PREVIEW_FPS);
-        if target_ms >= duration_ms {
+        let Some(stream_index) = streams
+          .iter()
+          .enumerate()
+          .filter_map(|(stream_index, (_, duration_ms, _, frame))| {
+            frame
+              .as_ref()
+              .filter(|frame| frame.timestamp_ms < *duration_ms)
+              .map(|frame| (stream_index, frame.timestamp_ms))
+          })
+          .min_by_key(|(_, timestamp_ms)| *timestamp_ms)
+          .map(|(stream_index, _)| stream_index)
+        else {
           break;
-        }
-        let frame = match reader.frame_at(target_ms) {
-          Ok(Some(frame)) => frame,
-          Ok(None) | Err(_) => break,
+        };
+        let (index, _, reader, pending) = &mut streams[stream_index];
+        let Some(frame) = pending.take() else {
+          continue;
         };
         // The decoder's sample owns a pooled DXGI surface. Do not ask Media
         // Foundation for another sample until the consumer has submitted this
@@ -144,6 +194,7 @@ pub(crate) fn spawn_video(
           timestamp_ms: frame.timestamp_ms,
           payload: VideoFramePayload::Native {
             frame,
+            index: *index,
             presented: Some(presented_tx),
           },
         };
@@ -166,7 +217,7 @@ pub(crate) fn spawn_video(
             Err(mpsc::RecvTimeoutError::Timeout) => {}
           }
         }
-        index += 1;
+        *pending = reader.next_frame().unwrap_or_default();
       }
     })
     .map_err(|error| error.to_string())?;
@@ -229,6 +280,49 @@ pub(crate) fn composed_frame_image(
   let frame = reader
     .frame_at(position_ms)?
     .ok_or_else(|| "Media Foundation returned no source frame".to_owned())?;
+  let composition = sources
+    .composition_settings
+    .as_ref()
+    .and_then(|settings| settings.read().ok().map(|settings| settings.clone()));
+  let mut camera_reader = if composition
+    .as_ref()
+    .is_some_and(|settings| settings.bake_camera)
+  {
+    sources
+      .camera_path
+      .as_ref()
+      .map(|path| GpuVideoReader::open(path, position_ms, surface.clone()))
+      .transpose()?
+  } else {
+    None
+  };
+  let camera_frame = camera_reader
+    .as_mut()
+    .map(|reader| reader.frame_at(position_ms))
+    .transpose()?
+    .flatten()
+    .filter(|frame| frame.timestamp_ms <= position_ms.saturating_add(50));
+  let camera_geometry = camera_frame
+    .as_ref()
+    .zip(composition.as_ref())
+    .map(|(camera, settings)| {
+      crate::exports::media_preview::bake_geometry(
+        crate::exports::media_preview::BakedVideoExportOptions {
+          camera_drop_shadow: settings.recording_output.camera.drop_shadow,
+          camera_height: camera.height,
+          camera_width: camera.width,
+          overlay: settings.camera_overlay,
+          screen_height: recording_output.primary.height,
+          screen_width: recording_output.primary.width,
+          video: crate::exports::media_preview::VideoExportOptions {
+            compression: 0,
+            resolution_scale_percent: 100,
+            source_scale_percent: 100,
+          },
+        },
+      )
+    })
+    .transpose()?;
   let cursor = sources
     .cursor
     .as_deref()
@@ -249,5 +343,17 @@ pub(crate) fn composed_frame_image(
       cursor,
       seconds: frame.timestamp_ms as f64 / 1_000.0,
     },
+    camera_frame
+      .as_ref()
+      .zip(camera_geometry)
+      .map(|(camera, geometry)| {
+        (
+          &camera.texture,
+          camera.subresource,
+          (camera.width, camera.height),
+          geometry,
+          recording_output.camera.drop_shadow,
+        )
+      }),
   )
 }

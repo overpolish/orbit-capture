@@ -42,6 +42,7 @@ typedef struct {
   uint32_t frame_width;
   uint32_t frame_height;
   uint32_t radius;
+  uint32_t drop_shadow;
 } OrbitCameraOverlay;
 
 typedef struct {
@@ -56,6 +57,7 @@ typedef struct {
   uint32_t radius;
   uint32_t source_width;
   uint32_t source_height;
+  uint32_t drop_shadow;
 } OrbitCameraUniforms;
 
 static NSString *const shader_source = @R"METAL(
@@ -89,6 +91,7 @@ struct CameraUniforms {
   uint radius;
   uint source_width;
   uint source_height;
+  uint drop_shadow;
 };
 
 struct CanvasUniforms {
@@ -607,7 +610,7 @@ kernel void overlay_camera_luma(
       float2(u.frame_x, u.frame_y), float2(u.frame_width, u.frame_height),
       float2(luma.get_width(), luma.get_height()),
       shadow_sigma(float2(u.frame_width, u.frame_height)));
-    float shadow = sigma > 1.0
+    float shadow = u.drop_shadow != 0 && sigma > 1.0
       ? soft_shadow(point, float2(u.frame_width, u.frame_height),
                     float(u.radius), sigma, 0.14)
       : 0.0;
@@ -644,7 +647,7 @@ kernel void overlay_camera_chroma(
         float2(u.frame_x, u.frame_y), float2(u.frame_width, u.frame_height),
         float2(chroma.get_width() * 2, chroma.get_height() * 2),
         shadow_sigma(float2(u.frame_width, u.frame_height)));
-      shadow_sum += distance > 0.0 && sigma > 1.0
+      shadow_sum += u.drop_shadow != 0 && distance > 0.0 && sigma > 1.0
         ? soft_shadow(point, float2(u.frame_width, u.frame_height),
                       float(u.radius), sigma, 0.14)
         : 0.0;
@@ -1197,6 +1200,7 @@ int orbit_gpu_composite_cursor(const char *screen_path, const char *cursor_path,
               camera_overlay->radius,
               (uint32_t)camera_width,
               (uint32_t)camera_height,
+              camera_overlay->drop_shadow,
           };
           MTLSize camera_group = MTLSizeMake(16, 16, 1);
           id<MTLComputeCommandEncoder> camera_compute =

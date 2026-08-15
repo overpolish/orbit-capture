@@ -43,6 +43,7 @@ mod compositor;
 mod window;
 
 use super::{PreviewCapabilities, PreviewSurfaceRect};
+use crate::exports::media_preview::{BakeGeometry, BakedVideoExportOptions, VideoExportOptions};
 use crate::screenshots::{CapturedImage, ScreenshotOutputSettings};
 
 pub(super) const CAPABILITIES: PreviewCapabilities = PreviewCapabilities {
@@ -52,10 +53,13 @@ pub(super) const CAPABILITIES: PreviewCapabilities = PreviewCapabilities {
 
 pub(crate) struct StillOverlay;
 
+#[derive(Clone, Copy)]
 pub(crate) struct ComposedFrame {
   pub cursor: Option<crate::exports::cursor_effects::GpuCursor>,
   pub seconds: f64,
 }
+
+type ClipboardCamera<'a> = (&'a ID3D11Texture2D, u32, (u32, u32), BakeGeometry, bool);
 
 struct Gpu {
   backdrop: Backdrop,
@@ -90,7 +94,9 @@ struct Pane {
 
 struct SurfaceState {
   backdrop: [f64; 4],
+  camera_source: Option<compositor::SourceTexture>,
   panes: Vec<Option<Pane>>,
+  primary_composition: Option<ComposedFrame>,
   scale: f64,
   viewport: PreviewSurfaceRect,
 }
@@ -107,6 +113,7 @@ pub(crate) struct RecordingPreviewSurface {
 /// An offscreen instance of the live preview compositor. Its source and target
 /// textures are allocated once and reused for every exported frame.
 pub(crate) struct WindowsExportCompositor {
+  camera: Option<compositor::SourceTexture>,
   inner: std::sync::Arc<SurfaceInner>,
   output_size: (u32, u32),
   source: compositor::SourceTexture,
@@ -390,6 +397,16 @@ impl RecordingPreviewSurface {
     settings: &ScreenshotOutputSettings,
     composition: ComposedFrame,
   ) -> Result<bool, String> {
+    self.present_cached_source_with_camera(pane, settings, composition, None)
+  }
+
+  fn present_cached_source_with_camera(
+    &self,
+    pane: &mut Pane,
+    settings: &ScreenshotOutputSettings,
+    composition: ComposedFrame,
+    camera: Option<(&compositor::SourceTexture, BakeGeometry, bool)>,
+  ) -> Result<bool, String> {
     crate::screenshots::output_dimensions(settings)?;
     // Keep one stable output chain for the current preview resolution. The
     // source texture is cached separately and edits only redraw this target.
@@ -415,13 +432,14 @@ impl RecordingPreviewSurface {
     let buffer_index = unsafe { pane.swap_chain.GetCurrentBackBufferIndex() };
     let target = unsafe { pane.swap_chain.GetBuffer::<ID3D11Texture2D>(buffer_index) }
       .map_err(|error| format!("The composed preview has no back buffer: {error}"))?;
-    self.inner.gpu.compositor.draw(
+    self.inner.gpu.compositor.draw_with_camera(
       &self.inner.gpu.context,
       &target,
       source,
       settings,
       composition.seconds,
       composition.cursor,
+      camera,
     )?;
     unsafe { self.inner.gpu.context.Flush() };
     unsafe { pane.swap_chain.Present(0, DXGI_PRESENT(0)) }
@@ -455,7 +473,9 @@ impl RecordingPreviewSurface {
           gpu: Gpu::new(host)?,
           state: Mutex::new(SurfaceState {
             backdrop: [0.09, 0.09, 0.10, 1.0],
+            camera_source: None,
             panes: Vec::new(),
+            primary_composition: None,
             scale: 1.0,
             viewport: PreviewSurfaceRect {
               height: 0.0,
@@ -488,10 +508,28 @@ impl RecordingPreviewSurface {
       .compositor
       .source(&self.inner.gpu.device, source_size)?;
     Ok(WindowsExportCompositor {
+      camera: None,
       inner: std::sync::Arc::clone(&self.inner),
       output_size,
       source,
     })
+  }
+
+  pub(crate) fn export_compositor_with_camera(
+    &self,
+    source_size: (u32, u32),
+    camera_size: (u32, u32),
+    output_size: (u32, u32),
+  ) -> Result<WindowsExportCompositor, String> {
+    let mut compositor = self.export_compositor(source_size, output_size)?;
+    compositor.camera = Some(
+      self
+        .inner
+        .gpu
+        .compositor
+        .source(&self.inner.gpu.device, camera_size)?,
+    );
+    Ok(compositor)
   }
 
   pub(crate) fn set_scale(&self, scale: f64) {
@@ -619,16 +657,116 @@ impl RecordingPreviewSurface {
     self.present_cached_source(pane, settings, composition)
   }
 
+  #[allow(clippy::too_many_arguments)]
+  pub(crate) fn present_baked_camera_texture(
+    &self,
+    index: u32,
+    texture: &ID3D11Texture2D,
+    subresource: u32,
+    size: (u32, u32),
+    settings: &ScreenshotOutputSettings,
+    overlay: crate::exports::CameraOverlaySettings,
+    drop_shadow: bool,
+    composition: ComposedFrame,
+  ) -> Result<bool, String> {
+    let Ok(mut state) = self.inner.state.lock() else {
+      return Ok(false);
+    };
+    if index == 1 {
+      if state
+        .camera_source
+        .as_ref()
+        .is_none_or(|source| source.size != size)
+      {
+        state.camera_source = Some(
+          self
+            .inner
+            .gpu
+            .compositor
+            .source(&self.inner.gpu.device, size)?,
+        );
+      }
+      if let Some(camera) = &state.camera_source {
+        compositor::Compositor::copy_source(&self.inner.gpu.context, camera, texture, subresource)?;
+      }
+    } else {
+      state.primary_composition = Some(composition);
+      let Some(pane) = state.panes.first_mut().and_then(Option::as_mut) else {
+        return Ok(false);
+      };
+      if pane
+        .source
+        .as_ref()
+        .is_none_or(|source| source.size != size)
+      {
+        pane.source = Some(
+          self
+            .inner
+            .gpu
+            .compositor
+            .source(&self.inner.gpu.device, size)?,
+        );
+        pane.source_token = None;
+      }
+      let source = pane
+        .source
+        .as_ref()
+        .ok_or_else(|| "The preview source texture is unavailable".to_owned())?;
+      compositor::Compositor::copy_source(&self.inner.gpu.context, source, texture, subresource)?;
+      pane.source_token = None;
+    }
+    let Some(camera) = state.camera_source.clone() else {
+      let Some(pane) = state.panes.first_mut().and_then(Option::as_mut) else {
+        return Ok(true);
+      };
+      if pane.source.is_none() {
+        return Ok(true);
+      }
+      return self.present_cached_source(pane, settings, composition);
+    };
+    let composition = if index == 1 {
+      state.primary_composition.unwrap_or(composition)
+    } else {
+      composition
+    };
+    let geometry = crate::exports::media_preview::bake_geometry(BakedVideoExportOptions {
+      camera_drop_shadow: drop_shadow,
+      camera_height: camera.size.1,
+      camera_width: camera.size.0,
+      overlay,
+      screen_height: settings.height,
+      screen_width: settings.width,
+      video: VideoExportOptions {
+        compression: 0,
+        resolution_scale_percent: 100,
+        source_scale_percent: 100,
+      },
+    })?;
+    let Some(pane) = state.panes.first_mut().and_then(Option::as_mut) else {
+      return Ok(true);
+    };
+    if pane.source.is_none() {
+      return Ok(true);
+    }
+    self.present_cached_source_with_camera(
+      pane,
+      settings,
+      composition,
+      Some((&camera, geometry, drop_shadow)),
+    )
+  }
+
   /// Renders one explicit clipboard frame through the exact preview shader,
   /// then performs the single unavoidable GPU readback required by the
   /// Windows clipboard. Live preview never calls this path.
-  pub(crate) fn compose_texture_to_image(
+  pub(in crate::exports) fn compose_texture_to_image(
     &self,
     texture: &ID3D11Texture2D,
     subresource: u32,
     source_size: (u32, u32),
     settings: &ScreenshotOutputSettings,
     composition: ComposedFrame,
+    camera: Option<ClipboardCamera<'_>>,
   ) -> Result<CapturedImage, String> {
     let _state = self
       .inner
@@ -642,6 +780,23 @@ impl RecordingPreviewSurface {
       .compositor
       .source(&self.inner.gpu.device, source_size)?;
     compositor::Compositor::copy_source(&self.inner.gpu.context, &source, texture, subresource)?;
+    let camera_source = camera
+      .map(|(_, _, size, _, _)| {
+        self
+          .inner
+          .gpu
+          .compositor
+          .source(&self.inner.gpu.device, size)
+      })
+      .transpose()?;
+    if let (Some(camera_source), Some((texture, subresource, _, _, _))) = (&camera_source, camera) {
+      compositor::Compositor::copy_source(
+        &self.inner.gpu.context,
+        camera_source,
+        texture,
+        subresource,
+      )?;
+    }
     let target_description = D3D11_TEXTURE2D_DESC {
       Width: output_size.0,
       Height: output_size.1,
@@ -666,13 +821,18 @@ impl RecordingPreviewSurface {
     }
     .map_err(|error| format!("The clipboard render target could not be created: {error}"))?;
     let target = target.ok_or_else(|| "D3D11 created no clipboard render target".to_owned())?;
-    self.inner.gpu.compositor.draw(
+    self.inner.gpu.compositor.draw_with_camera(
       &self.inner.gpu.context,
       &target,
       &source,
       settings,
       composition.seconds,
       composition.cursor,
+      camera.and_then(|(_, _, _, geometry, drop_shadow)| {
+        camera_source
+          .as_ref()
+          .map(|source| (source, geometry, drop_shadow))
+      }),
     )?;
 
     let staging_description = D3D11_TEXTURE2D_DESC {
@@ -818,7 +978,9 @@ impl RecordingPreviewSurface {
   }
 
   pub(crate) fn hide(&self) {
-    if let Ok(state) = self.inner.state.lock() {
+    if let Ok(mut state) = self.inner.state.lock() {
+      state.camera_source = None;
+      state.primary_composition = None;
       self.inner.gpu.backdrop.hide();
       for pane in state.panes.iter().flatten() {
         pane.hide();
@@ -829,12 +991,13 @@ impl RecordingPreviewSurface {
 }
 
 impl WindowsExportCompositor {
-  pub(crate) fn compose(
+  pub(in crate::exports) fn compose_with_camera(
     &self,
     texture: &ID3D11Texture2D,
     subresource: u32,
     settings: &ScreenshotOutputSettings,
     composition: ComposedFrame,
+    camera: Option<(&ID3D11Texture2D, u32, BakeGeometry, bool)>,
   ) -> Result<ID3D11Texture2D, String> {
     let _state = self
       .inner
@@ -847,6 +1010,16 @@ impl WindowsExportCompositor {
       texture,
       subresource,
     )?;
+    if let (Some(camera_source), Some((camera_texture, camera_subresource, _, _))) =
+      (&self.camera, camera)
+    {
+      compositor::Compositor::copy_source(
+        &self.inner.gpu.context,
+        camera_source,
+        camera_texture,
+        camera_subresource,
+      )?;
+    }
     // Sink Writer retains DXGI surfaces and feeds the hardware encoder
     // asynchronously. A single repainted render target therefore lets a later
     // frame overwrite an earlier sample before Media Foundation consumes it.
@@ -877,13 +1050,19 @@ impl WindowsExportCompositor {
     }
     .map_err(|error| format!("The Windows export target could not be created: {error}"))?;
     let target = target.ok_or_else(|| "D3D11 created no Windows export target".to_owned())?;
-    self.inner.gpu.compositor.draw(
+    self.inner.gpu.compositor.draw_with_camera(
       &self.inner.gpu.context,
       &target,
       &self.source,
       settings,
       composition.seconds,
       composition.cursor,
+      camera.and_then(|(_, _, geometry, drop_shadow)| {
+        self
+          .camera
+          .as_ref()
+          .map(|source| (source, geometry, drop_shadow))
+      }),
     )?;
     unsafe { self.inner.gpu.context.Flush() };
     Ok(target)

@@ -173,15 +173,34 @@ fn render_video(
   request: &mut CursorExportRequest<'_>,
   path: &Path,
 ) -> Result<ExportRunResult, String> {
-  if request.camera.is_some() {
-    return Err("Windows camera composition is not available yet".to_owned());
-  }
   crate::screenshots::validate_output_settings(request.width, request.height, request.output)?;
   let surface = RecordingPreviewSurface::existing()?;
   let mut reader = GpuVideoReader::open(request.screen, 0, surface.clone())?;
+  let mut camera_reader = request
+    .camera
+    .map(|(path, _)| GpuVideoReader::open(path, 0, surface.clone()))
+    .transpose()?;
+  let mut camera_current = None;
+  let mut camera_next = match camera_reader.as_mut() {
+    Some(reader) => reader.next_frame()?,
+    None => None,
+  };
   let mut cursor = request.cursor.map(CursorCompositor::open).transpose()?;
   let output_size = crate::screenshots::output_dimensions(request.output)?;
-  let compositor = surface.export_compositor((request.width, request.height), output_size)?;
+  let compositor = request.camera.map_or_else(
+    || surface.export_compositor((request.width, request.height), output_size),
+    |(_, options)| {
+      surface.export_compositor_with_camera(
+        (request.width, request.height),
+        (options.camera_width, options.camera_height),
+        output_size,
+      )
+    },
+  )?;
+  let camera_geometry = request
+    .camera
+    .map(|(_, options)| media_preview::bake_geometry(options))
+    .transpose()?;
   let sink = VideoSink::new(
     path,
     &surface.device(),
@@ -207,6 +226,16 @@ fn render_video(
       frame.timestamp_100ns.saturating_sub(timeline_origin)
     });
     let position_ms = u64::try_from(pts_100ns.max(0) / 10_000).unwrap_or_default();
+    while camera_next
+      .as_ref()
+      .is_some_and(|frame| frame.timestamp_100ns.saturating_sub(timeline_origin) <= pts_100ns)
+    {
+      camera_current = camera_next.take();
+      camera_next = match camera_reader.as_mut() {
+        Some(reader) => reader.next_frame()?,
+        None => None,
+      };
+    }
     let baked_cursor = cursor.as_mut().and_then(|cursor| {
       cursor.gpu_cursor(
         position_ms,
@@ -214,7 +243,17 @@ fn render_video(
         request.cursor_effects,
       )
     });
-    let texture = compositor.compose(
+    let camera_frame = camera_current.as_ref().and_then(|frame| {
+      request.camera.map(|(_, options)| {
+        (
+          &frame.texture,
+          frame.subresource,
+          camera_geometry.expect("camera geometry exists with camera options"),
+          options.camera_drop_shadow,
+        )
+      })
+    });
+    let texture = compositor.compose_with_camera(
       &current.texture,
       current.subresource,
       request.output,
@@ -222,6 +261,7 @@ fn render_video(
         cursor: baked_cursor,
         seconds: position_ms as f64 / 1_000.0,
       },
+      camera_frame,
     )?;
     sink.write(
       &texture,

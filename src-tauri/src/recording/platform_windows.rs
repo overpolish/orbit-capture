@@ -8,6 +8,7 @@
 //! its DXGI device manager without a GPU-to-CPU copy or an FFmpeg subprocess.
 
 mod audio;
+mod camera;
 mod capture;
 mod writer;
 
@@ -38,9 +39,18 @@ pub struct CaptureSession {
   audio: Option<audio::AudioCaptures>,
   audio_only_clock: Option<AudioOnlyClock>,
   audio_only_path: Option<std::path::PathBuf>,
+  camera: Option<CameraRecording>,
   capture: Option<CaptureObjects>,
   commands: Option<mpsc::SyncSender<Command>>,
+  primary_camera: Option<camera::CameraStream>,
   stopped_at: Arc<OnceLock<Instant>>,
+  worker: Option<JoinHandle<()>>,
+}
+
+struct CameraRecording {
+  commands: mpsc::SyncSender<Command>,
+  path: std::path::PathBuf,
+  stream: Option<camera::CameraStream>,
   worker: Option<JoinHandle<()>>,
 }
 
@@ -105,6 +115,9 @@ impl CaptureSession {
     if let Some(commands) = &self.commands {
       let _ = commands.send(Command::Pause(at));
     }
+    if let Some(camera) = &self.camera {
+      let _ = camera.commands.send(Command::Pause(at));
+    }
   }
 
   pub fn resume_at(&self, at: Instant) -> Result<(), String> {
@@ -118,11 +131,18 @@ impl CaptureSession {
       commands
         .send(Command::Resume(at))
         .map_err(|_| "The recording is no longer running".to_owned())
-    })
+    })?;
+    if let Some(camera) = &self.camera {
+      camera
+        .commands
+        .send(Command::Resume(at))
+        .map_err(|_| "The camera recording is no longer running".to_owned())?;
+    }
+    Ok(())
   }
 
   pub fn stop_at(mut self, at: Instant) -> Result<FinalizeInfo, String> {
-    self.close_capture();
+    self.close_sources();
     let audio = self
       .audio
       .take()
@@ -163,6 +183,39 @@ impl CaptureSession {
       .recv_timeout(FINALIZE_TIMEOUT)
       .map_err(|_| "The recording did not finish in time".to_owned())?;
     self.join_writer();
+    if result.is_ok() {
+      if let Some(mut camera) = self.camera.take() {
+        let (reply, replies) = mpsc::channel();
+        let camera_result = camera
+          .commands
+          .send(Command::Stop { at, reply })
+          .map_err(|_| "The camera recording is no longer running".to_owned())
+          .and_then(|()| {
+            replies
+              .recv_timeout(FINALIZE_TIMEOUT)
+              .map_err(|_| "The camera recording did not finish in time".to_owned())?
+          });
+        if let Some(worker) = camera.worker.take() {
+          let _ = worker.join();
+        }
+        match camera_result {
+          Ok(camera_info) => {
+            if let Ok(info) = &mut result {
+              info.camera = Some(super::encoding::CameraFinalizeInfo {
+                duration_ms: camera_info.duration_ms,
+                height: camera_info.height,
+                path: camera_info.path,
+                width: camera_info.width,
+              });
+            }
+          }
+          Err(error) => {
+            eprintln!("Camera recording could not be finalized: {error}");
+            let _ = std::fs::remove_file(&camera.path);
+          }
+        }
+      }
+    }
     if let (Ok(info), Some(audio)) = (&mut result, audio) {
       let has_system_audio = audio.has_system_audio;
       let has_microphone = audio.has_microphone;
@@ -177,9 +230,17 @@ impl CaptureSession {
     self.shutdown();
   }
 
-  fn close_capture(&mut self) {
+  fn close_sources(&mut self) {
     if let Some(mut capture) = self.capture.take() {
       capture.close();
+    }
+    if let Some(camera) = self.primary_camera.take() {
+      camera.stop();
+    }
+    if let Some(camera) = self.camera.as_mut() {
+      if let Some(stream) = camera.stream.take() {
+        stream.stop();
+      }
     }
   }
 
@@ -190,8 +251,15 @@ impl CaptureSession {
   }
 
   fn shutdown(&mut self) {
-    self.close_capture();
+    self.close_sources();
     self.audio.take();
+    if let Some(mut camera) = self.camera.take() {
+      let _ = camera.commands.send(Command::Cancel);
+      if let Some(worker) = camera.worker.take() {
+        let _ = worker.join();
+      }
+      let _ = std::fs::remove_file(camera.path);
+    }
     if let Some(commands) = &self.commands {
       let _ = commands.send(Command::Cancel);
     }
@@ -217,9 +285,6 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
     primary,
     system_audio,
   } = config;
-  if camera.is_some() || camera_path.is_some() {
-    return Err("Camera recording is not yet available on Windows".to_owned());
-  }
   let primary = match primary {
     PrimaryCaptureSource::Audio => {
       return begin_audio_only(
@@ -232,102 +297,206 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
     }
     primary => primary,
   };
-  let PrimaryCaptureSource::Screen {
-    fps,
-    monitor_id,
-    show_cursor,
-  } = primary
-  else {
-    return Err("Only full-screen recording is available on Windows right now".to_owned());
-  };
-
-  let monitor = xcap::Monitor::all()
-    .map_err(|error| error.to_string())?
-    .into_iter()
-    .find(|monitor| monitor.id().ok() == Some(monitor_id))
-    .ok_or_else(|| "The selected monitor is no longer available".to_owned())?;
-  let source_scale_factor = monitor.scale_factor().map_err(|error| error.to_string())?;
-  let monitor_x = monitor.x().map_err(|error| error.to_string())?;
-  let monitor_y = monitor.y().map_err(|error| error.to_string())?;
-  let width = monitor.width().map_err(|error| error.to_string())? & !1;
-  let height = monitor.height().map_err(|error| error.to_string())? & !1;
-  if width < 2 || height < 2 {
-    return Err("The selected monitor has no recordable area".to_owned());
+  let camera_primary = matches!(primary, PrimaryCaptureSource::Camera);
+  let mut camera_spec = camera.map(camera::CameraSpec::resolve).transpose()?;
+  if camera_primary && camera_spec.is_none() {
+    return Err("No camera is selected to record".to_owned());
   }
+  let camera_selected = camera_spec.is_some();
+  let mut screen_source = None;
+  let (width, height, fps, primary_kind, source_scale_factor, cursor_source) = match primary {
+    PrimaryCaptureSource::Screen {
+      fps,
+      monitor_id,
+      show_cursor,
+    } => {
+      let monitor = xcap::Monitor::all()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|monitor| monitor.id().ok() == Some(monitor_id))
+        .ok_or_else(|| "The selected monitor is no longer available".to_owned())?;
+      let source_scale_factor = monitor.scale_factor().map_err(|error| error.to_string())?;
+      let monitor_x = monitor.x().map_err(|error| error.to_string())?;
+      let monitor_y = monitor.y().map_err(|error| error.to_string())?;
+      let width = monitor.width().map_err(|error| error.to_string())? & !1;
+      let height = monitor.height().map_err(|error| error.to_string())? & !1;
+      if width < 2 || height < 2 {
+        return Err("The selected monitor has no recordable area".to_owned());
+      }
+      screen_source = Some((monitor_id, show_cursor));
+      (
+        width,
+        height,
+        fps,
+        super::encoding::PrimaryRecordingKind::Screen,
+        source_scale_factor,
+        Some(CursorSource {
+          height: f64::from(height),
+          kind: CursorSourceKind::Screen,
+          platform_id: monitor_id.to_string(),
+          video_height: height,
+          video_width: width,
+          width: f64::from(width),
+          x: f64::from(monitor_x),
+          y: f64::from(monitor_y),
+        }),
+      )
+    }
+    PrimaryCaptureSource::Camera => {
+      let camera = camera_spec.as_ref().expect("checked above");
+      (
+        camera.width,
+        camera.height,
+        camera.fps,
+        super::encoding::PrimaryRecordingKind::Camera,
+        1.0,
+        None,
+      )
+    }
+    _ => return Err("This recording source is not yet available on Windows".to_owned()),
+  };
 
   let timeline_origin = Arc::new(OnceLock::new());
   let audio = audio::AudioCaptures::start(
     microphone_id.as_deref(),
     &system_audio,
     Arc::clone(&timeline_origin),
-    recording_monitor,
+    Arc::clone(&recording_monitor),
     Arc::clone(&on_failure),
     &path,
   )?;
-  let (commands, command_rx) = mpsc::sync_channel(8);
-  let (first_frame_tx, first_frame) = mpsc::channel();
   let device = capture::create_device()?;
-  let writer_device = device.clone();
-  let writer_origin = Arc::clone(&timeline_origin);
   let stopped_at = Arc::new(OnceLock::new());
-  let writer_stopped_at = Arc::clone(&stopped_at);
-  let worker = std::thread::Builder::new()
-    .name("orbit-windows-recording-writer".to_owned())
-    .spawn(move || {
-      writer::run(
+  let (commands, first_frame, worker) = spawn_writer(
+    "orbit-windows-recording-writer",
+    WriterConfig {
+      device: device.clone(),
+      establish_timeline_origin: !camera_selected,
+      fps,
+      height,
+      on_failure: Arc::clone(&on_failure),
+      path,
+      primary_kind,
+      stopped_at: Arc::clone(&stopped_at),
+      timeline_origin: Arc::clone(&timeline_origin),
+      width,
+    },
+  )?;
+  let mut session = CaptureSession {
+    audio: Some(audio),
+    audio_only_clock: None,
+    audio_only_path: None,
+    camera: None,
+    capture: None,
+    commands: Some(commands.clone()),
+    primary_camera: None,
+    stopped_at,
+    worker: Some(worker),
+  };
+  let mut camera_first_frame = None;
+  if !camera_primary {
+    if let Some(spec) = camera_spec.take() {
+      let camera_path = camera_path.ok_or_else(|| "The camera has nowhere to record".to_owned())?;
+      let (camera_commands, camera_ready, camera_worker) = spawn_writer(
+        "orbit-windows-camera-writer",
         WriterConfig {
-          device: writer_device,
-          fps,
-          height,
-          on_failure,
-          path,
-          stopped_at: writer_stopped_at,
-          timeline_origin: writer_origin,
-          width,
+          device: device.clone(),
+          establish_timeline_origin: false,
+          fps: spec.fps,
+          height: spec.height,
+          on_failure: Arc::clone(&on_failure),
+          path: camera_path.clone(),
+          primary_kind: super::encoding::PrimaryRecordingKind::Camera,
+          stopped_at: Arc::clone(&session.stopped_at),
+          timeline_origin: Arc::clone(&timeline_origin),
+          width: spec.width,
         },
-        command_rx,
-        first_frame_tx,
-      );
-    })
-    .map_err(|error| error.to_string())?;
-
-  // Match the user's capture choice exactly. The semantic sidecar is recorded
-  // independently, so native cursor pixels and the editable cursor layer may
-  // intentionally coexist when baking is enabled.
-  let capture = match CaptureObjects::start(device, monitor_id, show_cursor, commands.clone()) {
-    Ok(capture) => capture,
-    Err(error) => {
-      drop(audio);
-      let _ = commands.send(Command::Cancel);
-      let _ = worker.join();
-      return Err(error);
+      )?;
+      let stream = camera::start(
+        spec,
+        device.clone(),
+        camera_commands.clone(),
+        Arc::clone(&timeline_origin),
+        Arc::clone(&recording_monitor),
+        Arc::clone(&on_failure),
+      )?;
+      camera_first_frame = Some(camera_ready);
+      session.camera = Some(CameraRecording {
+        commands: camera_commands,
+        path: camera_path,
+        stream: Some(stream),
+        worker: Some(camera_worker),
+      });
     }
+  }
+  if let Some((monitor_id, show_cursor)) = screen_source {
+    // Match the user's capture choice exactly. Cursor metadata remains a
+    // separate editable layer even when native pixels include the pointer.
+    session.capture = Some(CaptureObjects::start(
+      device,
+      monitor_id,
+      show_cursor,
+      commands,
+    )?);
+  } else {
+    let spec = camera_spec.expect("camera-primary checked above");
+    session.primary_camera = Some(camera::start(
+      spec,
+      device,
+      commands,
+      Arc::clone(&timeline_origin),
+      recording_monitor,
+      on_failure,
+    )?);
+  }
+  let first_frame = match camera_first_frame {
+    Some(camera) => both_first_frames(first_frame, camera),
+    None => first_frame,
   };
 
   Ok(CaptureStart {
-    cursor_source: Some(CursorSource {
-      height: f64::from(height),
-      kind: CursorSourceKind::Screen,
-      platform_id: monitor_id.to_string(),
-      video_height: height,
-      video_width: width,
-      width: f64::from(width),
-      x: f64::from(monitor_x),
-      y: f64::from(monitor_y),
-    }),
+    cursor_source,
     first_frame,
-    session: CaptureSession {
-      audio: Some(audio),
-      audio_only_clock: None,
-      audio_only_path: None,
-      capture: Some(capture),
-      commands: Some(commands),
-      stopped_at,
-      worker: Some(worker),
-    },
+    session,
     source_scale_factor,
     timeline_origin,
   })
+}
+
+type WriterSpawn = (
+  mpsc::SyncSender<Command>,
+  mpsc::Receiver<Result<(), String>>,
+  JoinHandle<()>,
+);
+
+fn spawn_writer(name: &str, config: WriterConfig) -> Result<WriterSpawn, String> {
+  let (commands, command_rx) = mpsc::sync_channel(8);
+  let (first_frame_tx, first_frame) = mpsc::channel();
+  let worker = std::thread::Builder::new()
+    .name(name.to_owned())
+    .spawn(move || writer::run(config, command_rx, first_frame_tx))
+    .map_err(|error| error.to_string())?;
+  Ok((commands, first_frame, worker))
+}
+
+fn both_first_frames(
+  primary: mpsc::Receiver<Result<(), String>>,
+  camera: mpsc::Receiver<Result<(), String>>,
+) -> mpsc::Receiver<Result<(), String>> {
+  let (ready, combined) = mpsc::channel();
+  std::thread::spawn(move || {
+    let result = primary
+      .recv()
+      .map_err(|_| "The primary recording stopped before its first frame".to_owned())
+      .and_then(|result| result)
+      .and_then(|()| {
+        camera
+          .recv()
+          .map_err(|_| "The camera stopped before its first frame".to_owned())?
+      });
+    let _ = ready.send(result);
+  });
+  combined
 }
 
 fn begin_audio_only(
@@ -360,8 +529,10 @@ fn begin_audio_only(
       audio: Some(audio),
       audio_only_clock: Some(AudioOnlyClock::new(started)),
       audio_only_path: Some(path),
+      camera: None,
       capture: None,
       commands: None,
+      primary_camera: None,
       stopped_at: Arc::new(OnceLock::new()),
       worker: None,
     },
@@ -373,7 +544,145 @@ fn begin_audio_only(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::recording::{monitor::RecordingMonitor, SystemAudioSelection};
+  use crate::recording::{monitor::RecordingMonitor, CameraCaptureMode, SystemAudioSelection};
+
+  #[test]
+  #[ignore = "requires an interactive Windows camera and hardware encoder"]
+  fn records_a_playable_camera_sample() {
+    let info = nokhwa::query(nokhwa::utils::ApiBackend::Auto)
+      .unwrap()
+      .into_iter()
+      .next()
+      .expect("connect a camera before running this test");
+    let format = crate::camera_format::available_camera_formats(info.index(), 30)
+      .unwrap()
+      .into_iter()
+      .next()
+      .expect("the camera has no supported recording mode");
+    let resolution = format.resolution();
+    let path = std::env::temp_dir().join(format!(
+      "orbit-capture-windows-camera-{}.mp4",
+      std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let start = begin_blocking(CaptureStartupConfig {
+      camera: Some(CameraCaptureMode {
+        device_id: crate::recording_inputs::camera_id(&info),
+        flipped: false,
+        fps: format.frame_rate(),
+        height: resolution.height(),
+        width: resolution.width(),
+      }),
+      camera_path: None,
+      include_own_windows: true,
+      microphone_id: None,
+      monitor: Arc::new(RecordingMonitor::default()),
+      on_failure: Arc::new(|error| eprintln!("camera recording failure: {error}")),
+      path: path.clone(),
+      primary: PrimaryCaptureSource::Camera,
+      system_audio: SystemAudioSelection::default(),
+    })
+    .unwrap();
+    start
+      .first_frame
+      .recv_timeout(Duration::from_secs(10))
+      .unwrap()
+      .unwrap();
+    std::thread::sleep(Duration::from_secs(2));
+    let stopped_at = Instant::now();
+    start.session.mark_stopped_at(stopped_at);
+    let info = start.session.stop_at(stopped_at).unwrap();
+    assert_eq!(
+      info.primary_kind,
+      super::super::encoding::PrimaryRecordingKind::Camera
+    );
+    assert_eq!(
+      (info.width, info.height),
+      (resolution.width(), resolution.height())
+    );
+    assert!(
+      info.duration_ms >= 1_500,
+      "duration was {} ms",
+      info.duration_ms
+    );
+    assert!(std::fs::metadata(&path).unwrap().len() > 1_024);
+    std::fs::remove_file(path).unwrap();
+  }
+
+  #[test]
+  #[ignore = "requires an interactive Windows display, camera, and hardware encoders"]
+  fn records_synchronized_screen_and_camera_samples() {
+    let monitor = xcap::Monitor::all().unwrap().into_iter().next().unwrap();
+    let monitor_id = monitor.id().unwrap();
+    let camera = nokhwa::query(nokhwa::utils::ApiBackend::Auto)
+      .unwrap()
+      .into_iter()
+      .next()
+      .expect("connect a camera before running this test");
+    let format = crate::camera_format::available_camera_formats(camera.index(), 30)
+      .unwrap()
+      .into_iter()
+      .next()
+      .expect("the camera has no supported recording mode");
+    let resolution = format.resolution();
+    let directory = std::env::temp_dir();
+    let screen_path = directory.join(format!(
+      "orbit-capture-windows-screen-camera-{}.mp4",
+      std::process::id()
+    ));
+    let camera_path = directory.join(format!(
+      "orbit-capture-windows-camera-sidecar-{}.mp4",
+      std::process::id()
+    ));
+    let _ = std::fs::remove_file(&screen_path);
+    let _ = std::fs::remove_file(&camera_path);
+    let start = begin_blocking(CaptureStartupConfig {
+      camera: Some(CameraCaptureMode {
+        device_id: crate::recording_inputs::camera_id(&camera),
+        flipped: false,
+        fps: format.frame_rate(),
+        height: resolution.height(),
+        width: resolution.width(),
+      }),
+      camera_path: Some(camera_path.clone()),
+      include_own_windows: true,
+      microphone_id: None,
+      monitor: Arc::new(RecordingMonitor::default()),
+      on_failure: Arc::new(|error| eprintln!("screen/camera recording failure: {error}")),
+      path: screen_path.clone(),
+      primary: PrimaryCaptureSource::Screen {
+        fps: 60,
+        monitor_id,
+        show_cursor: false,
+      },
+      system_audio: SystemAudioSelection::default(),
+    })
+    .unwrap();
+    start
+      .first_frame
+      .recv_timeout(Duration::from_secs(10))
+      .unwrap()
+      .unwrap();
+    std::thread::sleep(Duration::from_secs(2));
+    let stopped_at = Instant::now();
+    start.session.mark_stopped_at(stopped_at);
+    let info = start.session.stop_at(stopped_at).unwrap();
+    let camera_info = info.camera.expect("camera sidecar was not finalized");
+    assert_eq!(
+      (camera_info.width, camera_info.height),
+      (resolution.width(), resolution.height())
+    );
+    assert!(
+      info.duration_ms.abs_diff(camera_info.duration_ms) <= 100,
+      "screen was {} ms but camera was {} ms",
+      info.duration_ms,
+      camera_info.duration_ms
+    );
+    assert!(std::fs::metadata(&screen_path).unwrap().len() > 1_024);
+    assert!(std::fs::metadata(&camera_path).unwrap().len() > 1_024);
+    std::fs::remove_file(screen_path).unwrap();
+    std::fs::remove_file(camera_path).unwrap();
+  }
 
   #[test]
   #[ignore = "requires an interactive Windows display and hardware encoder"]

@@ -7,6 +7,7 @@
 use std::path::Path;
 
 use windows::core::{Interface, GUID, PCWSTR};
+use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
@@ -14,31 +15,47 @@ use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITH
 use crate::screenshots::CapturedImage;
 
 const HUNDRED_NS_PER_MS: i64 = 10_000;
+const SEEK_PREROLL_MS: u64 = 1_500;
 const VIDEO_STREAM: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
 
 fn win<T>(result: windows::core::Result<T>) -> Result<T, String> {
   result.map_err(|error| error.to_string())
 }
 
-pub(super) struct MediaFoundation;
+pub(super) struct MediaFoundation {
+  uninitialize_com: bool,
+}
 
 impl MediaFoundation {
   pub(super) fn start() -> Result<Self, String> {
-    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
-      .ok()
-      .map_err(|error| error.to_string())?;
+    let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    // Tauri's blocking pool can hand export a thread that another Windows
+    // component already initialized as STA. COM is available in that case;
+    // only changing its apartment is forbidden. Media Foundation's synchronous
+    // source reader works in either apartment, so retain the existing one and
+    // do not balance an initialization this runtime did not perform.
+    let uninitialize_com = if initialized == RPC_E_CHANGED_MODE {
+      false
+    } else {
+      initialized.ok().map_err(|error| error.to_string())?;
+      true
+    };
     if let Err(error) = unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) } {
-      unsafe { CoUninitialize() };
+      if uninitialize_com {
+        unsafe { CoUninitialize() };
+      }
       return Err(error.to_string());
     }
-    Ok(Self)
+    Ok(Self { uninitialize_com })
   }
 }
 
 impl Drop for MediaFoundation {
   fn drop(&mut self) {
     let _ = unsafe { MFShutdown() };
-    unsafe { CoUninitialize() };
+    if self.uninitialize_com {
+      unsafe { CoUninitialize() };
+    }
   }
 }
 
@@ -119,8 +136,9 @@ impl NativeVideoReader {
 
   pub(super) fn seek(&mut self, position_ms: u64) -> Result<(), String> {
     win(unsafe { self.reader.Flush(VIDEO_STREAM) })?;
+    let seek_ms = position_ms.saturating_sub(SEEK_PREROLL_MS);
     let position = PROPVARIANT::from(
-      i64::try_from(position_ms)
+      i64::try_from(seek_ms)
         .unwrap_or(i64::MAX / HUNDRED_NS_PER_MS)
         .saturating_mul(HUNDRED_NS_PER_MS),
     );
@@ -224,6 +242,7 @@ pub(super) fn encoded_jpeg(image: &CapturedImage, quality: u8) -> Result<Vec<u8>
 #[cfg(test)]
 mod tests {
   use super::*;
+  use windows::Win32::System::Com::COINIT_APARTMENTTHREADED;
 
   #[test]
   #[ignore = "uses the video path in ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST"]
@@ -244,5 +263,24 @@ mod tests {
     if let Some(output) = std::env::var_os("ORBIT_CAPTURE_WINDOWS_PREVIEW_FRAME") {
       std::fs::write(output, jpeg).unwrap();
     }
+  }
+
+  #[test]
+  #[ignore = "uses the video path in ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST"]
+  fn decodes_video_from_an_sta_export_worker() {
+    let path = std::env::var_os("ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST")
+      .map(std::path::PathBuf::from)
+      .expect("set ORBIT_CAPTURE_WINDOWS_PREVIEW_TEST to a recording");
+    std::thread::spawn(move || {
+      unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
+        .ok()
+        .unwrap();
+      let decoded =
+        NativeVideoReader::open(&path, 640, 360, 0).and_then(|mut reader| reader.frame_at(0));
+      unsafe { CoUninitialize() };
+      assert!(decoded.unwrap().is_some());
+    })
+    .join()
+    .unwrap();
   }
 }
