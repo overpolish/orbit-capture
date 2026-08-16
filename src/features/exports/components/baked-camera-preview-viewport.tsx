@@ -1,65 +1,110 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { RefObject, useRef } from "react";
+import { AnimatePresence } from "motion/react";
+import {
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  RefObject,
+  useRef,
+  useState,
+} from "react";
 
+import { CropShade } from "../../../components/shared/canvas-tools/crop-shade";
 import { TransformControls } from "../../../components/shared/canvas-tools/transform-controls";
 import {
-  CAMERA_FRAME_BASE_WIDTH_PERCENT,
   cameraOverlayGeometry,
   RADIUS_HANDLE_INSET,
   RADIUS_HANDLE_TRAVEL,
-  SCALE_GIZMO_DIMENSION,
-  scaleRingExtent,
+  resizeCameraOverlayCanvas,
 } from "../camera-overlay-geometry";
 import {
   ScreenshotOutputSettings,
   screenshotOutputDimensions,
+  screenshotWorkspaceItemOutput,
 } from "../screenshot-output";
+import { ScreenshotSnapGuide } from "../screenshot-snapping";
 import { CameraOverlaySettings, RecordingPreviewPane } from "../types";
+import { useExportEditGesture } from "../use-export-edit-history";
 import { usePreviewCapabilities } from "../use-preview-capabilities";
 
 import { InteractivePreviewViewport } from "./interactive-preview-viewport";
+import { RecordingCanvasTool } from "./recording-crop-toggle";
+import { ScreenshotCanvasControl } from "./screenshot-canvas-control";
+import { ScreenshotCropMagnifier } from "./screenshot-crop-magnifier";
+import { constrainedHandlePoint } from "./screenshot-layout-geometry";
 import { ScreenshotPreviewLayer } from "./screenshot-preview-layer";
 import { useCameraOverlayInteraction } from "./use-camera-overlay-interaction";
 
 export function BakedCameraPreviewViewport({
+  activeTrack,
+  cameraCanvasRef,
   cameraPane,
   controlsVisible = true,
+  interactionEnabled = true,
   isBusy,
   onInteractionEnd,
   onInteractionStart,
   onNeedFullResolution,
   onOutputChange,
+  onSelectTrack,
   onSettingsChange,
+  onTrackContextMenu,
   onZoomChange,
-  outputEditing = false,
+  outputControlsVisible = false,
   outputSettings,
   screenCanvasRef,
   screenPane,
   settings,
+  tool,
   zoomPercent,
 }: {
+  activeTrack: "camera" | "primary" | null;
+  cameraCanvasRef: RefObject<HTMLCanvasElement | null>;
   cameraPane: RecordingPreviewPane;
   isBusy: boolean;
   outputSettings: ScreenshotOutputSettings;
   screenCanvasRef: RefObject<HTMLCanvasElement | null>;
   screenPane: RecordingPreviewPane;
   settings: CameraOverlaySettings;
+  tool: RecordingCanvasTool;
   controlsVisible?: boolean;
+  interactionEnabled?: boolean;
   onInteractionEnd?: () => void;
   onInteractionStart?: () => void;
   onNeedFullResolution?: () => void;
   onOutputChange?: (settings: ScreenshotOutputSettings) => void;
+  onSelectTrack?: (trackId: "camera" | "primary") => void;
   onSettingsChange?: (settings: CameraOverlaySettings) => void;
+  onTrackContextMenu?: (
+    trackId: "camera" | "primary",
+    event: ReactMouseEvent<HTMLDivElement>,
+  ) => void;
   onZoomChange?: (zoomPercent: number) => void;
-  outputEditing?: boolean;
+  outputControlsVisible?: boolean;
   zoomPercent?: number;
 }) {
+  const editGesture = useExportEditGesture();
   const mediaRef = useRef<HTMLDivElement | null>(null);
   const outputRef = useRef<HTMLDivElement | null>(null);
+  const outputResizeRef = useRef<{
+    output: { height: number; width: number };
+    settings: CameraOverlaySettings;
+  } | null>(null);
+  const [activeEdges, setActiveEdges] = useState<
+    ("bottom" | "left" | "right" | "top")[] | null
+  >(null);
+  const [magnifierPoint, setMagnifierPoint] = useState({ x: 0, y: 0 });
+  const [snapGuides, setSnapGuides] = useState<{
+    x?: ScreenshotSnapGuide;
+    y?: ScreenshotSnapGuide;
+  }>({});
   const nativeSurface = usePreviewCapabilities()?.nativeRecordingPreview;
   const output = screenshotOutputDimensions(outputSettings);
+  const outputWorkspace = {
+    ...outputSettings,
+    items: [{ id: 0, output: outputSettings }],
+  };
   const outputPane = {
     ...screenPane,
     height: output.height,
@@ -68,21 +113,46 @@ export function BakedCameraPreviewViewport({
     width: output.width,
   };
   const geometry = cameraOverlayGeometry(outputPane, cameraPane, settings);
-  const effectiveScale =
-    (settings.frameWidthPercent * 100) / CAMERA_FRAME_BASE_WIDTH_PERCENT;
-  const ringExtent = scaleRingExtent(effectiveScale, SCALE_GIZMO_DIMENSION);
-
   const { begin, interaction, naturalPoint } = useCameraOverlayInteraction({
     cameraPane,
     mediaRef,
-    onInteractionEnd,
-    onInteractionStart,
+    onInteractionEnd: () => {
+      onInteractionEnd?.();
+      editGesture.endGesture();
+    },
+    onInteractionStart: () => {
+      editGesture.beginGesture();
+      onInteractionStart?.();
+    },
     onSettingsChange,
+    onSnapGuidesChange: setSnapGuides,
     screenPane: outputPane,
     settings,
   });
   const inverseScale = "var(--preview-inverse-scale, 1)";
   const radiusHandleOffset = `calc(${(geometry.radius * RADIUS_HANDLE_TRAVEL).toString()}px + ${RADIUS_HANDLE_INSET.toString()}px * ${inverseScale})`;
+  const finishInteraction = (event: ReactPointerEvent) => {
+    setActiveEdges(null);
+    interaction.onPointerUp(event);
+  };
+  const cancelInteraction = (event: ReactPointerEvent) => {
+    setActiveEdges(null);
+    interaction.onPointerCancel(event);
+  };
+  const moveInteraction = (event: ReactPointerEvent) => {
+    const point = naturalPoint(event);
+    if (activeEdges && point) {
+      setMagnifierPoint(
+        constrainedHandlePoint(geometry.frame, activeEdges, point),
+      );
+    }
+    interaction.onPointerMove(event);
+  };
+  const controlInteraction = {
+    onPointerCancel: cancelInteraction,
+    onPointerMove: moveInteraction,
+    onPointerUp: finishInteraction,
+  };
 
   return (
     <InteractivePreviewViewport<HTMLDivElement>
@@ -90,11 +160,21 @@ export function BakedCameraPreviewViewport({
         height: output.height,
         width: output.width,
       })}
+      mediaSizeKey={`${output.width.toString()}x${output.height.toString()}`}
       onNeedFullResolution={onNeedFullResolution}
       onZoomChange={onZoomChange}
-      renderMedia={({ ref, style }) => (
+      renderMedia={({
+        onMediaResize,
+        onMediaResizeEnd,
+        onMediaResizeStart,
+        ref,
+        style,
+      }) => (
         <div
           className="relative shrink-0 select-none"
+          onContextMenu={(event) => {
+            onTrackContextMenu?.("primary", event);
+          }}
           ref={(element) => {
             outputRef.current = element;
             ref(element);
@@ -111,8 +191,17 @@ export function BakedCameraPreviewViewport({
             ref={screenCanvasRef}
             role="img"
           />
+          <canvas className="hidden" ref={cameraCanvasRef} />
           <ScreenshotPreviewLayer
-            isEditing={outputEditing}
+            isCropTarget={
+              interactionEnabled && tool === "crop" && activeTrack !== "primary"
+            }
+            isEditing={outputControlsVisible && tool === "crop"}
+            isItemSelected={activeTrack === "primary"}
+            isSelecting={tool === "select"}
+            onItemSelect={() => {
+              onSelectTrack?.("primary");
+            }}
             onOutputChange={onOutputChange}
             onRadiusChange={(radiusPercent) =>
               onOutputChange?.({ ...outputSettings, radiusPercent })
@@ -127,16 +216,98 @@ export function BakedCameraPreviewViewport({
               width: screenPane.sourceWidth,
             }}
           />
+          {interactionEnabled && tool === "canvas" ? (
+            <ScreenshotCanvasControl
+              items={[
+                {
+                  height: screenPane.sourceHeight,
+                  id: 0,
+                  width: screenPane.sourceWidth,
+                },
+              ]}
+              mediaRef={outputRef}
+              onBoundsChange={(bounds) => {
+                onMediaResize(bounds);
+                const resize = outputResizeRef.current;
+                if (resize)
+                  onSettingsChange?.(
+                    resizeCameraOverlayCanvas(
+                      resize.settings,
+                      resize.output,
+                      bounds,
+                    ),
+                  );
+              }}
+              onChange={(next) => {
+                onOutputChange?.(screenshotWorkspaceItemOutput(next, 0));
+              }}
+              onResizeEnd={(next) => {
+                onMediaResizeEnd();
+                outputResizeRef.current = null;
+                onInteractionEnd?.();
+                onOutputChange?.(screenshotWorkspaceItemOutput(next, 0));
+              }}
+              onResizeStart={() => {
+                onSelectTrack?.("primary");
+                outputResizeRef.current = {
+                  output,
+                  settings,
+                };
+                onInteractionStart?.();
+                onMediaResizeStart();
+              }}
+              output={output}
+              settings={outputWorkspace}
+            />
+          ) : null}
           <div className="pointer-events-none absolute inset-0" ref={mediaRef}>
+            {snapGuides.x ? (
+              <div
+                className="absolute top-0 h-full bg-warning"
+                style={{
+                  left: snapGuides.x.value,
+                  width: `calc(1px * ${inverseScale})`,
+                }}
+              />
+            ) : null}
+            {snapGuides.y ? (
+              <div
+                className="absolute left-0 w-full bg-warning"
+                style={{
+                  height: `calc(1px * ${inverseScale})`,
+                  top: snapGuides.y.value,
+                }}
+              />
+            ) : null}
+            {controlsVisible && tool === "crop" ? (
+              <CropShade
+                crop={geometry.frame}
+                image={geometry.camera}
+                radius={geometry.radius}
+              />
+            ) : null}
             <div
               aria-label="Camera crop window"
-              className={`pointer-events-auto absolute touch-none overflow-hidden ${controlsVisible ? "cursor-move" : ""}`}
+              className={`absolute touch-none overflow-hidden ${interactionEnabled && (controlsVisible || tool === "select" || tool === "crop") ? "pointer-events-auto cursor-move" : "pointer-events-none"}`}
+              onContextMenu={(event) => {
+                event.stopPropagation();
+                onTrackContextMenu?.("camera", event);
+              }}
               onPointerDown={(event) => {
-                if (!controlsVisible) return;
+                if (tool === "select" && activeTrack !== "camera") {
+                  if (event.button !== 0) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSelectTrack?.("camera");
+                  return;
+                }
+                if (tool === "crop" && activeTrack !== "camera")
+                  onSelectTrack?.("camera");
+                if (!controlsVisible && tool !== "crop") return;
                 const point = naturalPoint(event);
                 if (!point) return;
                 begin(event, {
-                  kind: "whole",
+                  kind: tool === "crop" ? "frame" : "whole",
                   pointerX: point.x - geometry.frame.x,
                   pointerY: point.y - geometry.frame.y,
                 });
@@ -154,60 +325,80 @@ export function BakedCameraPreviewViewport({
             {controlsVisible ? (
               <TransformControls
                 frame={geometry.frame}
-                interaction={interaction}
+                interaction={controlInteraction}
                 inverseScale={inverseScale}
-                move={{
-                  label: "Move camera crop",
-                  onPointerDown: (event) => {
-                    const point = naturalPoint(event);
-                    if (!point) return;
-                    begin(event, {
-                      kind: "frame",
-                      pointerX: point.x - geometry.frame.x,
-                      pointerY: point.y - geometry.frame.y,
-                    });
-                  },
-                }}
+                lineStyle={tool === "crop" ? "dashed" : "solid"}
                 radius={geometry.radius}
-                radiusHandle={{
-                  cursor: "nwse-resize",
-                  label: `Camera corner radius ${Math.round(settings.radiusPercent).toString()} percent`,
-                  left: radiusHandleOffset,
-                  onPointerDown: (event) => {
-                    begin(event, { kind: "radius" });
-                  },
-                  top: radiusHandleOffset,
-                }}
+                radiusHandle={
+                  tool === "crop"
+                    ? {
+                        cursor: "nwse-resize",
+                        label: `Camera corner radius ${Math.round(settings.radiusPercent).toString()} percent`,
+                        left: radiusHandleOffset,
+                        onPointerDown: (event) => {
+                          begin(event, { kind: "radius" });
+                        },
+                        top: radiusHandleOffset,
+                      }
+                    : undefined
+                }
                 resize={{
-                  label: (edges) => `Resize camera crop ${edges.join(" ")}`,
+                  label: (edges) =>
+                    `${tool === "crop" ? "Crop" : "Resize"} camera ${edges.join(" ")}`,
                   onPointerDown: (edges) => (event) => {
                     const point = naturalPoint(event);
                     if (!point) return;
+                    if (tool === "crop") {
+                      setActiveEdges(edges);
+                      setMagnifierPoint(
+                        constrainedHandlePoint(geometry.frame, edges, point),
+                      );
+                    }
                     begin(event, {
                       edges,
-                      kind: "resize",
+                      kind: tool === "crop" ? "resize" : "transformResize",
                       pointerX: point.x,
                       pointerY: point.y,
                     });
                   },
                 }}
-                scaleRing={{
-                  cursor: "nesw-resize",
-                  extent: ringExtent,
-                  label: `Scale camera ${Math.round(effectiveScale).toString()} percent`,
-                  onPointerDown: (event) => {
-                    begin(event, { kind: "scale" });
-                  },
-                }}
               />
             ) : null}
+            <AnimatePresence>
+              {controlsVisible &&
+              tool === "crop" &&
+              activeEdges &&
+              cameraCanvasRef.current ? (
+                <div
+                  className="pointer-events-none absolute"
+                  style={{
+                    height: geometry.frame.height,
+                    left: geometry.frame.x,
+                    top: geometry.frame.y,
+                    width: geometry.frame.width,
+                  }}
+                >
+                  <ScreenshotCropMagnifier
+                    edges={activeEdges}
+                    inverseScale={inverseScale}
+                    layout={{ crop: geometry.frame, image: geometry.camera }}
+                    point={magnifierPoint}
+                    source={{
+                      height: cameraPane.sourceHeight,
+                      width: cameraPane.sourceWidth,
+                    }}
+                    sourceImage={cameraCanvasRef.current}
+                  />
+                </div>
+              ) : null}
+            </AnimatePresence>
           </div>
           {isBusy ? (
             <div className="pointer-events-none absolute inset-0 bg-content/20 backdrop-blur-sm" />
           ) : null}
         </div>
       )}
-      resetKey={`baked:${screenPane.width.toString()}x${screenPane.height.toString()}`}
+      resetKey="baked-recording-output"
       zoomPercent={zoomPercent}
     />
   );

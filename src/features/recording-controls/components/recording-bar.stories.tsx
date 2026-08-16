@@ -45,6 +45,11 @@ export const ScreenshotFailed: Story = {
   args: { screenshotState: "failed" },
 };
 
+/** An open screenshot workspace accepts another screenshot but not a recording. */
+export const ScreenshotWorkspaceOpen: Story = {
+  args: { pendingExportKind: "screenshot" },
+};
+
 export const ClipboardScreenshotPending: Story = {
   args: { screenshotAction: "clipboard", screenshotState: "pending" },
 };

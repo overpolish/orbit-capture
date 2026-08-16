@@ -109,9 +109,12 @@ export function useRecordingPreviewPlayer({
   });
 
   useRecordingPreviewSurface({
+    bakeCamera,
     cameraCanvasRef,
+    cameraOverlay,
     isEnabled,
     onError: setError,
+    recordingOutput,
     screenCanvasRef,
     sessionIdRef,
     startedRef,

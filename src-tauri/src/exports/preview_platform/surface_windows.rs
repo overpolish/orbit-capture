@@ -56,10 +56,18 @@ pub(crate) struct StillOverlay;
 #[derive(Clone, Copy)]
 pub(crate) struct ComposedFrame {
   pub cursor: Option<crate::exports::cursor_effects::GpuCursor>,
+  pub foreground_only: bool,
   pub seconds: f64,
 }
 
-type ClipboardCamera<'a> = (&'a ID3D11Texture2D, u32, (u32, u32), BakeGeometry, bool);
+type ClipboardCamera<'a> = (
+  &'a ID3D11Texture2D,
+  u32,
+  (u32, u32),
+  BakeGeometry,
+  bool,
+  bool,
+);
 
 struct Gpu {
   backdrop: Backdrop,
@@ -405,7 +413,7 @@ impl RecordingPreviewSurface {
     pane: &mut Pane,
     settings: &ScreenshotOutputSettings,
     composition: ComposedFrame,
-    camera: Option<(&compositor::SourceTexture, BakeGeometry, bool)>,
+    camera: Option<(&compositor::SourceTexture, BakeGeometry, bool, bool)>,
   ) -> Result<bool, String> {
     crate::screenshots::output_dimensions(settings)?;
     // Keep one stable output chain for the current preview resolution. The
@@ -437,8 +445,7 @@ impl RecordingPreviewSurface {
       &target,
       source,
       settings,
-      composition.seconds,
-      composition.cursor,
+      composition,
       camera,
     )?;
     unsafe { self.inner.gpu.context.Flush() };
@@ -563,7 +570,7 @@ impl RecordingPreviewSurface {
     }
   }
 
-  pub(crate) fn layout(&self, index: u32, rect: PreviewSurfaceRect) {
+  pub(crate) fn layout(&self, index: u32, rect: PreviewSurfaceRect, _defer_resize: bool) {
     let Ok(mut state) = self.inner.state.lock() else {
       return;
     };
@@ -602,6 +609,10 @@ impl RecordingPreviewSurface {
     if pane.display_aspect_matches_buffer() {
       let _ = pane.update_geometry();
     }
+  }
+
+  pub(crate) fn present_batch(&self) -> PresentBatch<'_> {
+    PresentBatch { _surface: self }
   }
 
   pub(crate) fn finish_layout(&self) {
@@ -667,6 +678,7 @@ impl RecordingPreviewSurface {
     settings: &ScreenshotOutputSettings,
     overlay: crate::exports::CameraOverlaySettings,
     drop_shadow: bool,
+    camera_on_top: bool,
     composition: ComposedFrame,
   ) -> Result<bool, String> {
     let Ok(mut state) = self.inner.state.lock() else {
@@ -752,13 +764,77 @@ impl RecordingPreviewSurface {
       pane,
       settings,
       composition,
-      Some((&camera, geometry, drop_shadow)),
+      Some((&camera, geometry, drop_shadow, camera_on_top)),
     )
   }
 
   /// Renders one explicit clipboard frame through the exact preview shader,
   /// then performs the single unavoidable GPU readback required by the
   /// Windows clipboard. Live preview never calls this path.
+  pub(in crate::exports) fn compose_screenshot_layers_to_image(
+    &self,
+    layers: &[(&CapturedImage, ScreenshotOutputSettings)],
+  ) -> Result<CapturedImage, String> {
+    let (_, first_settings) = layers
+      .first()
+      .ok_or_else(|| "The screenshot workspace is empty".to_owned())?;
+    let _state = self
+      .inner
+      .state
+      .lock()
+      .map_err(|_| "The Windows preview surface is unavailable".to_owned())?;
+    let output_size = crate::screenshots::output_dimensions(first_settings)?;
+    let target_description = D3D11_TEXTURE2D_DESC {
+      Width: output_size.0,
+      Height: output_size.1,
+      MipLevels: 1,
+      ArraySize: 1,
+      Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+      SampleDesc: DXGI_SAMPLE_DESC {
+        Count: 1,
+        Quality: 0,
+      },
+      Usage: D3D11_USAGE_DEFAULT,
+      BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
+      ..Default::default()
+    };
+    let mut target = None;
+    unsafe {
+      self
+        .inner
+        .gpu
+        .device
+        .CreateTexture2D(&target_description, None, Some(&mut target))
+    }
+    .map_err(|error| format!("The screenshot render target could not be created: {error}"))?;
+    let target = target.ok_or_else(|| "D3D11 created no screenshot render target".to_owned())?;
+
+    for (index, (image, settings)) in layers.iter().enumerate() {
+      if crate::screenshots::output_dimensions(settings)? != output_size {
+        return Err("The screenshot layers do not share a canvas size".to_owned());
+      }
+      let source = self
+        .inner
+        .gpu
+        .compositor
+        .screenshot_source(&self.inner.gpu.device, image)?;
+      self.inner.gpu.compositor.draw_with_camera(
+        &self.inner.gpu.context,
+        &target,
+        &source,
+        settings,
+        ComposedFrame {
+          cursor: None,
+          foreground_only: index > 0,
+          seconds: 0.0,
+        },
+        None,
+      )?;
+    }
+    unsafe { self.inner.gpu.context.Flush() };
+    self.readback_bgra(&target, target_description, output_size, "screenshot")
+  }
+
   pub(in crate::exports) fn compose_texture_to_image(
     &self,
     texture: &ID3D11Texture2D,
@@ -781,7 +857,7 @@ impl RecordingPreviewSurface {
       .source(&self.inner.gpu.device, source_size)?;
     compositor::Compositor::copy_source(&self.inner.gpu.context, &source, texture, subresource)?;
     let camera_source = camera
-      .map(|(_, _, size, _, _)| {
+      .map(|(_, _, size, _, _, _)| {
         self
           .inner
           .gpu
@@ -789,7 +865,9 @@ impl RecordingPreviewSurface {
           .source(&self.inner.gpu.device, size)
       })
       .transpose()?;
-    if let (Some(camera_source), Some((texture, subresource, _, _, _))) = (&camera_source, camera) {
+    if let (Some(camera_source), Some((texture, subresource, _, _, _, _))) =
+      (&camera_source, camera)
+    {
       compositor::Compositor::copy_source(
         &self.inner.gpu.context,
         camera_source,
@@ -826,15 +904,24 @@ impl RecordingPreviewSurface {
       &target,
       &source,
       settings,
-      composition.seconds,
-      composition.cursor,
-      camera.and_then(|(_, _, _, geometry, drop_shadow)| {
+      composition,
+      camera.and_then(|(_, _, _, geometry, drop_shadow, camera_on_top)| {
         camera_source
           .as_ref()
-          .map(|source| (source, geometry, drop_shadow))
+          .map(|source| (source, geometry, drop_shadow, camera_on_top))
       }),
     )?;
 
+    self.readback_bgra(&target, target_description, output_size, "clipboard")
+  }
+
+  fn readback_bgra(
+    &self,
+    target: &ID3D11Texture2D,
+    target_description: D3D11_TEXTURE2D_DESC,
+    output_size: (u32, u32),
+    purpose: &str,
+  ) -> Result<CapturedImage, String> {
     let staging_description = D3D11_TEXTURE2D_DESC {
       Usage: D3D11_USAGE_STAGING,
       BindFlags: 0,
@@ -849,9 +936,8 @@ impl RecordingPreviewSurface {
         .device
         .CreateTexture2D(&staging_description, None, Some(&mut staging))
     }
-    .map_err(|error| format!("The clipboard readback texture could not be created: {error}"))?;
-    let staging =
-      staging.ok_or_else(|| "D3D11 created no clipboard readback texture".to_owned())?;
+    .map_err(|error| format!("The {purpose} readback texture could not be created: {error}"))?;
+    let staging = staging.ok_or_else(|| format!("D3D11 created no {purpose} readback texture"))?;
     let target_resource: windows::Win32::Graphics::Direct3D11::ID3D11Resource =
       target.cast().map_err(|error| error.to_string())?;
     let staging_resource: windows::Win32::Graphics::Direct3D11::ID3D11Resource =
@@ -871,12 +957,12 @@ impl RecordingPreviewSurface {
         .context
         .Map(&staging_resource, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
     }
-    .map_err(|error| format!("The clipboard frame could not be read back: {error}"))?;
+    .map_err(|error| format!("The {purpose} frame could not be read back: {error}"))?;
     let row_bytes = output_size.0 as usize * 4;
     let mut rgba = vec![0_u8; row_bytes * output_size.1 as usize];
     if mapped.pData.is_null() || mapped.RowPitch < row_bytes as u32 {
       unsafe { self.inner.gpu.context.Unmap(&staging_resource, 0) };
-      return Err("D3D11 returned invalid clipboard pixels".to_owned());
+      return Err(format!("D3D11 returned invalid {purpose} pixels"));
     }
     for row in 0..output_size.1 as usize {
       let source_row = unsafe {
@@ -953,7 +1039,48 @@ impl RecordingPreviewSurface {
       settings,
       ComposedFrame {
         cursor: None,
+        foreground_only: false,
         seconds,
+      },
+    )
+  }
+
+  pub(crate) fn present_screenshot_layer(
+    &self,
+    index: u32,
+    source_token: u64,
+    source: &CapturedImage,
+    settings: &ScreenshotOutputSettings,
+    foreground_only: bool,
+  ) -> Result<bool, String> {
+    let Ok(mut state) = self.inner.state.lock() else {
+      return Ok(false);
+    };
+    let Some(pane) = state.panes.get_mut(index as usize).and_then(Option::as_mut) else {
+      return Ok(false);
+    };
+    let source_size = (source.width, source.height);
+    if pane.source_token != Some(source_token)
+      || pane
+        .source
+        .as_ref()
+        .is_none_or(|texture| texture.size != source_size)
+    {
+      let texture = self
+        .inner
+        .gpu
+        .compositor
+        .screenshot_source(&self.inner.gpu.device, source)?;
+      pane.source = Some(texture);
+      pane.source_token = Some(source_token);
+    }
+    self.present_cached_source(
+      pane,
+      settings,
+      ComposedFrame {
+        cursor: None,
+        foreground_only,
+        seconds: 0.0,
       },
     )
   }
@@ -997,7 +1124,7 @@ impl WindowsExportCompositor {
     subresource: u32,
     settings: &ScreenshotOutputSettings,
     composition: ComposedFrame,
-    camera: Option<(&ID3D11Texture2D, u32, BakeGeometry, bool)>,
+    camera: Option<(&ID3D11Texture2D, u32, BakeGeometry, bool, bool)>,
   ) -> Result<ID3D11Texture2D, String> {
     let _state = self
       .inner
@@ -1010,7 +1137,7 @@ impl WindowsExportCompositor {
       texture,
       subresource,
     )?;
-    if let (Some(camera_source), Some((camera_texture, camera_subresource, _, _))) =
+    if let (Some(camera_source), Some((camera_texture, camera_subresource, _, _, _))) =
       (&self.camera, camera)
     {
       compositor::Compositor::copy_source(
@@ -1055,16 +1182,20 @@ impl WindowsExportCompositor {
       &target,
       &self.source,
       settings,
-      composition.seconds,
-      composition.cursor,
-      camera.and_then(|(_, _, geometry, drop_shadow)| {
+      composition,
+      camera.and_then(|(_, _, geometry, drop_shadow, camera_on_top)| {
         self
           .camera
           .as_ref()
-          .map(|source| (source, geometry, drop_shadow))
+          .map(|source| (source, geometry, drop_shadow, camera_on_top))
       }),
     )?;
     unsafe { self.inner.gpu.context.Flush() };
     Ok(target)
   }
+}
+
+/// Presents are already atomic per pane here; the guard only mirrors macOS.
+pub(crate) struct PresentBatch<'a> {
+  _surface: &'a RecordingPreviewSurface,
 }

@@ -6,7 +6,8 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   normalizedScreenshotOutput,
   RecordingOutputSettings,
-  ScreenshotOutputSettings,
+  ScreenshotWorkspaceOutputSettings,
+  normalizedScreenshotWorkspaceOutput,
 } from "./screenshot-output";
 import {
   CameraOverlaySettings,
@@ -67,8 +68,8 @@ export const getExportSnapshot = () =>
  * Raw PNG bytes. The thumbnail by default; the full capture only when
  * something zooms in far enough to need the real pixels.
  */
-export const getExportPreview = (full = false) =>
-  invoke<ArrayBuffer>("get_export_preview", { full });
+export const getExportPreview = (full = false, itemId?: number) =>
+  invoke<ArrayBuffer>("get_export_preview", { full, itemId });
 
 export const renderScreenshotOutputPreview = ({
   artifactId,
@@ -78,13 +79,13 @@ export const renderScreenshotOutputPreview = ({
 }: {
   artifactId: number;
   channel: Channel<ArrayBuffer>;
-  output: ScreenshotOutputSettings;
+  output: ScreenshotWorkspaceOutputSettings;
   requestId: number;
 }) =>
   invoke<null>("render_screenshot_output_preview", {
     artifactId,
     channel,
-    output: normalizedScreenshotOutput(output),
+    output: normalizedScreenshotWorkspaceOutput(output),
     requestId,
   });
 
@@ -129,6 +130,7 @@ export const startRecordingPreviewPlayer = ({
       cursorEffects: normalizedCursorEffects(cursorEffects),
       recordingOutput: {
         camera: normalizedScreenshotOutput(recordingOutput.camera),
+        cameraOnTop: recordingOutput.cameraOnTop,
         primary: normalizedScreenshotOutput(recordingOutput.primary),
       },
     },
@@ -142,29 +144,44 @@ export const pauseRecordingPreview = (sessionId: number) =>
 
 export const layoutRecordingPreviewSurface = ({
   backdrop,
+  bakeCamera,
+  cameraOverlay,
   panes,
+  recordingOutput,
   requestId,
   scale,
   sessionId,
   viewport,
 }: {
   backdrop: [number, number, number, number];
+  bakeCamera: boolean;
+  cameraOverlay: CameraOverlaySettings;
   panes: {
     index: number;
     rect: { height: number; width: number; x: number; y: number };
   }[];
+  recordingOutput: RecordingOutputSettings;
   requestId: number;
   scale: number;
   sessionId: number;
   viewport: { height: number; width: number; x: number; y: number };
 }) =>
   invoke<null>("layout_recording_preview_surface", {
-    backdrop,
-    panes,
-    requestId,
-    scale,
-    sessionId,
-    viewport,
+    layout: {
+      backdrop,
+      bakeCamera,
+      cameraOverlay: normalizedCameraOverlay(cameraOverlay),
+      panes,
+      recordingOutput: {
+        camera: normalizedScreenshotOutput(recordingOutput.camera),
+        cameraOnTop: recordingOutput.cameraOnTop,
+        primary: normalizedScreenshotOutput(recordingOutput.primary),
+      },
+      requestId,
+      scale,
+      sessionId,
+      viewport,
+    },
   });
 
 export const requestRecordingPreviewFullResolution = (sessionId: number) =>
@@ -233,6 +250,7 @@ export const setRecordingPreviewComposition = ({
     cameraOverlay: normalizedCameraOverlay(cameraOverlay),
     recordingOutput: {
       camera: normalizedScreenshotOutput(recordingOutput.camera),
+      cameraOnTop: recordingOutput.cameraOnTop,
       primary: normalizedScreenshotOutput(recordingOutput.primary),
     },
     sessionId,
@@ -270,6 +288,7 @@ export const copyRecordingPreviewFrameToClipboard = ({
     positionMs: Math.max(0, Math.round(positionMs)),
     recordingOutput: {
       camera: normalizedScreenshotOutput(recordingOutput.camera),
+      cameraOnTop: recordingOutput.cameraOnTop,
       primary: normalizedScreenshotOutput(recordingOutput.primary),
     },
   });
@@ -292,12 +311,14 @@ export const startScreenshotPreview = (artifactId: number, sessionId: number) =>
 
 export const layoutScreenshotPreviewSurface = ({
   backdrop,
+  output,
   panes,
   scale,
   sessionId,
   viewport,
 }: {
   backdrop: [number, number, number, number];
+  output: ScreenshotWorkspaceOutputSettings;
   panes: {
     index: number;
     rect: { height: number; width: number; x: number; y: number };
@@ -308,19 +329,11 @@ export const layoutScreenshotPreviewSurface = ({
 }) =>
   invoke<null>("layout_screenshot_preview_surface", {
     backdrop,
+    output: normalizedScreenshotWorkspaceOutput(output),
     panes,
     scale,
     sessionId,
     viewport,
-  });
-
-export const setScreenshotPreviewOutput = (
-  output: ScreenshotOutputSettings,
-  sessionId: number,
-) =>
-  invoke<null>("set_screenshot_preview_output", {
-    output: normalizedScreenshotOutput(output),
-    sessionId,
   });
 
 export const stopScreenshotPreview = (sessionId: number) =>
@@ -354,7 +367,7 @@ type RecordingProcessingOptions = {
   includePrimaryVideo: boolean;
   recordingOutput: RecordingOutputSettings;
   resolutionScalePercent: number;
-  screenshotOutput: ScreenshotOutputSettings;
+  screenshotOutput: ScreenshotWorkspaceOutputSettings;
 };
 
 export const estimateRecordingExport = ({
@@ -390,10 +403,11 @@ export const estimateRecordingExport = ({
       includePrimaryVideo,
       recordingOutput: {
         camera: normalizedScreenshotOutput(recordingOutput.camera),
+        cameraOnTop: recordingOutput.cameraOnTop,
         primary: normalizedScreenshotOutput(recordingOutput.primary),
       },
       resolutionScalePercent,
-      screenshotOutput: normalizedScreenshotOutput(screenshotOutput),
+      screenshotOutput: normalizedScreenshotWorkspaceOutput(screenshotOutput),
     },
   });
 
@@ -434,18 +448,19 @@ export const saveExport = ({
       includePrimaryVideo,
       recordingOutput: {
         camera: normalizedScreenshotOutput(recordingOutput.camera),
+        cameraOnTop: recordingOutput.cameraOnTop,
         primary: normalizedScreenshotOutput(recordingOutput.primary),
       },
       resolutionScalePercent,
-      screenshotOutput: normalizedScreenshotOutput(screenshotOutput),
+      screenshotOutput: normalizedScreenshotWorkspaceOutput(screenshotOutput),
     },
   });
 
 export const copyExportToClipboard = async (
-  screenshotOutput: ScreenshotOutputSettings,
+  screenshotOutput: ScreenshotWorkspaceOutputSettings,
 ) => {
   await invoke<null>("copy_export_to_clipboard", {
-    screenshotOutput: normalizedScreenshotOutput(screenshotOutput),
+    screenshotOutput: normalizedScreenshotWorkspaceOutput(screenshotOutput),
   });
 };
 

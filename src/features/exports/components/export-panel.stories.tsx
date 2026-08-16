@@ -22,6 +22,7 @@ const screenshot: ExportArtifact = {
   extension: "png",
   height: 2234,
   id: 1,
+  items: [{ height: 2234, id: 2, width: 3456 }],
   kind: "screenshot",
   suggestedFileStem: "Screenwide 2026-08-08 at 14.32.05",
   width: 3456,
@@ -123,7 +124,7 @@ const meta = {
     directory: "/Users/dom/Desktop",
     fileStem: screenshot.suggestedFileStem,
     previewUrl: screenshotPreview,
-    screenshotOutput,
+    screenshotOutput: { ...screenshotOutput, items: [] },
   },
   component: ExportPanel,
   parameters: {
@@ -164,7 +165,7 @@ function CustomScreenshotPanel(args: ComponentProps<typeof ExportPanel>) {
         setSettings((current) => ({ ...current, backgroundRadiusPercent }));
       }}
       onScreenshotOutputChange={setSettings}
-      screenshotOutput={settings}
+      screenshotOutput={{ ...settings, items: [] }}
       screenshotRadiusPercent={settings.radiusPercent}
     />
   );

@@ -19,6 +19,9 @@ import { NativeRecordingPreview } from "./native-recording-preview";
 export type ScrubPreviewProps = {
   artifactId: number;
   durationMs: number;
+  previewSourceDimensions: Partial<
+    Record<RecordingVideoTrackId, { height: number; width: number }>
+  >;
   audioError?: string | null;
   audioTrackVolumes?: AudioTrackVolume[];
   audioTracks?: PreparedAudioTrack[];
@@ -39,6 +42,7 @@ export type ScrubPreviewProps = {
     settings: RecordingOutputSettings[RecordingVideoTrackId],
   ) => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
+  onVideoTrackOrderChange?: (tracks: RecordingVideoTrackId[]) => void;
   previewLayout?: RecordingPreviewLayout;
   previewOutputDimensions?: Partial<
     Record<RecordingVideoTrackId, { height: number; width: number }>

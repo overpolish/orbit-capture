@@ -15,6 +15,7 @@ import {
   CameraOverlaySettings,
   CursorEffectSettings,
 } from "./types";
+import { usePreviewCapabilities } from "./use-preview-capabilities";
 
 export function useRecordingPreviewSettings({
   audioTrackVolumes,
@@ -39,6 +40,7 @@ export function useRecordingPreviewSettings({
   setError: Dispatch<SetStateAction<string | null>>;
   startedRef: RefObject<boolean>;
 }) {
+  const nativeSurface = usePreviewCapabilities()?.nativeRecordingPreview;
   const selection = enabledStreamIndices.join("-");
   const volumes = audioTrackVolumes
     .map(
@@ -63,7 +65,7 @@ export function useRecordingPreviewSettings({
     recordingOutput,
   };
   useEffect(() => {
-    if (!isEnabled || !startedRef.current) return;
+    if (!isEnabled || !startedRef.current || nativeSurface) return;
     void selectRecordingPreviewAudio(
       enabledStreamIndices,
       sessionIdRef.current,

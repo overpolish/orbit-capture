@@ -15,10 +15,54 @@ type PointerHandlers = {
   onPointerUp?: PointerEventHandler;
 };
 
+function ControlHandle({
+  ariaLabel,
+  cursor,
+  inverseScale,
+  left,
+  onPointerDown,
+  pointerHandlers,
+  top,
+}: {
+  ariaLabel: string;
+  cursor: string;
+  inverseScale: string;
+  left: string;
+  onPointerDown: PointerEventHandler<SVGSVGElement>;
+  pointerHandlers: PointerHandlers;
+  top: string;
+}) {
+  return (
+    <svg
+      aria-label={ariaLabel}
+      className="pointer-events-auto absolute overflow-visible outline-none"
+      height="16"
+      onPointerDown={onPointerDown}
+      role="button"
+      style={{
+        cursor,
+        height: `calc(16px * ${inverseScale})`,
+        left,
+        top,
+        transform: "translate(-50%, -50%)",
+        transformOrigin: "center",
+        width: `calc(16px * ${inverseScale})`,
+      }}
+      tabIndex={-1}
+      viewBox="0 0 16 16"
+      {...pointerHandlers}
+    >
+      <circle className="fill-transparent" cx="8" cy="8" r="8" />
+      <circle className="fill-white" cx="8" cy="8" r="4" />
+    </svg>
+  );
+}
+
 export function TransformControls({
   frame,
   interaction,
   inverseScale = "var(--preview-inverse-scale, 1)",
+  lineStyle = "dashed",
   move,
   radius,
   radiusHandle,
@@ -28,6 +72,7 @@ export function TransformControls({
   frame: { height: number; width: number; x: number; y: number };
   interaction?: PointerHandlers;
   inverseScale?: string;
+  lineStyle?: "dashed" | "solid";
   move?: { label: string; onPointerDown: PointerEventHandler };
   radius?: number;
   radiusHandle?: {
@@ -41,7 +86,7 @@ export function TransformControls({
     label: (edges: TransformEdge[]) => string;
     onPointerDown: (
       edges: TransformEdge[],
-    ) => PointerEventHandler<HTMLButtonElement>;
+    ) => PointerEventHandler<SVGSVGElement>;
   };
   scaleRing?: {
     cursor: string;
@@ -51,8 +96,6 @@ export function TransformControls({
     onPointerMove?: PointerEventHandler<SVGCircleElement>;
   };
 }) {
-  const controlSize = `calc(8px * ${inverseScale})`;
-  const lineWidth = `calc(2px * ${inverseScale})`;
   const pointerHandlers = interaction ?? {};
 
   return (
@@ -74,47 +117,36 @@ export function TransformControls({
           height="100%"
           rx={radius}
           stroke="white"
-          strokeDasharray={`calc(5px * ${inverseScale})`}
-          strokeWidth={lineWidth}
+          strokeDasharray={
+            lineStyle === "dashed" ? `calc(5px * ${inverseScale})` : undefined
+          }
+          style={{ strokeWidth: `calc(1px * ${inverseScale})` }}
           width="100%"
         />
       </svg>
       {resize
         ? transformHandles.map(({ edges, x, y }) => (
-            <button
-              aria-label={resize.label(edges)}
-              className="pointer-events-auto absolute rounded-full border-0 bg-white p-0 outline-none"
+            <ControlHandle
+              ariaLabel={resize.label(edges)}
+              cursor={cursorForTransformEdges(edges)}
+              inverseScale={inverseScale}
               key={edges.join("-")}
+              left={`${String(x * 100)}%`}
               onPointerDown={resize.onPointerDown(edges)}
-              style={{
-                cursor: cursorForTransformEdges(edges),
-                height: controlSize,
-                left: `${String(x * 100)}%`,
-                top: `${String(y * 100)}%`,
-                transform: "translate(-50%, -50%)",
-                width: controlSize,
-              }}
-              tabIndex={-1}
-              type="button"
-              {...pointerHandlers}
+              pointerHandlers={pointerHandlers}
+              top={`${String(y * 100)}%`}
             />
           ))
         : null}
       {move ? (
-        <button
-          aria-label={move.label}
-          className="pointer-events-auto absolute rounded-full border-0 bg-white p-0 outline-none"
+        <ControlHandle
+          ariaLabel={move.label}
+          cursor="move"
+          inverseScale={inverseScale}
+          left="50%"
           onPointerDown={move.onPointerDown}
-          style={{
-            height: controlSize,
-            left: "50%",
-            top: "50%",
-            transform: "translate(-50%, -50%)",
-            width: controlSize,
-          }}
-          tabIndex={-1}
-          type="button"
-          {...pointerHandlers}
+          pointerHandlers={pointerHandlers}
+          top="50%"
         />
       ) : null}
       {scaleRing ? (
@@ -135,7 +167,7 @@ export function TransformControls({
             cx={scaleRing.extent}
             cy={scaleRing.extent}
             r={Math.max(1, scaleRing.extent - 1)}
-            style={{ strokeWidth: lineWidth }}
+            style={{ strokeWidth: `calc(2px * ${inverseScale})` }}
           />
           <circle
             aria-label={scaleRing.label}
@@ -160,21 +192,14 @@ export function TransformControls({
         </svg>
       ) : null}
       {radiusHandle ? (
-        <button
-          aria-label={radiusHandle.label}
-          className="pointer-events-auto absolute rounded-full border-0 bg-white p-0 outline-none"
+        <ControlHandle
+          ariaLabel={radiusHandle.label}
+          cursor={radiusHandle.cursor}
+          inverseScale={inverseScale}
+          left={radiusHandle.left}
           onPointerDown={radiusHandle.onPointerDown}
-          style={{
-            cursor: radiusHandle.cursor,
-            height: controlSize,
-            left: radiusHandle.left,
-            top: radiusHandle.top,
-            transform: "translate(-50%, -50%)",
-            width: controlSize,
-          }}
-          tabIndex={-1}
-          type="button"
-          {...pointerHandlers}
+          pointerHandlers={pointerHandlers}
+          top={radiusHandle.top}
         />
       ) : null}
     </div>

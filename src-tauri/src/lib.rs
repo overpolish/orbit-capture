@@ -95,7 +95,6 @@ pub fn run() {
       exports::recording_preview_player::timeline_thumbnails::stream_recording_timeline_thumbnails,
       exports::save::save_export,
       exports::screenshot_preview::layout_screenshot_preview_surface,
-      exports::screenshot_preview::set_screenshot_preview_output,
       exports::screenshot_preview::start_screenshot_preview,
       exports::screenshot_preview::stop_screenshot_preview,
       exports::commands::set_export_directory,
@@ -201,6 +200,7 @@ pub fn run() {
       windows::manage_recording_bar_movement(app.handle());
       windows::manage_recording_dock_movement(app.handle());
       exports::initialize(app.handle());
+      let has_pending_export = exports::has_pending_workspace(app.handle());
       shortcuts::initialize(app.handle());
       windows::manage_recording_source_selector_dismissal(app.handle());
 
@@ -209,13 +209,13 @@ pub fn run() {
         let snapshot = tauri::async_runtime::block_on(permissions::refresh(app.handle()));
         if !snapshot.has_required_recording_permissions() {
           permissions::show_permissions_window(app.handle())?;
-        } else if show_recording_bar_on_launch {
+        } else if show_recording_bar_on_launch && !has_pending_export {
           windows::show_recording_ui(app.handle())?;
         }
       }
 
       #[cfg(not(target_os = "macos"))]
-      if show_recording_bar_on_launch {
+      if show_recording_bar_on_launch && !has_pending_export {
         windows::show_recording_ui(app.handle())?;
       }
 
@@ -227,7 +227,15 @@ pub fn run() {
         // first presentation always belongs to an explicit user action.
         let app_handle = app.handle().clone();
         app.handle().run_on_main_thread(move || {
-          for label in [windows::WindowLabel::Export, windows::WindowLabel::Settings] {
+          let labels = if has_pending_export {
+            &[windows::WindowLabel::Settings][..]
+          } else {
+            &[
+              windows::WindowLabel::Export,
+              windows::WindowLabel::Settings,
+            ][..]
+          };
+          for label in labels {
             if let Some(window) = app_handle.get_webview_window(label.as_str()) {
               let _ = window.hide();
             }
@@ -244,7 +252,9 @@ pub fn run() {
   let mut app = app;
 
   #[cfg(target_os = "macos")]
-  app.set_dock_visibility(false);
+  if !exports::has_pending_workspace(app.handle()) {
+    app.set_dock_visibility(false);
+  }
 
   app.run(|_, _| {});
 }

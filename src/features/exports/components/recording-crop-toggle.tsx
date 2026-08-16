@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { Crop } from "lucide-react";
+import { Crop, MousePointer2, ScanSquare } from "lucide-react";
 import { MouseEvent as ReactMouseEvent } from "react";
 import { TooltipTrigger } from "react-aria-components";
 
@@ -14,7 +14,9 @@ import {
 } from "../recording-export-settings";
 import {
   RecordingOutputSettings,
+  resetScreenshotCrop,
   resetScreenshotLayout,
+  resetScreenshotTransform,
 } from "../screenshot-output";
 import {
   CameraOverlaySettings,
@@ -22,24 +24,30 @@ import {
   RecordingVideoTrackId,
 } from "../types";
 
-export function RecordingCropToggle({
+export type RecordingCanvasTool = "canvas" | "crop" | "select" | null;
+
+export function RecordingCanvasTools({
   activeTrack,
   bakeCamera,
   cameraPane,
-  isEditing,
   isEnabled,
+  isFrameEnabled = isEnabled,
+  isSelectEnabled = isEnabled,
   onCameraOverlayReset,
   onChange,
-  onEditingChange,
+  onToolChange,
   outputs,
   screenPane,
+  tool,
 }: {
   activeTrack: RecordingVideoTrackId | null;
   bakeCamera: boolean;
-  isEditing: boolean;
   isEnabled: boolean;
-  onEditingChange: (editing: boolean) => void;
+  onToolChange: (tool: RecordingCanvasTool) => void;
+  tool: RecordingCanvasTool;
   cameraPane?: RecordingPreviewPane;
+  isFrameEnabled?: boolean;
+  isSelectEnabled?: boolean;
   onCameraOverlayReset?: (settings: CameraOverlaySettings) => void;
   onChange?: (
     track: RecordingVideoTrackId,
@@ -50,7 +58,7 @@ export function RecordingCropToggle({
 }) {
   const reset = (event: ReactMouseEvent<HTMLSpanElement>) => {
     event.preventDefault();
-    if (activeTrack === "camera" && bakeCamera) {
+    if (activeTrack === "camera" && bakeCamera && tool !== "canvas") {
       // The reset must be computed from the real output and camera geometry:
       // generic 16:9 defaults land the crop frame outside the camera image
       // for other aspect ratios, and the compositor's clamped rendering then
@@ -68,40 +76,106 @@ export function RecordingCropToggle({
       return;
     }
     if (!activeTrack || !outputs) return;
-    const pane = activeTrack === "primary" ? screenPane : cameraPane;
+    const targetTrack =
+      bakeCamera && tool === "canvas" ? "primary" : activeTrack;
+    const pane = targetTrack === "primary" ? screenPane : cameraPane;
     if (!pane) return;
-    onChange?.(
-      activeTrack,
-      resetScreenshotLayout(outputs[activeTrack], {
-        height: pane.sourceHeight,
-        width: pane.sourceWidth,
-      }),
-    );
+    const source = { height: pane.sourceHeight, width: pane.sourceWidth };
+    const current = outputs[targetTrack];
+    const next =
+      tool === "canvas"
+        ? resetScreenshotLayout(
+            { ...current, height: source.height, width: source.width },
+            source,
+          )
+        : tool === "select"
+          ? resetScreenshotTransform(current, source)
+          : resetScreenshotCrop(current, source);
+    onChange?.(targetTrack, next);
   };
   return (
-    <TooltipTrigger delay={400}>
-      <span className="inline-flex" onContextMenu={reset}>
-        <ToggleButton
-          aria-keyshortcuts="C"
-          aria-label="Edit recording placement and crop"
-          isDisabled={!isEnabled}
-          isSelected={isEditing && isEnabled}
-          onChange={onEditingChange}
-          showFocus={false}
-          size="sm"
-          variant="ghost"
-        >
-          <Crop size={15} />
-        </ToggleButton>
-      </span>
-      <Tooltip placement="bottom">
-        <span className="flex items-center gap-2">
-          Edit placement and crop
-          <Keyboard size="xs" variant="tooltip">
-            C
-          </Keyboard>
+    <div className="flex items-center gap-1">
+      <TooltipTrigger delay={400}>
+        <span className="inline-flex" onContextMenu={reset}>
+          <ToggleButton
+            animation="scale-selected"
+            aria-keyshortcuts="V"
+            aria-label="Select recording clip"
+            isDisabled={!isSelectEnabled}
+            isSelected={tool === "select" && isSelectEnabled}
+            onChange={(selected) => {
+              onToolChange(selected ? "select" : null);
+            }}
+            showFocus={false}
+            size="sm"
+            variant="ghost"
+          >
+            <MousePointer2 size={15} />
+          </ToggleButton>
         </span>
-      </Tooltip>
-    </TooltipTrigger>
+        <Tooltip placement="bottom">
+          <span className="flex items-center gap-2">
+            Select
+            <Keyboard size="xs" variant="tooltip">
+              V
+            </Keyboard>
+          </span>
+        </Tooltip>
+      </TooltipTrigger>
+      <TooltipTrigger delay={400}>
+        <span className="inline-flex" onContextMenu={reset}>
+          <ToggleButton
+            animation="scale-selected"
+            aria-keyshortcuts="F"
+            aria-label="Resize recording frame"
+            isDisabled={!isFrameEnabled}
+            isSelected={tool === "canvas" && isFrameEnabled}
+            onChange={(selected) => {
+              onToolChange(selected ? "canvas" : null);
+            }}
+            showFocus={false}
+            size="sm"
+            variant="ghost"
+          >
+            <ScanSquare size={15} />
+          </ToggleButton>
+        </span>
+        <Tooltip placement="bottom">
+          <span className="flex items-center gap-2">
+            Resize frame
+            <Keyboard size="xs" variant="tooltip">
+              F
+            </Keyboard>
+          </span>
+        </Tooltip>
+      </TooltipTrigger>
+      <TooltipTrigger delay={400}>
+        <span className="inline-flex" onContextMenu={reset}>
+          <ToggleButton
+            animation="scale-selected"
+            aria-keyshortcuts="C"
+            aria-label="Crop recording clip"
+            isDisabled={!isEnabled}
+            isSelected={tool === "crop" && isEnabled}
+            onChange={(selected) => {
+              onToolChange(selected ? "crop" : null);
+            }}
+            showFocus={false}
+            size="sm"
+            variant="ghost"
+          >
+            <Crop size={15} />
+          </ToggleButton>
+        </span>
+        <Tooltip placement="bottom">
+          <span className="flex items-center gap-2">
+            Crop
+            <Keyboard size="xs" variant="tooltip">
+              C
+            </Keyboard>
+          </span>
+        </Tooltip>
+      </TooltipTrigger>
+    </div>
   );
 }

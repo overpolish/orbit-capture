@@ -58,15 +58,12 @@
 //!    is already split per platform in [`super::cursor_export`], under
 //!    `platform_macos` / `platform_unsupported`.
 //!
-//! # Intended Windows/Linux GPU stack
+//! # Platform GPU backends
 //!
-//! Windows should be implemented with **wgpu + WGSL**, not D3D directly. The
-//! repo already carries wgpu for `crate::screenshots::mesh_gpu` with its
-//! `mesh.wgsl` shader, so the composition shaders written for Windows can be
-//! reused verbatim on Linux later. Consequently nothing in the shared layer may
-//! encode Metal semantics: no `MTLPixelFormat`, no premultiplied-vs-straight
-//! assumption beyond what [`crate::screenshots::CapturedImage`] documents, no
-//! implicit top-left-origin texture convention. Keep those inside the backend.
+//! macOS uses Metal and Windows uses D3D11 with DirectComposition. Another OS
+//! can add its own backend behind this facade without leaking platform texture
+//! formats, coordinate conventions, or window-surface details into shared
+//! preview code.
 
 use serde::Serialize;
 

@@ -26,6 +26,7 @@ typedef struct {
   float mesh_colors[5][4];
   uint32_t clip_cursor_at_video_edge;
   uint32_t transparent_background;
+  uint32_t foreground_only;
 } ScreenwideCanvas;
 
 typedef struct {
@@ -39,26 +40,34 @@ typedef struct {
   uint32_t camera_crop_y;
   uint32_t camera_crop_width;
   uint32_t camera_crop_height;
-  uint32_t camera_frame_x;
-  uint32_t camera_frame_y;
+  int32_t camera_frame_x;
+  int32_t camera_frame_y;
   uint32_t camera_frame_width;
   uint32_t camera_frame_height;
   uint32_t camera_radius;
   uint32_t camera_source_width;
   uint32_t camera_source_height;
   uint32_t camera_drop_shadow;
+  uint32_t camera_on_top;
 } ScreenwideStillOverlay;
+
+/// Receives the encoded, uncommitted `MTLCommandBuffer` and its
+/// `CAMetalDrawable`. The caller commits and presents so it can bind the
+/// present to the Core Animation transaction that carries the pane's layout.
+typedef void (^ScreenwidePresentBlock)(void *command_buffer, void *drawable);
 
 void *screenwide_gpu_still_presenter_create(void);
 int screenwide_gpu_still_presenter_present(
     void *handle, void *metal_layer, uint64_t source_token,
     const uint8_t *source_rgba, uint32_t source_width, uint32_t source_height,
     const ScreenwideCanvas *canvas, double seconds, const uint8_t *cursor_rgba,
-    const uint8_t *camera_rgba, const ScreenwideStillOverlay *overlay);
+    const uint8_t *camera_rgba, const ScreenwideStillOverlay *overlay,
+    ScreenwidePresentBlock present);
 int screenwide_gpu_still_presenter_present_pixels(
     void *handle, void *metal_layer, uint64_t source_token,
     void *source_pixels, const ScreenwideCanvas *canvas, double seconds,
     const uint8_t *cursor_rgba, const uint8_t *camera_rgba,
     void *camera_pixels,
-    const ScreenwideStillOverlay *overlay);
+    const ScreenwideStillOverlay *overlay,
+    ScreenwidePresentBlock present);
 void screenwide_gpu_still_presenter_destroy(void *handle);

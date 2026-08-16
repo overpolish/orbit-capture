@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { Camera, Monitor } from "lucide-react";
+import { PointerEvent as ReactPointerEvent, useRef, useState } from "react";
 
 import { Checkbox } from "../../../components/base/checkbox/checkbox";
 import {
@@ -15,6 +16,10 @@ import {
 } from "../types";
 
 import { AudioTrackVolumes } from "./audio-level";
+import {
+  LayerContextMenu,
+  LayerContextMenuState,
+} from "./screenshot-layer-context-menu";
 import { ScrubAudioTracks } from "./scrub-audio-tracks";
 import { Playhead } from "./scrub-playhead";
 import { SeekHandler, TimelineRuler, TimelineScrubber } from "./scrub-timeline";
@@ -31,9 +36,11 @@ export function RecordingTrackLanes({
   onEnabledVideoTracksChange,
   onSeek,
   onSelectedTrackChange,
+  onVideoTrackOrderChange,
   playhead,
   selectedTrack,
   thumbnails,
+  videoTrackOrder,
   volumes,
 }: {
   audioTracks: PreparedAudioTrack[];
@@ -48,10 +55,115 @@ export function RecordingTrackLanes({
   playhead: Playhead;
   selectedTrack: RecordingTrackId | null;
   thumbnails: RecordingTimelineThumbnails;
+  videoTrackOrder: RecordingVideoTrackId[];
   volumes: AudioTrackVolumes;
+  onVideoTrackOrderChange?: (tracks: RecordingVideoTrackId[]) => void;
 }) {
+  const [contextMenu, setContextMenu] =
+    useState<LayerContextMenuState<RecordingVideoTrackId> | null>(null);
+  const [drag, setDrag] = useState<{
+    dropIndex: number;
+    source: RecordingVideoTrackId;
+  } | null>(null);
+  const dragRef = useRef<{
+    dropIndex: number;
+    source: RecordingVideoTrackId;
+    startY: number;
+    started: boolean;
+  } | null>(null);
+  const rowElementsRef = useRef(
+    new Map<RecordingVideoTrackId, HTMLDivElement>(),
+  );
   const rowCount = layout.panes.length + audioTracks.length;
   const meterHeight = 16 + rowCount * 34;
+  const videoRows = layout.panes
+    .map((pane, index) => ({
+      pane,
+      trackId: index === 0 ? ("primary" as const) : ("camera" as const),
+    }))
+    .sort(
+      (left, right) =>
+        videoTrackOrder.indexOf(left.trackId) -
+        videoTrackOrder.indexOf(right.trackId),
+    );
+  const applyOrder = (source: RecordingVideoTrackId, dropIndex: number) => {
+    const sourceIndex = videoTrackOrder.indexOf(source);
+    if (sourceIndex === -1) return;
+    const next = videoTrackOrder.filter((track) => track !== source);
+    const insertionIndex = Math.max(
+      0,
+      Math.min(
+        next.length,
+        dropIndex > sourceIndex ? dropIndex - 1 : dropIndex,
+      ),
+    );
+    next.splice(insertionIndex, 0, source);
+    if (next.some((track, index) => track !== videoTrackOrder[index]))
+      onVideoTrackOrderChange?.(next);
+  };
+  const moveTrack = (
+    track: RecordingVideoTrackId,
+    direction: "backward" | "forward",
+  ) => {
+    setContextMenu(null);
+    const index = videoTrackOrder.indexOf(track);
+    const nextIndex = direction === "forward" ? index - 1 : index + 1;
+    if (index === -1 || nextIndex < 0 || nextIndex >= videoTrackOrder.length)
+      return;
+    const next = [...videoTrackOrder];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    onVideoTrackOrderChange?.(next);
+  };
+  const beginDrag =
+    (source: RecordingVideoTrackId) =>
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0 || videoRows.length < 2) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest("button, input, [role='checkbox']")
+      )
+        return;
+      dragRef.current = {
+        dropIndex: videoTrackOrder.indexOf(source),
+        source,
+        startY: event.clientY,
+        started: false,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    };
+  const updateDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const active = dragRef.current;
+    if (!active) return;
+    if (!active.started && Math.abs(event.clientY - active.startY) <= 4) return;
+    active.started = true;
+    event.preventDefault();
+    let dropIndex = videoRows.length;
+    for (let index = 0; index < videoRows.length; index += 1) {
+      const row = rowElementsRef.current.get(videoRows[index].trackId);
+      if (!row) continue;
+      const bounds = row.getBoundingClientRect();
+      if (event.clientY < bounds.top + bounds.height / 2) {
+        dropIndex = index;
+        break;
+      }
+    }
+    active.dropIndex = dropIndex;
+    setDrag({ dropIndex, source: active.source });
+  };
+  const finishDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const active = dragRef.current;
+    dragRef.current = null;
+    if (active?.started) applyOrder(active.source, active.dropIndex);
+    setDrag(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  const cancelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    dragRef.current = null;
+    setDrag(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+  };
 
   return (
     <section
@@ -69,23 +181,48 @@ export function RecordingTrackLanes({
             />
           </div>
 
-          {layout.panes.map((pane, index) => {
+          {videoRows.map(({ pane, trackId }, rowIndex) => {
             const Icon = pane.kind === "camera" ? Camera : Monitor;
             const label = pane.kind === "camera" ? "Camera" : "Screen";
-            const trackId: RecordingVideoTrackId =
-              index === 0 ? "primary" : "camera";
             const enabled = enabledVideoTracks.has(trackId);
             const mustRemainEnabled =
               enabled &&
               enabledVideoTracks.size === 1 &&
               enabledTracks.size === 0;
             return (
-              <div className="flex items-center gap-2" key={trackId}>
+              <div
+                className={`relative flex items-center gap-2 transition-opacity ${drag?.source === trackId ? "opacity-55" : ""}`}
+                key={trackId}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  onSelectedTrackChange(trackId);
+                  setContextMenu({
+                    itemId: trackId,
+                    x: Math.min(event.clientX, window.innerWidth - 196),
+                    y: Math.min(event.clientY, window.innerHeight - 92),
+                  });
+                }}
+                ref={(element) => {
+                  if (element) rowElementsRef.current.set(trackId, element);
+                  else rowElementsRef.current.delete(trackId);
+                }}
+              >
+                {drag?.dropIndex === rowIndex ? (
+                  <div className="pointer-events-none absolute -top-0.5 right-0 left-0 z-20 h-0.5 rounded bg-info" />
+                ) : null}
+                {rowIndex === videoRows.length - 1 &&
+                drag?.dropIndex === videoRows.length ? (
+                  <div className="pointer-events-none absolute -bottom-0.5 right-0 left-0 z-20 h-0.5 rounded bg-info" />
+                ) : null}
                 <div
-                  className={`flex h-8 w-36 shrink-0 items-center gap-2 rounded px-2 text-xs font-medium text-content-fg transition-colors ${selectedTrack === trackId ? "bg-info/15" : ""}`}
+                  className={`flex h-8 w-36 shrink-0 cursor-grab items-center gap-2 rounded px-2 text-xs font-medium text-content-fg transition-colors active:cursor-grabbing ${selectedTrack === trackId ? "bg-info/15" : ""}`}
                   onClick={() => {
                     onSelectedTrackChange(trackId);
                   }}
+                  onPointerCancel={cancelDrag}
+                  onPointerDown={beginDrag(trackId)}
+                  onPointerMove={updateDrag}
+                  onPointerUp={finishDrag}
                 >
                   <Checkbox
                     aria-label={
@@ -153,6 +290,24 @@ export function RecordingTrackLanes({
           />
         ) : null}
       </div>
+      {contextMenu ? (
+        <LayerContextMenu
+          ariaLabel="Video layer actions"
+          canDelete={false}
+          menu={contextMenu}
+          onClose={() => {
+            setContextMenu(null);
+          }}
+          onDelete={() => undefined}
+          onMoveBackward={() => {
+            moveTrack(contextMenu.itemId, "backward");
+          }}
+          onMoveForward={() => {
+            moveTrack(contextMenu.itemId, "forward");
+          }}
+          showDelete={false}
+        />
+      ) : null}
     </section>
   );
 }

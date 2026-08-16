@@ -8,9 +8,17 @@ import { getExportPreview } from "./api";
 export function useExportPreviewImage(
   artifactId: number | undefined,
   loadFullResolutionInitially = false,
+  itemId?: number | null,
 ) {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [fullPreviewUrl, setFullPreviewUrl] = useState<string | null>(null);
+  const resourceKey = `${artifactId?.toString() ?? "none"}:${itemId?.toString() ?? "none"}`;
+  const [preview, setPreview] = useState<{
+    key: string;
+    url: string;
+  } | null>(null);
+  const [fullPreview, setFullPreview] = useState<{
+    key: string;
+    url: string;
+  } | null>(null);
 
   useEffect(() => {
     if (artifactId === undefined) return;
@@ -18,11 +26,11 @@ export function useExportPreviewImage(
     let url: string | undefined;
     let disposed = false;
 
-    void getExportPreview(loadFullResolutionInitially)
+    void getExportPreview(loadFullResolutionInitially, itemId ?? undefined)
       .then((bytes) => {
         if (disposed) return;
         url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
-        setPreviewUrl(url);
+        setPreview({ key: resourceKey, url });
       })
       .catch((cause: unknown) => {
         console.error("Could not load the export preview", cause);
@@ -31,31 +39,38 @@ export function useExportPreviewImage(
     return () => {
       disposed = true;
       if (url) URL.revokeObjectURL(url);
-      setPreviewUrl(null);
-      setFullPreviewUrl(null);
     };
-  }, [artifactId, loadFullResolutionInitially]);
+  }, [artifactId, itemId, loadFullResolutionInitially, resourceKey]);
 
   useEffect(() => {
-    if (!fullPreviewUrl) return;
+    if (!fullPreview) return;
     return () => {
-      URL.revokeObjectURL(fullPreviewUrl);
+      URL.revokeObjectURL(fullPreview.url);
     };
-  }, [fullPreviewUrl]);
+  }, [fullPreview]);
 
   const loadFullPreview = useCallback(() => {
-    if (loadFullResolutionInitially || fullPreviewUrl) return;
+    if (
+      loadFullResolutionInitially ||
+      (fullPreview && fullPreview.key === resourceKey)
+    )
+      return;
 
-    void getExportPreview(true)
+    void getExportPreview(true, itemId ?? undefined)
       .then((bytes) => {
-        setFullPreviewUrl(
-          URL.createObjectURL(new Blob([bytes], { type: "image/png" })),
-        );
+        setFullPreview({
+          key: resourceKey,
+          url: URL.createObjectURL(new Blob([bytes], { type: "image/png" })),
+        });
       })
       .catch((cause: unknown) => {
         console.error("Could not load the full-resolution preview", cause);
       });
-  }, [fullPreviewUrl, loadFullResolutionInitially]);
+  }, [fullPreview, itemId, loadFullResolutionInitially, resourceKey]);
+
+  const previewUrl = preview?.key === resourceKey ? preview.url : null;
+  const fullPreviewUrl =
+    fullPreview?.key === resourceKey ? fullPreview.url : null;
 
   return {
     loadFullPreview,

@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::exports::preview_platform::PreviewSurfaceRect;
+use crate::exports::CameraOverlaySettings;
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,16 +14,36 @@ pub struct PreviewSurfacePane {
   rect: PreviewSurfaceRect,
 }
 
-#[tauri::command]
-pub fn layout_recording_preview_surface(
-  state: tauri::State<'_, RecordingPreviewPlayerState>,
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingPreviewSurfaceLayout {
   backdrop: Option<[f64; 4]>,
+  bake_camera: bool,
+  camera_overlay: CameraOverlaySettings,
   panes: Vec<PreviewSurfacePane>,
+  recording_output: RecordingOutputSettings,
   request_id: u64,
   scale: f64,
   session_id: u64,
   viewport: PreviewSurfaceRect,
+}
+
+#[tauri::command]
+pub fn layout_recording_preview_surface(
+  state: tauri::State<'_, RecordingPreviewPlayerState>,
+  layout: RecordingPreviewSurfaceLayout,
 ) -> Result<(), String> {
+  let RecordingPreviewSurfaceLayout {
+    backdrop,
+    bake_camera,
+    camera_overlay,
+    panes,
+    recording_output,
+    request_id,
+    scale,
+    session_id,
+    viewport,
+  } = layout;
   let mut manager = state
     .0
     .lock()
@@ -32,6 +53,29 @@ pub fn layout_recording_preview_surface(
     return Ok(());
   }
   manager.latest_layout_request = request_id;
+  let settings = manager
+    .sources
+    .as_ref()
+    .ok_or_else(|| "The recording preview player is not open".to_owned())?
+    .composition_settings
+    .clone()
+    .ok_or_else(|| "The recording preview composition is unavailable".to_owned())?;
+  let composition_changed = {
+    let current = settings
+      .read()
+      .map_err(|_| "The recording preview composition is unavailable".to_owned())?;
+    current.bake_camera != bake_camera
+      || current.camera_overlay != camera_overlay
+      || current.recording_output != recording_output
+  };
+  *settings
+    .write()
+    .map_err(|_| "The recording preview composition is unavailable".to_owned())? =
+    PreviewCompositionSettings {
+      bake_camera,
+      camera_overlay,
+      recording_output,
+    };
   let scale = if scale.is_finite() && scale > 0.0 {
     scale
   } else {
@@ -66,18 +110,26 @@ pub fn layout_recording_preview_surface(
   else {
     return Ok(());
   };
-  surface.set_scale(scale);
-  surface.begin_layout();
-  surface.set_viewport(viewport, backdrop.unwrap_or([0.09, 0.09, 0.10, 1.0]));
-  for pane in panes {
-    surface.layout(pane.index, pane.rect);
-  }
-  surface.finish_layout();
   // The decoder can produce its first still before the DOM has supplied a
   // native pane, in which case there is nowhere to present it. Ask for that
   // initial frame again once the first real layout exists. Later Windows
   // zooms keep the cached full-resolution swap chain and need no re-decode.
-  if sizes_changed && !manager.is_playing && (!cfg!(target_os = "windows") || needs_initial_frame) {
+  let recompose_still = (sizes_changed || composition_changed)
+    && !manager.is_playing
+    && manager.still_decoder.is_some()
+    && (!cfg!(target_os = "windows") || needs_initial_frame || composition_changed);
+  // A present is on its way (re-composed still, or live playback frames), so
+  // the pane may hold its size until that frame lands rather than fitting the
+  // previous drawable into the new rect for a display tick.
+  let defer_resize = recompose_still || manager.is_playing;
+  surface.set_scale(scale);
+  surface.begin_layout();
+  surface.set_viewport(viewport, backdrop.unwrap_or([0.09, 0.09, 0.10, 1.0]));
+  for pane in panes {
+    surface.layout(pane.index, pane.rect, defer_resize);
+  }
+  surface.finish_layout();
+  if recompose_still {
     if let Some(decoder) = &manager.still_decoder {
       decoder.seek(
         manager.position_ms,

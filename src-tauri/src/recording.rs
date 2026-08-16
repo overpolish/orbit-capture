@@ -75,15 +75,20 @@ fn abandon_start(app: &AppHandle, error: &str) {
   discard_capture(take_handles(app));
   restore_windows(app);
   let _ = transition(app, RecordingStatus::Idle, None);
+  crate::exports::release_recording_workspace(app);
   show_recording_ui(app);
 }
 
 pub fn start(app: &AppHandle, options: StartRecordingOptions) -> Result<(), String> {
   crate::text_recognition::dismiss(app);
   validate_options(&options)?;
+  crate::exports::reserve_recording_workspace(app)?;
   // A second start while `Starting` is rejected here, not merely by a
   // disabled button.
-  transition(app, RecordingStatus::Starting, Some(options.mode))?;
+  if let Err(error) = transition(app, RecordingStatus::Starting, Some(options.mode)) {
+    crate::exports::release_recording_workspace(app);
+    return Err(error);
+  }
   let generation = state(app).begin_start();
   let countdown_seconds = crate::settings::current(app).recording_countdown_seconds;
 
@@ -240,15 +245,20 @@ pub fn stop(app: &AppHandle) -> Result<(), String> {
     match finalized {
       Some(Ok((info, suggested_file_stem))) => {
         if let Err(error) = crate::exports::present_recording(&app, info, suggested_file_stem) {
+          crate::exports::release_recording_workspace(&app);
           emit_error(&app, "stop", &error);
           show_recording_ui(&app);
         }
       }
       Some(Err(error)) => {
+        crate::exports::release_recording_workspace(&app);
         emit_error(&app, "stop", &error);
         show_recording_ui(&app);
       }
-      None => show_recording_ui(&app),
+      None => {
+        crate::exports::release_recording_workspace(&app);
+        show_recording_ui(&app);
+      }
     }
   });
 
@@ -274,6 +284,7 @@ pub fn cancel(app: &AppHandle) -> Result<(), String> {
   discard_capture(take_handles(app));
   restore_windows(app);
   transition(app, RecordingStatus::Idle, None)?;
+  crate::exports::release_recording_workspace(app);
   show_recording_ui(app);
 
   Ok(())

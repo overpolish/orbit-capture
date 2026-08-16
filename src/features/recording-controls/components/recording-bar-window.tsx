@@ -4,6 +4,7 @@
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 
+import { selectArtifact, useExportStore } from "../../exports/store";
 import {
   openPermissionSettings,
   requestPermission,
@@ -101,6 +102,7 @@ const grantPermission = (
 };
 
 export function RecordingBarWindow() {
+  const pendingExportKind = useExportStore(selectArtifact)?.kind ?? null;
   const canRecordCamera = usePermissionStore(selectCanRecordCamera);
   const canRecordMicrophone = usePermissionStore(selectCanRecordMicrophone);
   const canRecordScreen = usePermissionStore(selectCanRecordScreen);
@@ -359,6 +361,7 @@ export function RecordingBarWindow() {
       onScreenshotToClipboard={() => {
         takeScreenshot("clipboard");
       }}
+      pendingExportKind={pendingExportKind}
       screenshotAction={screenshotFeedback.action}
       screenshotState={screenshotFeedback.state}
       status={status}

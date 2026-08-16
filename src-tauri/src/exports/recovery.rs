@@ -184,13 +184,13 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
   } else {
     crate::recording::PrimaryRecordingKind::Screen
   };
-  #[cfg(target_os = "windows")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   let recovered_info = media_preview::recording_info(&path);
-  #[cfg(target_os = "windows")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   let (duration_ms, width, height) = recovered_info.map_or((0, 0, 0), |info| {
     (info.duration_ms, info.width, info.height)
   });
-  #[cfg(target_os = "windows")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   let recovered_camera = camera_path.map(|path| {
     let info = media_preview::recording_info(&path);
     crate::recording::CameraFinalizeInfo {
@@ -200,9 +200,9 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
       width: info.map_or(0, |value| value.width),
     }
   });
-  #[cfg(not(target_os = "windows"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   let (duration_ms, width, height) = (0, 0, 0);
-  #[cfg(not(target_os = "windows"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   let recovered_camera = camera_path.map(|path| crate::recording::CameraFinalizeInfo {
     duration_ms: 0,
     height: 0,

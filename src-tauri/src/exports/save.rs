@@ -75,6 +75,7 @@ pub async fn save_export(
   }
 
   let writing = directory.clone();
+  let export_app = app.clone();
   let progress_app = app.clone();
   let job_cancellation = Arc::clone(&cancelled);
   // The artifact travels back with an error. Saving used to take it before the
@@ -85,11 +86,11 @@ pub async fn save_export(
       std::fs::create_dir_all(&writing).map_err(|error| error.to_string())?;
 
       match &artifact {
-        ExportArtifact::Screenshot { image, .. } => {
+        ExportArtifact::Screenshot { items, .. } => {
           let path = unique_path(&writing, &stem, SCREENSHOT_EXTENSION, &|candidate| {
             candidate.exists()
           });
-          let composed = compose_screenshot(image, &screenshot_output)?;
+          let composed = compose_screenshot_workspace(&export_app, items, &screenshot_output)?;
           std::fs::write(&path, encode_png(&composed)?).map_err(|error| error.to_string())?;
           Ok(Some(path))
         }
@@ -219,6 +220,7 @@ pub async fn save_export(
               (*width, *height),
               camera_overlay,
               camera_output.drop_shadow,
+              recording_output.camera_on_top,
               (compression, resolution_scale_percent, *source_scale_percent),
               baked_cursor.map(|cursor| (cursor, cursor_effects)),
               primary_output,
@@ -379,7 +381,7 @@ pub async fn save_export(
     &app,
     cursor_effects,
     recording_preference,
-    screenshot_preference,
+    screenshot_preference.map(|output| output.canvas),
   );
   // Saving is transactional: keep the native player alive while the artifact
   // may still be restored by Cancel or an export error, then retire it only

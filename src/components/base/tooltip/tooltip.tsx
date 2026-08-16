@@ -15,7 +15,10 @@ const tooltipVariants = tv({
   base: [
     "bg-content-fg text-content m-2 rounded-sm shadow-md",
     "data-entering:animate-in data-entering:fade-in",
-    "data-exiting:animate-out data-exiting:fade-out",
+    // React Aria cannot retain an anchor after a conditional toolbar trigger
+    // unmounts. Hide that exiting overlay immediately rather than letting its
+    // fade briefly render at the viewport origin.
+    "data-exiting:invisible",
   ],
   defaultVariants: {
     size: "sm",

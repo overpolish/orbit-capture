@@ -4,17 +4,17 @@
 import { PointerEvent as ReactPointerEvent, RefObject, useRef } from "react";
 
 import {
-  CAMERA_FRAME_BASE_WIDTH_PERCENT,
   cameraOverlayGeometry,
   clamp,
   minimumCameraFrameWidth,
   OverlayRect,
   RADIUS_HANDLE_INSET,
   RADIUS_HANDLE_TRAVEL,
-  SCALE_GIZMO_DIMENSION,
-  scalePercentFromRingExtent,
-  snapCameraFramePosition,
 } from "../camera-overlay-geometry";
+import {
+  ScreenshotSnapGuide,
+  snapScreenshotFrame,
+} from "../screenshot-snapping";
 import { CameraOverlaySettings, RecordingPreviewPane } from "../types";
 
 type OverlayEdge = "bottom" | "left" | "right" | "top";
@@ -22,12 +22,11 @@ export type OverlayAction =
   | { kind: "frame" | "whole"; pointerX: number; pointerY: number }
   | {
       edges: OverlayEdge[];
-      kind: "resize";
+      kind: "resize" | "transformResize";
       pointerX: number;
       pointerY: number;
     }
-  | { kind: "radius" }
-  | { kind: "scale" };
+  | { kind: "radius" };
 
 const frameInsideCamera = (frame: OverlayRect, camera: OverlayRect) =>
   frame.x >= camera.x &&
@@ -36,6 +35,7 @@ const frameInsideCamera = (frame: OverlayRect, camera: OverlayRect) =>
   frame.y + frame.height <= camera.y + camera.height;
 
 type MoveContext = {
+  centered: boolean;
   next: CameraOverlaySettings;
   point: { x: number; y: number };
   snapPosition: boolean;
@@ -48,6 +48,7 @@ export const useCameraOverlayInteraction = ({
   onInteractionEnd,
   onInteractionStart,
   onSettingsChange,
+  onSnapGuidesChange,
   screenPane,
   settings,
 }: {
@@ -58,6 +59,10 @@ export const useCameraOverlayInteraction = ({
   onInteractionEnd?: () => void;
   onInteractionStart?: () => void;
   onSettingsChange?: (settings: CameraOverlaySettings) => void;
+  onSnapGuidesChange?: (guides: {
+    x?: ScreenshotSnapGuide;
+    y?: ScreenshotSnapGuide;
+  }) => void;
 }) => {
   const actionRef = useRef<
     { action: OverlayAction; settings: CameraOverlaySettings } | undefined
@@ -84,43 +89,32 @@ export const useCameraOverlayInteraction = ({
     action: Extract<OverlayAction, { kind: "frame" | "whole" }>,
     { next, point, snapPosition, start }: MoveContext,
   ) => {
-    const cameraCenterX = start.camera.x + start.camera.width / 2;
-    const cameraCenterY = start.camera.y + start.camera.height / 2;
     const frameOnly = action.kind === "frame";
-    const minimumX = frameOnly
-      ? Math.max(0, start.camera.x)
-      : Math.max(0, start.frame.x - cameraCenterX);
+    const minimumX = frameOnly ? start.camera.x : -start.frame.width;
     const maximumX = frameOnly
-      ? Math.min(
-          screenPane.width - start.frame.width,
-          start.camera.x + start.camera.width - start.frame.width,
-        )
-      : Math.min(
-          screenPane.width - start.frame.width,
-          start.frame.x + screenPane.width - cameraCenterX,
-        );
-    const minimumY = frameOnly
-      ? Math.max(0, start.camera.y)
-      : Math.max(0, start.frame.y - cameraCenterY);
+      ? start.camera.x + start.camera.width - start.frame.width
+      : screenPane.width;
+    const minimumY = frameOnly ? start.camera.y : -start.frame.height;
     const maximumY = frameOnly
-      ? Math.min(
-          screenPane.height - start.frame.height,
-          start.camera.y + start.camera.height - start.frame.height,
-        )
-      : Math.min(
-          screenPane.height - start.frame.height,
-          start.frame.y + screenPane.height - cameraCenterY,
-        );
+      ? start.camera.y + start.camera.height - start.frame.height
+      : screenPane.height;
     let x = clamp(point.x - action.pointerX, minimumX, maximumX);
     let y = clamp(point.y - action.pointerY, minimumY, maximumY);
     if (!frameOnly && snapPosition) {
-      const snapped = snapCameraFramePosition({
+      const bounds = mediaRef.current?.getBoundingClientRect();
+      const snapped = snapScreenshotFrame({
+        canvas: screenPane,
         frame: start.frame,
+        objects: [],
         position: { x, y },
-        screen: screenPane,
+        thresholdX: (screenPane.width / Math.max(1, bounds?.width ?? 1)) * 8,
+        thresholdY: (screenPane.height / Math.max(1, bounds?.height ?? 1)) * 8,
       });
-      x = clamp(snapped.x, minimumX, maximumX);
-      y = clamp(snapped.y, minimumY, maximumY);
+      x = clamp(snapped.position.x, minimumX, maximumX);
+      y = clamp(snapped.position.y, minimumY, maximumY);
+      onSnapGuidesChange?.(snapped.guides);
+    } else {
+      onSnapGuidesChange?.({});
     }
     const deltaX = x - start.frame.x;
     const deltaY = y - start.frame.y;
@@ -133,7 +127,7 @@ export const useCameraOverlayInteraction = ({
   };
 
   const resizeFrame = (
-    action: Extract<OverlayAction, { kind: "resize" }>,
+    action: Extract<OverlayAction, { edges: OverlayEdge[] }>,
     { next, point, start }: MoveContext,
   ) => {
     const minimumSize = Math.max(
@@ -145,20 +139,20 @@ export const useCameraOverlayInteraction = ({
     let right = left + start.frame.width;
     let bottom = top + start.frame.height;
     if (action.edges.includes("left"))
-      left = clamp(point.x, Math.max(0, start.camera.x), right - minimumSize);
+      left = clamp(point.x, start.camera.x, right - minimumSize);
     if (action.edges.includes("right"))
       right = clamp(
         point.x,
         left + minimumSize,
-        Math.min(screenPane.width, start.camera.x + start.camera.width),
+        start.camera.x + start.camera.width,
       );
     if (action.edges.includes("top"))
-      top = clamp(point.y, Math.max(0, start.camera.y), bottom - minimumSize);
+      top = clamp(point.y, start.camera.y, bottom - minimumSize);
     if (action.edges.includes("bottom"))
       bottom = clamp(
         point.y,
         top + minimumSize,
-        Math.min(screenPane.height, start.camera.y + start.camera.height),
+        start.camera.y + start.camera.height,
       );
     const frame = {
       height: bottom - top,
@@ -171,6 +165,66 @@ export const useCameraOverlayInteraction = ({
     next.frameYPercent = (top * 100) / screenPane.height;
     next.frameWidthPercent = (frame.width * 100) / screenPane.width;
     next.frameHeightPercent = (frame.height * 100) / screenPane.height;
+  };
+
+  const resizeWhole = (
+    action: Extract<OverlayAction, { edges: OverlayEdge[] }>,
+    { centered, next, point, start }: MoveContext,
+  ) => {
+    const { edges } = action;
+    const anchorX = centered
+      ? start.frame.x + start.frame.width / 2
+      : edges.includes("left")
+        ? start.frame.x + start.frame.width
+        : edges.includes("right")
+          ? start.frame.x
+          : start.frame.x + start.frame.width / 2;
+    const anchorY = centered
+      ? start.frame.y + start.frame.height / 2
+      : edges.includes("top")
+        ? start.frame.y + start.frame.height
+        : edges.includes("bottom")
+          ? start.frame.y
+          : start.frame.y + start.frame.height / 2;
+    const handleX = edges.includes("left")
+      ? start.frame.x
+      : edges.includes("right")
+        ? start.frame.x + start.frame.width
+        : start.frame.x + start.frame.width / 2;
+    const handleY = edges.includes("top")
+      ? start.frame.y
+      : edges.includes("bottom")
+        ? start.frame.y + start.frame.height
+        : start.frame.y + start.frame.height / 2;
+    const vectorX = handleX - anchorX;
+    const vectorY = handleY - anchorY;
+    const denominator = vectorX * vectorX + vectorY * vectorY;
+    const minimumScale =
+      minimumCameraFrameWidth(screenPane, start.frame) / start.frame.width;
+    const requestedScale =
+      denominator > 0
+        ? ((point.x - anchorX) * vectorX + (point.y - anchorY) * vectorY) /
+          denominator
+        : 1;
+    const scale = clamp(requestedScale, minimumScale, 8);
+    const transform = (value: number, anchor: number) =>
+      anchor + (value - anchor) * scale;
+    const cameraCenterX = start.camera.x + start.camera.width / 2;
+    const cameraCenterY = start.camera.y + start.camera.height / 2;
+    next.frameXPercent =
+      (transform(start.frame.x, anchorX) * 100) / screenPane.width;
+    next.frameYPercent =
+      (transform(start.frame.y, anchorY) * 100) / screenPane.height;
+    next.frameWidthPercent =
+      (start.frame.width * scale * 100) / screenPane.width;
+    next.frameHeightPercent =
+      (start.frame.height * scale * 100) / screenPane.height;
+    next.cameraWidthPercent =
+      (start.camera.width * scale * 100) / screenPane.width;
+    next.cameraXPercent =
+      (transform(cameraCenterX, anchorX) * 100) / screenPane.width;
+    next.cameraYPercent =
+      (transform(cameraCenterY, anchorY) * 100) / screenPane.height;
   };
 
   const move = (event: ReactPointerEvent) => {
@@ -186,6 +240,7 @@ export const useCameraOverlayInteraction = ({
     );
     const next = { ...active.settings };
     const context = {
+      centered: event.altKey,
       next,
       point,
       snapPosition: event.metaKey || event.ctrlKey,
@@ -195,7 +250,9 @@ export const useCameraOverlayInteraction = ({
       moveFrame(active.action, context);
     } else if (active.action.kind === "resize") {
       resizeFrame(active.action, context);
-    } else if (active.action.kind === "radius") {
+    } else if (active.action.kind === "transformResize") {
+      resizeWhole(active.action, context);
+    } else {
       const shortest = Math.min(start.frame.width, start.frame.height);
       const displayScale =
         (mediaRef.current?.getBoundingClientRect().width || screenPane.width) /
@@ -208,43 +265,6 @@ export const useCameraOverlayInteraction = ({
         shortest / 2,
       );
       next.radiusPercent = (radius * 100) / shortest;
-    } else {
-      const extent = Math.hypot(
-        point.x - (start.frame.x + start.frame.width / 2),
-        point.y - (start.frame.y + start.frame.height / 2),
-      );
-      const scale = scalePercentFromRingExtent(extent, SCALE_GIZMO_DIMENSION);
-      const frameCenterX = start.frame.x + start.frame.width / 2;
-      const frameCenterY = start.frame.y + start.frame.height / 2;
-      const maximumWidth = Math.min(
-        frameCenterX * 2,
-        (screenPane.width - frameCenterX) * 2,
-        (frameCenterY * 2 * start.frame.width) / start.frame.height,
-        ((screenPane.height - frameCenterY) * 2 * start.frame.width) /
-          start.frame.height,
-      );
-      const minimumWidth = minimumCameraFrameWidth(screenPane, start.frame);
-      const requestedWidth =
-        (screenPane.width * CAMERA_FRAME_BASE_WIDTH_PERCENT * scale) / 10_000;
-      const frameWidth = clamp(requestedWidth, minimumWidth, maximumWidth);
-      const scaleFactor = frameWidth / start.frame.width;
-      const frameHeight = start.frame.height * scaleFactor;
-      const cameraCenterX = start.camera.x + start.camera.width / 2;
-      const cameraCenterY = start.camera.y + start.camera.height / 2;
-      next.frameWidthPercent = (frameWidth * 100) / screenPane.width;
-      next.frameHeightPercent = (frameHeight * 100) / screenPane.height;
-      next.frameXPercent =
-        ((frameCenterX - frameWidth / 2) * 100) / screenPane.width;
-      next.frameYPercent =
-        ((frameCenterY - frameHeight / 2) * 100) / screenPane.height;
-      next.cameraWidthPercent =
-        (start.camera.width * scaleFactor * 100) / screenPane.width;
-      next.cameraXPercent =
-        (frameCenterX + (cameraCenterX - frameCenterX) * scaleFactor) *
-        (100 / screenPane.width);
-      next.cameraYPercent =
-        (frameCenterY + (cameraCenterY - frameCenterY) * scaleFactor) *
-        (100 / screenPane.height);
     }
     onSettingsChange?.(next);
   };
@@ -252,6 +272,7 @@ export const useCameraOverlayInteraction = ({
   const finish = (event: ReactPointerEvent) => {
     event.stopPropagation();
     actionRef.current = undefined;
+    onSnapGuidesChange?.({});
     onInteractionEnd?.();
     if (event.currentTarget.hasPointerCapture(event.pointerId))
       event.currentTarget.releasePointerCapture(event.pointerId);

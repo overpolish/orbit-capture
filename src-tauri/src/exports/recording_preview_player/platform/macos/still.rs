@@ -15,7 +15,7 @@ use tauri::ipc::Channel;
 use super::composition::{cursor_rgba, still_overlay};
 use super::cursor::cursor_preview;
 use super::image::frame_position;
-use super::still_decode::{pane_factor, scaled_output, DecodedFrame, PaneDecoder};
+use super::still_decode::{scaled_output, DecodedFrame, PaneDecoder};
 use crate::exports::cursor_effects::CursorOverlayCache;
 use crate::exports::recording_preview_player::{PlayerSources, RecordingPreviewPlayerEvent};
 
@@ -23,10 +23,10 @@ enum DecoderCommand {
   Seek {
     position_ms: u64,
     request_id: u64,
+    target_sizes: Vec<(u32, u32)>,
     /// A mid-gesture skim: the scrubber may land on the cheapest nearby frame
     /// instead of decoding the exact position.
     rough: bool,
-    target_sizes: Vec<(u32, u32)>,
   },
   Stop,
 }
@@ -95,34 +95,24 @@ fn run(
     else {
       break;
     };
+    // Screen and camera (and any pane rects the layout deferred to this
+    // still) reach the screen in one commit, so a canvas resize never shows
+    // one pane a display tick ahead of the other. Opened before any early
+    // `continue` so a skipped still flushes the deferred layout regardless.
+    let _batch = sources
+      .preview_surface
+      .as_ref()
+      .map(|surface| surface.present_batch());
     let composition = sources
       .composition_settings
       .as_ref()
       .and_then(|settings| settings.read().ok().map(|settings| settings.clone()));
-    let screen_factor = pane_factor(
-      &target_sizes,
-      0,
-      composition
-        .as_ref()
-        .map_or(screen.source_width, |composition| {
-          composition.recording_output.primary.width
-        }),
-    );
-    let camera_factor = camera.as_ref().map_or(1.0, |camera| {
-      pane_factor(
-        &target_sizes,
-        1,
-        composition
-          .as_ref()
-          .map_or(camera.source_width, |composition| {
-            composition.recording_output.camera.width
-          }),
-      )
-    });
-    let screen_size = screen.decode_size(screen_factor);
-    let camera_size = camera
-      .as_ref()
-      .map(|camera| camera.decode_size(camera_factor));
+    // Paused editing keeps one native-resolution source frame resident. Frame,
+    // crop and OSC gestures then only rerun the Metal composition instead of
+    // invalidating the decoder cache for every changing pane size. Live
+    // playback still uses pane-sized decode factors in `video.rs`.
+    let screen_size = screen.decode_size(1.0);
+    let camera_size = camera.as_ref().map(|camera| camera.decode_size(1.0));
     let screen_position_ms = frame_position(position_ms, sources.duration_ms);
     let camera_position_ms = camera.as_ref().zip(camera_size).map(|_| {
       frame_position(
@@ -201,6 +191,11 @@ fn run(
       continue;
     };
     let (screen_presented, camera_presented) = if let Some(composition) = &composition {
+      let screen_factor = super::still_decode::pane_factor(
+        &target_sizes,
+        0,
+        composition.recording_output.primary.width,
+      );
       let screen_output = scaled_output(&composition.recording_output.primary, screen_factor);
       // Placeholder settings below the compositor's validation floor mean the
       // webview has not sent real output dimensions yet; wait quietly.
@@ -221,6 +216,7 @@ fn run(
           .bake_camera
           .then_some(composition.camera_overlay),
         composition.recording_output.camera.drop_shadow,
+        composition.recording_output.camera_on_top,
       ) {
         Ok(value) => value,
         Err(message) => {
@@ -274,6 +270,11 @@ fn run(
           {
             return true;
           }
+          let camera_factor = super::still_decode::pane_factor(
+            &target_sizes,
+            1,
+            composition.recording_output.camera.width,
+          );
           let camera_output = scaled_output(&composition.recording_output.camera, camera_factor);
           let presented = if let Some(pixels) = camera.pixels() {
             surface.present_composed_pixels(

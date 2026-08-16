@@ -128,6 +128,9 @@ fn run_action(app: &AppHandle, action: ShortcutAction) {
   match action {
     ShortcutAction::ToggleRecordingBar => {
       if crate::recording::is_idle(app) {
+        if crate::exports::focus_pending_workspace(app) {
+          return;
+        }
         // Tauri's visibility query describes the original webview window and
         // is not authoritative after macOS converts it into an NSPanel.
         if windows::is_recording_ui_visible() {
@@ -151,7 +154,11 @@ fn run_action(app: &AppHandle, action: ShortcutAction) {
       }
     }
     ShortcutAction::StartStopRecording => match crate::recording::snapshot(app).status {
-      crate::recording::RecordingStatus::Idle => notify_frontend(app, action),
+      crate::recording::RecordingStatus::Idle => {
+        if !crate::exports::focus_pending_workspace(app) {
+          notify_frontend(app, action);
+        }
+      }
       crate::recording::RecordingStatus::Recording | crate::recording::RecordingStatus::Paused => {
         let _ = crate::recording::stop(app);
       }
@@ -161,7 +168,9 @@ fn run_action(app: &AppHandle, action: ShortcutAction) {
       crate::recording::RecordingStatus::Stopping => {}
     },
     ShortcutAction::TakeScreenshot => {
-      if crate::recording::is_idle(app) {
+      if crate::recording::is_idle(app)
+        && !crate::exports::focus_if_screenshot_workspace_blocked(app)
+      {
         notify_frontend(app, action);
       }
     }

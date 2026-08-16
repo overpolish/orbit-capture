@@ -61,6 +61,7 @@ type RecordingBarProps = {
   onRecord?: () => void;
   onScreenshot?: () => void;
   onScreenshotToClipboard?: () => void;
+  pendingExportKind?: "recording" | "screenshot" | null;
   screenshotAction?: ScreenshotAction;
   screenshotState?: ScreenshotState;
   status?: RecordingStatus;
@@ -101,6 +102,7 @@ export function RecordingBar({
   onRecord,
   onScreenshot,
   onScreenshotToClipboard,
+  pendingExportKind = null,
   screenshotAction = "export",
   screenshotState = "idle",
   status = "idle",
@@ -136,15 +138,19 @@ export function RecordingBar({
   // The bar is hidden by Rust while a recording runs; disabling it as well
   // keeps a stale window from starting a second one.
   const isRecordingActive = status !== "idle";
+  const isRecordingWorkspaceOpen = pendingExportKind === "recording";
   const isCapturingStill = screenshotState === "pending";
   const exportScreenshotState =
     screenshotAction === "export" ? screenshotState : "idle";
   const clipboardScreenshotState =
     screenshotAction === "clipboard" ? screenshotState : "idle";
-  const canScreenshot =
+  const canCaptureStill =
     isScreenCapture && !isScreenshotLocked && !isRecordingActive;
+  const canExportScreenshot = canCaptureStill && !isRecordingWorkspaceOpen;
+  const canCopyScreenshot = canCaptureStill;
   const canRecord =
     !isRecordingActive &&
+    pendingExportKind === null &&
     canStartRecording({
       hasCameraWarning,
       hasMicrophoneWarning,
@@ -291,7 +297,7 @@ export function RecordingBar({
         <Button
           aria-label="Take screenshot"
           className="group cursor-default p-1"
-          isDisabled={!canScreenshot || isCapturingStill}
+          isDisabled={!canExportScreenshot || isCapturingStill}
           onPress={onScreenshot}
           showFocus={false}
           variant="ghost"
@@ -313,7 +319,7 @@ export function RecordingBar({
         <Button
           aria-label="Copy screenshot to clipboard"
           className="group cursor-default"
-          isDisabled={!canScreenshot || isCapturingStill}
+          isDisabled={!canCopyScreenshot || isCapturingStill}
           onPress={onScreenshotToClipboard}
           showFocus={false}
           size="sm"

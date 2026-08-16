@@ -4,7 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { Region } from "../recording-sources/types";
-export type ScreenshotDestination = "export" | "clipboard" | "both";
+type ScreenshotDestination = "export" | "clipboard" | "both";
 
 export type ScreenshotTarget =
   | { kind: "region"; monitorId: number; region: Region }

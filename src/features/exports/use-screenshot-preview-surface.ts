@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { RefObject, useEffect, useLayoutEffect, useRef } from "react";
+import { RefObject, useEffect, useRef } from "react";
 
 import {
   layoutScreenshotPreviewSurface,
-  setScreenshotPreviewOutput,
   startScreenshotPreview,
   stopScreenshotPreview,
 } from "./api";
-import { ScreenshotOutputSettings } from "./screenshot-output";
+import { ScreenshotWorkspaceOutputSettings } from "./screenshot-output";
 import {
   applyBackdropMask,
   clearBackdropMasks,
@@ -29,16 +28,19 @@ export function useScreenshotPreviewSurface({
   canvasRef,
   isEnabled,
   output,
+  paneCount = 1,
+  sourceKey,
 }: {
   artifactId: number;
   canvasRef: RefObject<HTMLElement | null>;
   isEnabled: boolean;
-  output?: ScreenshotOutputSettings;
+  output?: ScreenshotWorkspaceOutputSettings;
+  paneCount?: number;
+  sourceKey?: string;
 }) {
   const sessionIdRef = useRef(0);
   const startedRef = useRef(false);
   const outputRef = useRef(output);
-  const presentationRef = useRef<Promise<void>>(Promise.resolve());
   outputRef.current = output;
 
   useEffect(() => {
@@ -50,18 +52,6 @@ export function useScreenshotPreviewSurface({
       .then(() => {
         if (disposed) return;
         startedRef.current = true;
-        const current = outputRef.current;
-        if (current) {
-          const presentation = setScreenshotPreviewOutput(
-            current,
-            sessionId,
-          ).then(
-            () => undefined,
-            () => undefined,
-          );
-          presentationRef.current = presentation;
-          void presentation;
-        }
       })
       .catch(() => undefined);
     return () => {
@@ -69,20 +59,7 @@ export function useScreenshotPreviewSurface({
       startedRef.current = false;
       void stopScreenshotPreview(sessionId).catch(() => undefined);
     };
-  }, [artifactId, isEnabled]);
-
-  useLayoutEffect(() => {
-    if (!isEnabled || !output || !startedRef.current) return;
-    const presentation = setScreenshotPreviewOutput(
-      output,
-      sessionIdRef.current,
-    ).then(
-      () => undefined,
-      () => undefined,
-    );
-    presentationRef.current = presentation;
-    void presentation;
-  }, [isEnabled, output]);
+  }, [artifactId, isEnabled, sourceKey]);
 
   useEffect(() => {
     if (!isEnabled) return;
@@ -92,24 +69,12 @@ export function useScreenshotPreviewSurface({
     let lastLayout = "";
     let pendingLayout:
       Parameters<typeof layoutScreenshotPreviewSurface>[0] | null = null;
-    const isDisposed = () => disposed;
-    const waitForLatestPresentation = async () => {
-      while (!disposed) {
-        const presentation = presentationRef.current;
-        await presentation;
-        if (presentation === presentationRef.current) return;
-      }
-    };
     const flush = () => {
       if (disposed || inFlight || !pendingLayout) return;
+      const next = pendingLayout;
+      pendingLayout = null;
       inFlight = true;
-      void (async () => {
-        await waitForLatestPresentation();
-        if (isDisposed()) return;
-        const next = pendingLayout;
-        pendingLayout = null;
-        await layoutScreenshotPreviewSurface(next);
-      })()
+      void layoutScreenshotPreviewSurface(next)
         .catch(() => undefined)
         .finally(() => {
           inFlight = false;
@@ -118,8 +83,10 @@ export function useScreenshotPreviewSurface({
     };
     const measure = () => {
       const marker = canvasRef.current;
+      const currentOutput = outputRef.current;
       if (
         startedRef.current &&
+        currentOutput &&
         marker?.isConnected &&
         marker.getBoundingClientRect().width > 0
       ) {
@@ -145,8 +112,18 @@ export function useScreenshotPreviewSurface({
             const right = Math.min(pane.x + pane.width, viewportRect.width);
             const bottom = Math.min(pane.y + pane.height, viewportRect.height);
             if (right - left >= 1 && bottom - top >= 1) {
+              const isUnclipped =
+                left === pane.x &&
+                top === pane.y &&
+                right === pane.x + pane.width &&
+                bottom === pane.y + pane.height;
               holes.push({
                 height: Math.round((bottom - top) * 100) / 100,
+                radius: isUnclipped
+                  ? (Math.min(pane.width, pane.height) *
+                      (outputRef.current?.backgroundRadiusPercent ?? 0)) /
+                    100
+                  : 0,
                 width: Math.round((right - left) * 100) / 100,
                 x:
                   Math.round(
@@ -167,6 +144,7 @@ export function useScreenshotPreviewSurface({
           };
           const scale = window.devicePixelRatio || 1;
           const nextLayout = JSON.stringify({
+            output: currentOutput,
             pane,
             scale,
             viewportSurface,
@@ -175,7 +153,11 @@ export function useScreenshotPreviewSurface({
             lastLayout = nextLayout;
             pendingLayout = {
               backdrop: effectiveBackdrop(),
-              panes: [{ index: 0, rect: pane }],
+              output: currentOutput,
+              panes: Array.from({ length: paneCount }, (_, index) => ({
+                index,
+                rect: pane,
+              })),
               scale,
               sessionId: sessionIdRef.current,
               viewport: viewportSurface,
@@ -207,5 +189,5 @@ export function useScreenshotPreviewSurface({
       );
       clearBackdropMasks();
     };
-  }, [canvasRef, isEnabled]);
+  }, [canvasRef, isEnabled, paneCount]);
 }

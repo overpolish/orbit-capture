@@ -132,7 +132,10 @@ export type ExportArtifact =
       /** Captured pixels per logical display point, multiplied by 100. */
       sourceScalePercent: number;
     })
-  | (ExportArtifactBase & { kind: "screenshot" });
+  | (ExportArtifactBase & {
+      items: { height: number; id: number; width: number }[];
+      kind: "screenshot";
+    });
 
 export type ExportSnapshot = {
   artifact: ExportArtifact | null;

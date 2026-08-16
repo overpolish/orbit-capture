@@ -63,6 +63,7 @@ pub(super) fn present_native_frame(sources: &PlayerSources, index: u32, frame: &
         });
       let composed = ComposedFrame {
         cursor,
+        foreground_only: false,
         seconds: frame.timestamp_ms as f64 / 1_000.0,
       };
       if settings.bake_camera && sources.camera_path.is_some() {
@@ -75,6 +76,7 @@ pub(super) fn present_native_frame(sources: &PlayerSources, index: u32, frame: &
             &settings.recording_output.primary,
             settings.camera_overlay,
             settings.recording_output.camera.drop_shadow,
+            settings.recording_output.camera_on_top,
             composed,
           )
           .unwrap_or(false)
@@ -341,6 +343,7 @@ pub(crate) fn composed_frame_image(
     &recording_output.primary,
     ComposedFrame {
       cursor,
+      foreground_only: false,
       seconds: frame.timestamp_ms as f64 / 1_000.0,
     },
     camera_frame
@@ -353,6 +356,7 @@ pub(crate) fn composed_frame_image(
           (camera.width, camera.height),
           geometry,
           recording_output.camera.drop_shadow,
+          recording_output.camera_on_top,
         )
       }),
   )

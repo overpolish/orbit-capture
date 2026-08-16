@@ -10,8 +10,8 @@ pub(super) const EXPORT_MP4_OUTPUT: [&str; 4] = ["-f", "mp4", "-movflags", "+fas
 pub(super) const OUTPUT_ERROR_DETAIL: usize = 400;
 
 pub fn duration_ms(path: &Path) -> Option<u64> {
-  #[cfg(target_os = "windows")]
-  if let Some(info) = super::windows::recording_info(path) {
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
+  if let Some(info) = super::recording_info(path) {
     return Some(info.duration_ms);
   }
   let output = Command::new(ffprobe_path())

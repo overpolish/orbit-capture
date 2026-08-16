@@ -27,12 +27,13 @@ struct GpuCameraOverlay {
   crop_y: u32,
   crop_width: u32,
   crop_height: u32,
-  frame_x: u32,
-  frame_y: u32,
+  frame_x: i32,
+  frame_y: i32,
   frame_width: u32,
   frame_height: u32,
   radius: u32,
   drop_shadow: u32,
+  camera_on_top: u32,
 }
 
 #[repr(C)]
@@ -128,13 +129,14 @@ fn render_gpu_video(
       let scale_x = f64::from(request.output.width) / f64::from(geometry.output_width.max(1));
       let scale_y = f64::from(request.output.height) / f64::from(geometry.output_height.max(1));
       let scaled = |value: u32, scale: f64| (f64::from(value) * scale).round() as u32;
+      let scaled_position = |value: i32, scale: f64| (f64::from(value) * scale).round() as i32;
       GpuCameraOverlay {
         crop_x: geometry.crop_x,
         crop_y: geometry.crop_y,
         crop_width: geometry.crop_width,
         crop_height: geometry.crop_height,
-        frame_x: scaled(geometry.frame_x, scale_x),
-        frame_y: scaled(geometry.frame_y, scale_y),
+        frame_x: scaled_position(geometry.frame_x, scale_x),
+        frame_y: scaled_position(geometry.frame_y, scale_y),
         frame_width: scaled(geometry.frame_width, scale_x),
         frame_height: scaled(geometry.frame_height, scale_y),
         radius: scaled(geometry.radius, scale_x.min(scale_y)),
@@ -143,6 +145,7 @@ fn render_gpu_video(
             .camera
             .is_some_and(|(_, options)| options.camera_drop_shadow),
         ),
+        camera_on_top: u32::from(request.camera_on_top),
       }
     });
   let output = c_path(path)?;

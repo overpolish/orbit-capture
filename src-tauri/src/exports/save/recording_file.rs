@@ -75,6 +75,7 @@ pub(in crate::exports) fn save_primary_recording(
       audio_layout: request.layout,
       audio_source: None,
       camera: None,
+      camera_on_top: true,
       cancelled: request.cancelled,
       cursor: None,
       cursor_effects: request.cursor_effects,

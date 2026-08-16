@@ -22,8 +22,8 @@ pub(in crate::exports) struct BakeGeometry {
   pub crop_y: u32,
   pub frame_height: u32,
   pub frame_width: u32,
-  pub frame_x: u32,
-  pub frame_y: u32,
+  pub frame_x: i32,
+  pub frame_y: i32,
   pub output_height: u32,
   pub output_width: u32,
   pub radius: u32,
@@ -94,8 +94,8 @@ pub(in crate::exports) fn bake_geometry(
     crop_y,
     frame_height,
     frame_width,
-    frame_x: frame_x.round().max(0.0) as u32,
-    frame_y: frame_y.round().max(0.0) as u32,
+    frame_x: frame_x.round() as i32,
+    frame_y: frame_y.round() as i32,
     output_height,
     output_width,
     radius: (f64::from(frame_width.min(frame_height)) * options.overlay.radius_percent / 100.0)
@@ -147,5 +147,35 @@ mod tests {
     );
     assert!(geometry.crop_width <= 1_760);
     assert!(geometry.crop_height <= 1_328);
+  }
+
+  #[test]
+  fn preserves_a_camera_frame_partly_outside_the_output() {
+    let geometry = bake_geometry(BakedVideoExportOptions {
+      camera_drop_shadow: true,
+      camera_height: 1_080,
+      camera_width: 1_920,
+      overlay: CameraOverlaySettings {
+        camera_width_percent: 40.0,
+        camera_x_percent: 0.0,
+        camera_y_percent: 50.0,
+        frame_height_percent: 30.0,
+        frame_width_percent: 40.0,
+        frame_x_percent: -20.0,
+        frame_y_percent: 35.0,
+        radius_percent: 10.0,
+      },
+      screen_height: 1_080,
+      screen_width: 1_920,
+      video: VideoExportOptions {
+        compression: 2,
+        resolution_scale_percent: 100,
+        source_scale_percent: 100,
+      },
+    })
+    .unwrap();
+
+    assert_eq!(geometry.frame_x, -384);
+    assert_eq!(geometry.frame_y, 378);
   }
 }

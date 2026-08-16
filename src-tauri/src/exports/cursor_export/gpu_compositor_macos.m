@@ -37,12 +37,13 @@ typedef struct {
   uint32_t crop_y;
   uint32_t crop_width;
   uint32_t crop_height;
-  uint32_t frame_x;
-  uint32_t frame_y;
+  int32_t frame_x;
+  int32_t frame_y;
   uint32_t frame_width;
   uint32_t frame_height;
   uint32_t radius;
   uint32_t drop_shadow;
+  uint32_t camera_on_top;
 } ScreenwideCameraOverlay;
 
 typedef struct {
@@ -50,8 +51,8 @@ typedef struct {
   uint32_t crop_y;
   uint32_t crop_width;
   uint32_t crop_height;
-  uint32_t frame_x;
-  uint32_t frame_y;
+  int32_t frame_x;
+  int32_t frame_y;
   uint32_t frame_width;
   uint32_t frame_height;
   uint32_t radius;
@@ -84,8 +85,8 @@ struct CameraUniforms {
   uint crop_y;
   uint crop_width;
   uint crop_height;
-  uint frame_x;
-  uint frame_y;
+  int frame_x;
+  int frame_y;
   uint frame_width;
   uint frame_height;
   uint radius;
@@ -115,6 +116,7 @@ struct CanvasUniforms {
   packed_float4 mesh_colors[5];
   uint clip_cursor_at_video_edge;
   uint transparent_background;
+  uint foreground_only;
 };
 
 struct StillOverlayUniforms {
@@ -128,14 +130,15 @@ struct StillOverlayUniforms {
   uint camera_crop_y;
   uint camera_crop_width;
   uint camera_crop_height;
-  uint camera_frame_x;
-  uint camera_frame_y;
+  int camera_frame_x;
+  int camera_frame_y;
   uint camera_frame_width;
   uint camera_frame_height;
   uint camera_radius;
   uint camera_source_width;
   uint camera_source_height;
   uint camera_drop_shadow;
+  uint camera_on_top;
 };
 
 static float hash(float2 position, uint seed) {
@@ -328,6 +331,7 @@ static float4 canvas_rgba_pixel(const device uchar4 *source,
   float3 background = u.mesh_enabled != 0
     ? mesh_pixel(point, dimensions, u, seconds)
     : u.background_color.rgb;
+  float background_alpha = u.foreground_only != 0 ? 0.0 : 1.0;
   float2 crop_point = point - float2(u.crop_x, u.crop_y);
   float2 crop_size = float2(u.crop_width, u.crop_height);
   float2 crop_origin = float2(u.crop_x, u.crop_y);
@@ -344,18 +348,57 @@ static float4 canvas_rgba_pixel(const device uchar4 *source,
       float shadow = visible_foreground_shadow(
         point, crop_origin, crop_size, float(u.radius),
         image_origin, image_size, sigma, 0.14);
-      background *= 1.0 - shadow * (1.0 - image_coverage);
+      if (u.foreground_only != 0) {
+        background = float3(0.0);
+        background_alpha = shadow * (1.0 - image_coverage);
+      } else {
+        background *= 1.0 - shadow * (1.0 - image_coverage);
+      }
     }
   }
-  float3 colour = background;
+  float4 result = float4(background * background_alpha, background_alpha);
   // The source only exists inside its placed rect: a crop reaching past it
   // (a 4:5 or 9:16 canvas around a wide capture) must show background there,
   // not clamp-to-edge smears of the outermost source pixels.
   if (image_coverage > 0.0) {
     float4 video = rgba_source_pixel(source, source_width, source_height, point, u);
-    colour = mix(colour, video.rgb, image_coverage);
+    float source_alpha = video.a * image_coverage;
+    result.rgb = video.rgb * source_alpha + result.rgb * (1.0 - source_alpha);
+    result.a = source_alpha + result.a * (1.0 - source_alpha);
   }
-  return float4(colour, 1.0);
+  return result;
+}
+
+static float4 overlay_canvas_foreground_rgba(
+    float4 result, const device uchar4 *source, uint source_width,
+    uint source_height, float2 point, float2 dimensions,
+    constant CanvasUniforms &u) {
+  float2 crop_origin = float2(u.crop_x, u.crop_y);
+  float2 crop_size = float2(u.crop_width, u.crop_height);
+  float2 image_origin = float2(u.image_x, u.image_y);
+  float2 image_size = float2(u.image_width, u.image_height);
+  float crop_coverage = rounded_coverage(
+    point - crop_origin, crop_size, float(u.radius));
+  float image_coverage = crop_coverage * rounded_coverage(
+    point - image_origin, image_size, 0.0);
+  if (u.drop_shadow != 0) {
+    float sigma = visible_foreground_sigma(
+      crop_origin, crop_size, image_origin, image_size, dimensions);
+    if (sigma > 1.0) {
+      float shadow = visible_foreground_shadow(
+        point, crop_origin, crop_size, float(u.radius), image_origin,
+        image_size, sigma, 0.14);
+      result.rgb *= 1.0 - shadow * (1.0 - image_coverage);
+    }
+  }
+  if (image_coverage > 0.0) {
+    float4 video = rgba_source_pixel(
+      source, source_width, source_height, point, u);
+    float source_alpha = video.a * image_coverage;
+    result.rgb = video.rgb * source_alpha + result.rgb * (1.0 - source_alpha);
+    result.a = source_alpha + result.a * (1.0 - source_alpha);
+  }
+  return result;
 }
 
 kernel void compose_canvas_rgba(
@@ -422,10 +465,37 @@ kernel void compose_canvas_rgba(
       camera_pixel.y * overlay.camera_source_width + camera_pixel.x]) / 255.0;
     rgba = mix(rgba, camera_rgba, camera_coverage * camera_rgba.a);
   }
+  if (overlay.camera_frame_width > 0 && overlay.camera_on_top == 0) {
+    rgba = overlay_canvas_foreground_rgba(
+      rgba, source, source_dimensions.x, source_dimensions.y,
+      float2(gid) + 0.5, float2(dimensions), u);
+    if (overlay.cursor_width > 0 && cursor_point.x >= 0 && cursor_point.y >= 0 &&
+        cursor_point.x < int(overlay.cursor_width) &&
+        cursor_point.y < int(overlay.cursor_height)) {
+      bool cursor_visible = true;
+      if (u.clip_cursor_at_video_edge != 0) {
+        float2 crop_point = float2(gid) + 0.5 - float2(u.crop_x, u.crop_y);
+        float2 crop_size = float2(u.crop_width, u.crop_height);
+        cursor_visible = all(crop_point >= 0.0) && all(crop_point < crop_size) &&
+          rounded_pixel_visible(crop_point, crop_size, float(u.radius));
+      }
+      if (cursor_visible) {
+        uint2 cursor_source = min(uint2(
+          float2(cursor_point) / float2(overlay.cursor_width, overlay.cursor_height) *
+          float2(overlay.cursor_source_width, overlay.cursor_source_height)),
+          uint2(overlay.cursor_source_width - 1, overlay.cursor_source_height - 1));
+        float4 cursor_pixel = float4(cursor[
+          cursor_source.y * overlay.cursor_source_width + cursor_source.x]) / 255.0;
+        rgba = mix(rgba, cursor_pixel, cursor_pixel.a);
+      }
+    }
+  }
   float canvas_coverage = rounded_coverage(
     float2(gid) + 0.5, float2(dimensions), float(u.background_radius));
-  rgba.rgb = output_dither(rgba.rgb, float2(gid)) * canvas_coverage;
-  rgba.a = u.transparent_background != 0 ? canvas_coverage : 1.0;
+  if (u.foreground_only == 0) rgba.rgb = output_dither(rgba.rgb, float2(gid));
+  rgba.rgb *= canvas_coverage;
+  rgba.a = u.foreground_only != 0 || u.transparent_background != 0
+    ? rgba.a * canvas_coverage : 1.0;
   output[gid.y * dimensions.x + gid.x] = uchar4(
     clamp(rgba, 0.0, 1.0) * 255.0 + 0.5);
 }
@@ -496,10 +566,37 @@ kernel void present_canvas_rgba(
       camera_pixel.y * overlay.camera_source_width + camera_pixel.x]) / 255.0;
     rgba = mix(rgba, camera_rgba, camera_coverage * camera_rgba.a);
   }
+  if (overlay.camera_frame_width > 0 && overlay.camera_on_top == 0) {
+    rgba = overlay_canvas_foreground_rgba(
+      rgba, source, source_dimensions.x, source_dimensions.y, point,
+      canvas_dimensions, u);
+    if (overlay.cursor_width > 0 && cursor_point.x >= 0 && cursor_point.y >= 0 &&
+        cursor_point.x < int(overlay.cursor_width) &&
+        cursor_point.y < int(overlay.cursor_height)) {
+      bool cursor_visible = true;
+      if (u.clip_cursor_at_video_edge != 0) {
+        float2 crop_point = point - float2(u.crop_x, u.crop_y);
+        float2 crop_size = float2(u.crop_width, u.crop_height);
+        cursor_visible = all(crop_point >= 0.0) && all(crop_point < crop_size) &&
+          rounded_pixel_visible(crop_point, crop_size, float(u.radius));
+      }
+      if (cursor_visible) {
+        uint2 cursor_source = min(uint2(
+          float2(cursor_point) / float2(overlay.cursor_width, overlay.cursor_height) *
+          float2(overlay.cursor_source_width, overlay.cursor_source_height)),
+          uint2(overlay.cursor_source_width - 1, overlay.cursor_source_height - 1));
+        float4 cursor_pixel = float4(cursor[
+          cursor_source.y * overlay.cursor_source_width + cursor_source.x]) / 255.0;
+        rgba = mix(rgba, cursor_pixel, cursor_pixel.a);
+      }
+    }
+  }
   float canvas_coverage = rounded_coverage(
     point, canvas_dimensions, float(u.background_radius));
-  rgba.rgb = output_dither(rgba.rgb, float2(gid)) * canvas_coverage;
-  rgba.a = u.transparent_background != 0 ? canvas_coverage : 1.0;
+  if (u.foreground_only == 0) rgba.rgb = output_dither(rgba.rgb, float2(gid));
+  rgba.rgb *= canvas_coverage;
+  rgba.a = u.foreground_only != 0 || u.transparent_background != 0
+    ? rgba.a * canvas_coverage : 1.0;
   output.write(clamp(rgba, 0.0, 1.0), gid);
 }
 
@@ -581,6 +678,91 @@ kernel void compose_canvas_chroma(
     0.5 + dot(rgb, float3(0.439216, -0.398942, -0.040274)), 0.0, 1.0), gid);
 }
 
+kernel void overlay_screen_luma(
+    texture2d<float, access::sample> source_y [[texture(0)]],
+    texture2d<float, access::sample> source_uv [[texture(1)]],
+    texture2d<float, access::read_write> luma [[texture(2)]],
+    constant CanvasUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  uint2 dimensions(luma.get_width(), luma.get_height());
+  if (any(gid >= dimensions)) return;
+  float2 point = float2(gid) + 0.5;
+  float2 crop_origin = float2(u.crop_x, u.crop_y);
+  float2 crop_size = float2(u.crop_width, u.crop_height);
+  float2 image_origin = float2(u.image_x, u.image_y);
+  float2 image_size = float2(u.image_width, u.image_height);
+  float coverage = rounded_coverage(point - crop_origin, crop_size, float(u.radius)) *
+    rounded_coverage(point - image_origin, image_size, 0.0);
+  float existing = luma.read(gid).r;
+  if (u.drop_shadow != 0) {
+    float sigma = visible_foreground_sigma(
+      crop_origin, crop_size, image_origin, image_size, float2(dimensions));
+    if (sigma > 1.0) {
+      float shadow = visible_foreground_shadow(
+        point, crop_origin, crop_size, float(u.radius), image_origin,
+        image_size, sigma, 0.14);
+      existing = mix(existing, 16.0 / 255.0, shadow * (1.0 - coverage));
+    }
+  }
+  if (coverage > 0.0) {
+    float3 rgb = source_pixel(source_y, source_uv, point, u);
+    float value = 16.0 / 255.0 + dot(rgb, float3(0.182586, 0.614231, 0.062007));
+    existing = mix(existing, value, coverage);
+  }
+  luma.write(existing, gid);
+}
+
+kernel void overlay_screen_chroma(
+    texture2d<float, access::sample> source_y [[texture(0)]],
+    texture2d<float, access::sample> source_uv [[texture(1)]],
+    texture2d<float, access::read_write> chroma [[texture(2)]],
+    constant CanvasUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  uint2 dimensions(chroma.get_width(), chroma.get_height());
+  if (any(gid >= dimensions)) return;
+  float2 output_dimensions = float2(dimensions * 2);
+  float2 crop_origin = float2(u.crop_x, u.crop_y);
+  float2 crop_size = float2(u.crop_width, u.crop_height);
+  float2 image_origin = float2(u.image_x, u.image_y);
+  float2 image_size = float2(u.image_width, u.image_height);
+  float3 rgb_sum = 0.0;
+  float coverage_sum = 0.0;
+  float shadow_sum = 0.0;
+  for (uint y = 0; y < 2; ++y) {
+    for (uint x = 0; x < 2; ++x) {
+      float2 point = float2(gid * 2 + uint2(x, y)) + 0.5;
+      float coverage = rounded_coverage(
+        point - crop_origin, crop_size, float(u.radius)) *
+        rounded_coverage(point - image_origin, image_size, 0.0);
+      if (u.drop_shadow != 0) {
+        float sigma = visible_foreground_sigma(
+          crop_origin, crop_size, image_origin, image_size, output_dimensions);
+        if (sigma > 1.0) {
+          shadow_sum += visible_foreground_shadow(
+            point, crop_origin, crop_size, float(u.radius), image_origin,
+            image_size, sigma, 0.14) * (1.0 - coverage);
+        }
+      }
+      if (coverage > 0.0) {
+        rgb_sum += source_pixel(source_y, source_uv, point, u) * coverage;
+        coverage_sum += coverage;
+      }
+    }
+  }
+  float2 existing = chroma.read(gid).rg;
+  float shadow = shadow_sum * 0.25;
+  if (shadow > 0.0) existing = mix(existing, float2(0.5), shadow);
+  float coverage = coverage_sum * 0.25;
+  if (coverage > 0.0) {
+    float3 rgb = rgb_sum / max(coverage_sum, 0.0001);
+    float2 value = float2(
+      0.5 + dot(rgb, float3(-0.100644, -0.338572, 0.439216)),
+      0.5 + dot(rgb, float3(0.439216, -0.398942, -0.040274)));
+    existing = mix(existing, value, coverage);
+  }
+  chroma.write(float4(existing, 0.0, 1.0), gid);
+}
+
 static float4 camera_pixel(texture2d<float, access::sample> camera,
                            float2 point, constant CameraUniforms &u) {
   float coverage = rounded_coverage(
@@ -594,6 +776,22 @@ static float4 camera_pixel(texture2d<float, access::sample> camera,
   return float4(camera.sample(linear_sampler,
                               source / float2(u.source_width, u.source_height)).rgb,
                 coverage);
+}
+
+kernel void alpha_composite_rgba(
+    const device uchar4 *base [[buffer(0)]],
+    const device uchar4 *overlay [[buffer(1)]],
+    device uchar4 *output [[buffer(2)]],
+    uint gid [[thread_position_in_grid]],
+    uint count [[threads_per_grid]]) {
+  if (gid >= count) return;
+  float4 below = float4(base[gid]) / 255.0;
+  float4 above = float4(overlay[gid]) / 255.0;
+  float inverse = 1.0 - above.a;
+  float4 result = float4(
+    above.rgb + below.rgb * inverse,
+    above.a + below.a * inverse);
+  output[gid] = uchar4(clamp(result, 0.0, 1.0) * 255.0 + 0.5);
 }
 
 kernel void overlay_camera_luma(
@@ -995,6 +1193,14 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
         [device newComputePipelineStateWithFunction:
                     [library newFunctionWithName:@"compose_canvas_chroma"]
                                               error:&error];
+    id<MTLComputePipelineState> screen_luma_pipeline =
+        [device newComputePipelineStateWithFunction:
+                    [library newFunctionWithName:@"overlay_screen_luma"]
+                                              error:&error];
+    id<MTLComputePipelineState> screen_chroma_pipeline =
+        [device newComputePipelineStateWithFunction:
+                    [library newFunctionWithName:@"overlay_screen_chroma"]
+                                              error:&error];
     id<MTLCommandQueue> queue = [device newCommandQueue];
     CVMetalTextureCacheRef texture_cache = NULL;
     CVMetalTextureCacheCreate(kCFAllocatorDefault, NULL, device, NULL,
@@ -1003,6 +1209,7 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
         chroma_pipeline == nil || camera_luma_pipeline == nil ||
         camera_chroma_pipeline == nil || queue == nil ||
         canvas_luma_pipeline == nil || canvas_chroma_pipeline == nil ||
+        screen_luma_pipeline == nil || screen_chroma_pipeline == nil ||
         texture_cache == NULL)
       return fail(error_text, error_capacity,
                   error.localizedDescription
@@ -1180,6 +1387,7 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
           [compute endEncoding];
         }
         CVMetalTextureRef camera_ref = NULL;
+        CVMetalTextureRef cursor_top_ref = NULL;
         if (camera_sample != NULL && camera_overlay != NULL) {
           CVPixelBufferRef camera_pixels =
               CMSampleBufferGetImageBuffer(camera_sample);
@@ -1227,6 +1435,75 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
               threadsPerThreadgroup:camera_group];
           [camera_compute endEncoding];
         }
+        if (camera_sample != NULL && camera_overlay != NULL &&
+            camera_overlay->camera_on_top == 0) {
+          MTLSize screen_group = MTLSizeMake(16, 16, 1);
+          id<MTLComputeCommandEncoder> screen_compute =
+              [command computeCommandEncoder];
+          [screen_compute setComputePipelineState:screen_luma_pipeline];
+          [screen_compute setTexture:source_y atIndex:0];
+          [screen_compute setTexture:source_uv atIndex:1];
+          [screen_compute setTexture:destination_y atIndex:2];
+          [screen_compute setBytes:canvas length:sizeof(*canvas) atIndex:0];
+          [screen_compute dispatchThreads:MTLSizeMake(y_width, y_height, 1)
+                       threadsPerThreadgroup:screen_group];
+          [screen_compute endEncoding];
+          screen_compute = [command computeCommandEncoder];
+          [screen_compute setComputePipelineState:screen_chroma_pipeline];
+          [screen_compute setTexture:source_y atIndex:0];
+          [screen_compute setTexture:source_uv atIndex:1];
+          [screen_compute setTexture:destination_uv atIndex:2];
+          [screen_compute setBytes:canvas length:sizeof(*canvas) atIndex:0];
+          [screen_compute dispatchThreads:MTLSizeMake(uv_width, uv_height, 1)
+                       threadsPerThreadgroup:screen_group];
+          [screen_compute endEncoding];
+
+          // Cursor belongs to the screen layer. Reapply it after the screen
+          // when the camera has been sent behind that layer.
+          if (cursor_sample != NULL) {
+            CVPixelBufferRef cursor_pixels =
+                CMSampleBufferGetImageBuffer(cursor_sample);
+            size_t cursor_width = CVPixelBufferGetWidth(cursor_pixels);
+            size_t cursor_height = CVPixelBufferGetHeight(cursor_pixels);
+            id<MTLTexture> cursor_texture =
+                texture(texture_cache, cursor_pixels, MTLPixelFormatBGRA8Unorm,
+                        cursor_width, cursor_height, 0, &cursor_top_ref);
+            ScreenwideCursorPosition position =
+                position_at(positions, &position_index, cursor_frame);
+            ScreenwideOverlayUniforms uniforms = {
+                position.x,
+                position.y,
+                (uint32_t)cursor_width,
+                (uint32_t)cursor_height,
+                output_width,
+                output_height,
+                canvas->crop_x,
+                canvas->crop_y,
+                canvas->crop_width,
+                canvas->crop_height,
+                canvas->radius,
+                canvas->clip_cursor_at_video_edge,
+            };
+            id<MTLComputeCommandEncoder> cursor_compute =
+                [command computeCommandEncoder];
+            [cursor_compute setComputePipelineState:luma_pipeline];
+            [cursor_compute setTexture:cursor_texture atIndex:0];
+            [cursor_compute setTexture:destination_y atIndex:1];
+            [cursor_compute setBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+            [cursor_compute dispatchThreads:MTLSizeMake(cursor_width, cursor_height, 1)
+                         threadsPerThreadgroup:screen_group];
+            [cursor_compute endEncoding];
+            cursor_compute = [command computeCommandEncoder];
+            [cursor_compute setComputePipelineState:chroma_pipeline];
+            [cursor_compute setTexture:cursor_texture atIndex:0];
+            [cursor_compute setTexture:destination_uv atIndex:1];
+            [cursor_compute setBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+            [cursor_compute dispatchThreads:MTLSizeMake((cursor_width + 1) / 2,
+                                                        (cursor_height + 1) / 2, 1)
+                         threadsPerThreadgroup:screen_group];
+            [cursor_compute endEncoding];
+          }
+        }
         [command commit];
         [command waitUntilCompleted];
         if (!primed && command.status != MTLCommandBufferStatusError) {
@@ -1259,6 +1536,8 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
           CFRelease(cursor_ref);
         if (camera_ref != NULL)
           CFRelease(camera_ref);
+        if (cursor_top_ref != NULL)
+          CFRelease(cursor_top_ref);
         CFRelease(source_y_ref);
         CFRelease(source_uv_ref);
         CFRelease(destination_y_ref);
@@ -1420,6 +1699,73 @@ int screenwide_gpu_composite_still(const uint8_t *source_rgba,
   }
 }
 
+int screenwide_gpu_alpha_composite(const uint8_t *base_rgba,
+                                   const uint8_t *overlay_rgba,
+                                   uint32_t width,
+                                   uint32_t height,
+                                   uint8_t *output_rgba,
+                                   char *error_text,
+                                   size_t error_capacity) {
+  @autoreleasepool {
+    if (base_rgba == NULL || overlay_rgba == NULL || output_rgba == NULL ||
+        width == 0 || height == 0) {
+      return fail(error_text, error_capacity,
+                  @"The GPU layer compositor received invalid pixels");
+    }
+    static id<MTLDevice> device;
+    static id<MTLComputePipelineState> pipeline;
+    static id<MTLCommandQueue> queue;
+    static NSString *initialization_error;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+      NSError *error = nil;
+      device = MTLCreateSystemDefaultDevice();
+      id<MTLLibrary> library = [device newLibraryWithSource:shader_source
+                                                    options:nil
+                                                      error:&error];
+      id<MTLFunction> function =
+          [library newFunctionWithName:@"alpha_composite_rgba"];
+      pipeline = [device newComputePipelineStateWithFunction:function error:&error];
+      queue = [device newCommandQueue];
+      initialization_error = error.localizedDescription;
+    });
+    if (device == nil || pipeline == nil || queue == nil) {
+      return fail(error_text, error_capacity,
+                  initialization_error ?:
+                    @"The Metal layer compositor could not be created");
+    }
+    NSUInteger pixel_count = (NSUInteger)width * height;
+    NSUInteger byte_length = pixel_count * 4;
+    id<MTLBuffer> base = [device newBufferWithBytes:base_rgba
+                                             length:byte_length
+                                            options:MTLResourceStorageModeShared];
+    id<MTLBuffer> overlay = [device newBufferWithBytes:overlay_rgba
+                                                length:byte_length
+                                               options:MTLResourceStorageModeShared];
+    id<MTLBuffer> output = [device newBufferWithLength:byte_length
+                                               options:MTLResourceStorageModeShared];
+    id<MTLCommandBuffer> commands = [queue commandBuffer];
+    id<MTLComputeCommandEncoder> encoder = [commands computeCommandEncoder];
+    [encoder setComputePipelineState:pipeline];
+    [encoder setBuffer:base offset:0 atIndex:0];
+    [encoder setBuffer:overlay offset:0 atIndex:1];
+    [encoder setBuffer:output offset:0 atIndex:2];
+    NSUInteger group_width = MIN(pipeline.threadExecutionWidth, pixel_count);
+    [encoder dispatchThreads:MTLSizeMake(pixel_count, 1, 1)
+        threadsPerThreadgroup:MTLSizeMake(MAX(group_width, (NSUInteger)1), 1, 1)];
+    [encoder endEncoding];
+    [commands commit];
+    [commands waitUntilCompleted];
+    if (commands.status == MTLCommandBufferStatusError) {
+      return fail(error_text, error_capacity,
+                  commands.error.localizedDescription ?:
+                    @"The Metal layer compositor failed");
+    }
+    memcpy(output_rgba, output.contents, byte_length);
+    return 1;
+  }
+}
+
 @interface ScreenwideStillPresenter : NSObject
 @property(nonatomic, strong) id<MTLDevice> device;
 @property(nonatomic, strong) id<MTLCommandQueue> queue;
@@ -1504,9 +1850,10 @@ int screenwide_gpu_still_presenter_present_pixels(
     void *source_pixels_handle, const ScreenwideCanvas *canvas, double seconds,
     const uint8_t *cursor_rgba, const uint8_t *camera_rgba,
     void *camera_pixels_handle,
-    const ScreenwideStillOverlay *overlay) {
+    const ScreenwideStillOverlay *overlay,
+    ScreenwidePresentBlock present) {
   if (handle == NULL || metal_layer == NULL || source_pixels_handle == NULL ||
-      canvas == NULL) return 0;
+      canvas == NULL || present == NULL) return 0;
   @autoreleasepool {
     ScreenwideStillPresenter *presenter = (__bridge ScreenwideStillPresenter *)handle;
     CAMetalLayer *layer = (__bridge CAMetalLayer *)metal_layer;
@@ -1579,12 +1926,11 @@ int screenwide_gpu_still_presenter_present_pixels(
       presenter.pipeline.maxTotalThreadsPerThreadgroup / MAX(width, (NSUInteger)1)), grid.height);
     [encoder dispatchThreads:grid threadsPerThreadgroup:MTLSizeMake(width, height, 1)];
     [encoder endEncoding];
-    [command presentDrawable:drawable];
     [command addCompletedHandler:^(__unused id<MTLCommandBuffer> completed) {
       if (source_reference != NULL) CFRelease(source_reference);
       if (camera_reference != NULL) CFRelease(camera_reference);
     }];
-    [command commit];
+    present((__bridge void *)command, (__bridge void *)drawable);
     return 1;
   }
 }
@@ -1593,9 +1939,11 @@ int screenwide_gpu_still_presenter_present(
     void *handle, void *metal_layer, uint64_t source_token,
     const uint8_t *source_rgba, uint32_t source_width, uint32_t source_height,
     const ScreenwideCanvas *canvas, double seconds, const uint8_t *cursor_rgba,
-    const uint8_t *camera_rgba, const ScreenwideStillOverlay *overlay) {
+    const uint8_t *camera_rgba, const ScreenwideStillOverlay *overlay,
+    ScreenwidePresentBlock present) {
   if (handle == NULL || metal_layer == NULL || source_rgba == NULL ||
-      canvas == NULL || source_width == 0 || source_height == 0) return 0;
+      canvas == NULL || source_width == 0 || source_height == 0 ||
+      present == NULL) return 0;
   @autoreleasepool {
     ScreenwideStillPresenter *presenter = (__bridge ScreenwideStillPresenter *)handle;
     CAMetalLayer *layer = (__bridge CAMetalLayer *)metal_layer;
@@ -1645,8 +1993,7 @@ int screenwide_gpu_still_presenter_present(
       presenter.pipeline.maxTotalThreadsPerThreadgroup / MAX(width, (NSUInteger)1)), grid.height);
     [encoder dispatchThreads:grid threadsPerThreadgroup:MTLSizeMake(width, height, 1)];
     [encoder endEncoding];
-    [command presentDrawable:drawable];
-    [command commit];
+    present((__bridge void *)command, (__bridge void *)drawable);
     return 1;
   }
 }

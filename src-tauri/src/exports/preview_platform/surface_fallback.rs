@@ -41,7 +41,7 @@ impl RecordingPreviewSurface {
 
   pub(crate) fn set_scale(&self, _scale: f64) {}
 
-  pub(crate) fn layout(&self, _index: u32, _rect: PreviewSurfaceRect) {}
+  pub(crate) fn layout(&self, _index: u32, _rect: PreviewSurfaceRect, _defer_resize: bool) {}
 
   pub(crate) fn present(&self, _index: u32, _image: &CapturedImage) -> bool {
     false
@@ -59,6 +59,17 @@ impl RecordingPreviewSurface {
     _camera: Option<&CapturedImage>,
     _overlay: Option<&StillOverlay>,
     _clip_cursor_at_video_edge: bool,
+  ) -> Result<bool, String> {
+    Ok(false)
+  }
+
+  pub(crate) fn present_screenshot_layer(
+    &self,
+    _index: u32,
+    _source_token: u64,
+    _source: &CapturedImage,
+    _settings: &ScreenshotOutputSettings,
+    _foreground_only: bool,
   ) -> Result<bool, String> {
     Ok(false)
   }
@@ -81,7 +92,16 @@ impl RecordingPreviewSurface {
     Ok(false)
   }
 
+  pub(crate) fn present_batch(&self) -> PresentBatch<'_> {
+    PresentBatch { _surface: self }
+  }
+
   pub(crate) fn finish_layout(&self) {}
 
   pub(crate) fn hide(&self) {}
+}
+
+/// Presents are already atomic per pane here; the guard only mirrors macOS.
+pub(crate) struct PresentBatch<'a> {
+  _surface: &'a RecordingPreviewSurface,
 }

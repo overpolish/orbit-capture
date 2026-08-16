@@ -10,15 +10,10 @@ use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
+use super::RecordingInfo;
+
 const HUNDRED_NS_PER_MS: u64 = 10_000;
 const VIDEO_STREAM: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
-
-#[derive(Clone, Copy, Debug)]
-pub(in crate::exports) struct RecordingInfo {
-  pub duration_ms: u64,
-  pub height: u32,
-  pub width: u32,
-}
 
 struct Runtime {
   uninitialize_com: bool,

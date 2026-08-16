@@ -315,6 +315,7 @@ pub(super) fn spawn(
             .bake_camera
             .then_some(composition.camera_overlay),
           composition.recording_output.camera.drop_shadow,
+          composition.recording_output.camera_on_top,
           cursor_settings.clip_at_video_edge,
         ) {
           Ok(frame) => frame,
@@ -336,6 +337,7 @@ pub(super) fn spawn(
               None,
               None,
               false,
+              true,
               false,
             )
             .ok()

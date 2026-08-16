@@ -142,7 +142,7 @@ export function useRecordingExportEstimate({
         includePrimaryVideo,
         recordingOutput,
         resolutionScalePercent,
-        screenshotOutput: defaultScreenshotOutput(1, 1),
+        screenshotOutput: { ...defaultScreenshotOutput(1, 1), items: [] },
       })
         .then((bytes) => {
           if (disposed) return;

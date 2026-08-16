@@ -250,6 +250,7 @@ fn render_video(
           frame.subresource,
           camera_geometry.expect("camera geometry exists with camera options"),
           options.camera_drop_shadow,
+          request.camera_on_top,
         )
       })
     });
@@ -259,6 +260,7 @@ fn render_video(
       request.output,
       ComposedFrame {
         cursor: baked_cursor,
+        foreground_only: false,
         seconds: position_ms as f64 / 1_000.0,
       },
       camera_frame,

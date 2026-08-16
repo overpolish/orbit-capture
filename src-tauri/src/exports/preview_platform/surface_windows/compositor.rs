@@ -12,12 +12,13 @@ use windows::{
   Win32::Graphics::{
     Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
     Direct3D11::{
-      ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView,
-      ID3D11Resource, ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D,
-      ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_SHADER_RESOURCE,
-      D3D11_BUFFER_DESC, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_SAMPLER_DESC,
-      D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE2D_DESC, D3D11_TEXTURE_ADDRESS_CLAMP,
-      D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
+      ID3D11BlendState, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader,
+      ID3D11RenderTargetView, ID3D11Resource, ID3D11SamplerState, ID3D11ShaderResourceView,
+      ID3D11Texture2D, ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_SHADER_RESOURCE,
+      D3D11_BLEND_DESC, D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD,
+      D3D11_BUFFER_DESC, D3D11_COLOR_WRITE_ENABLE_ALL, D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+      D3D11_RENDER_TARGET_BLEND_DESC, D3D11_SAMPLER_DESC, D3D11_SUBRESOURCE_DATA,
+      D3D11_TEXTURE2D_DESC, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
     },
     Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC},
     Gdi::{
@@ -35,7 +36,6 @@ use windows::{
   },
 };
 
-use crate::exports::cursor_effects::GpuCursor;
 use crate::exports::media_preview::BakeGeometry;
 use crate::screenshots::{
   output_placement, parse_hex_colour, validate_mesh, ScreenshotOutputSettings,
@@ -57,7 +57,7 @@ cbuffer Canvas : register(b0) {
   float4 cursor_blur; // source-space frame delta x/y
   float4 camera_frame; // output-space x/y/width/height
   float4 camera_crop; // camera source-space x/y/width/height
-  float4 camera_effects; // radius, enabled, shadow sigma, reserved
+  float4 camera_effects; // radius, enabled, shadow sigma, camera on top
   float4 native_cursor_hotspots[8]; // normalized atlas hotspot x/y
   uint4 options; // seed, mesh enabled, point count, shadow enabled
   uint4 cursor_options; // artwork, enabled, clip to video, reserved
@@ -177,12 +177,38 @@ float4 vs_main(uint id : SV_VertexID) : SV_Position {
   float2 position = float2((id << 1) & 2, id & 2);
   return float4(position * float2(2, -2) + float2(-1, 1), 0, 1);
 }
+float4 camera_layer(float4 result, float2 pixel) {
+  if (camera_effects.y == 0.0) return result;
+  float camera_alpha = rounded_coverage(pixel, camera_frame, camera_effects.x);
+  if (camera_effects.z > 1.0) {
+    float2 shadow_pixel = pixel - float2(0, camera_effects.z * 0.35);
+    float distance = max(rounded_distance(
+      shadow_pixel, camera_frame, camera_effects.x), 0.0);
+    float shadow = (36.0 / 255.0) * exp(
+      -0.5 * distance * distance / (camera_effects.z * camera_effects.z));
+    result.rgb *= 1.0 - shadow * (1.0 - camera_alpha);
+  }
+  float2 camera_local = (pixel - camera_frame.xy) / camera_frame.zw;
+  if (camera_alpha > 0.0 && all(camera_local >= 0.0) && all(camera_local <= 1.0)) {
+    float2 camera_source_pixel = camera_crop.xy + camera_local * camera_crop.zw;
+    uint camera_width, camera_height;
+    camera_image.GetDimensions(camera_width, camera_height);
+    float2 camera_uv = camera_source_pixel / float2(camera_width, camera_height);
+    float4 camera = camera_image.Sample(linear_sampler, camera_uv);
+    result.rgb = lerp(result.rgb, camera.rgb, camera.a * camera_alpha);
+    result.a = camera.a * camera_alpha + result.a * (1.0 - camera.a * camera_alpha);
+  }
+  return result;
+}
 float4 ps_main(float4 position : SV_Position) : SV_Target {
   float2 pixel = position.xy;
   float background_alpha = rounded_coverage(pixel, float4(0, 0, output_source.xy), effects.y);
   // Compose the complete frame first. Canvas rounding is a final output mask,
   // not merely a property of the background layer.
-  float4 result = float4(background(pixel), 1.0);
+  float4 result = cursor_options.w != 0
+    ? float4(0.0, 0.0, 0.0, 0.0)
+    : float4(background(pixel), 1.0);
+  if (camera_effects.w == 0.0) result = camera_layer(result, pixel);
   float crop_alpha = rounded_coverage(pixel, crop_rect, effects.x);
   // Axis-aligned zero-radius source edges are already pixel-exact. Smoothing
   // them leaks a fractional row of canvas colour around a default crop.
@@ -190,38 +216,22 @@ float4 ps_main(float4 position : SV_Position) : SV_Target {
   float image_alpha = crop_alpha * image_rect_alpha;
   if (options.w != 0 && effects.w > 1.0) {
     float shadow = visible_shadow(pixel, effects.w);
-    result.rgb *= 1.0 - shadow * (1.0 - image_alpha);
+    if (cursor_options.w != 0) {
+      result.a = shadow * (1.0 - image_alpha);
+    } else {
+      result.rgb *= 1.0 - shadow * (1.0 - image_alpha);
+    }
   }
   float2 uv = (pixel - image_rect.xy) / image_rect.zw;
   if (image_alpha > 0.0) {
     float4 video = source_image.Sample(linear_sampler, uv);
     result = lerp(result, float4(video.rgb, 1.0), video.a * image_alpha);
   }
-  if (camera_effects.y != 0.0) {
-    float camera_alpha = rounded_coverage(pixel, camera_frame, camera_effects.x);
-    if (camera_effects.z > 1.0) {
-      float2 shadow_pixel = pixel - float2(0, camera_effects.z * 0.35);
-      float distance = max(rounded_distance(
-        shadow_pixel, camera_frame, camera_effects.x), 0.0);
-      float shadow = (36.0 / 255.0) * exp(
-        -0.5 * distance * distance / (camera_effects.z * camera_effects.z));
-      result.rgb *= 1.0 - shadow * (1.0 - camera_alpha);
-    }
-    float2 camera_local = (pixel - camera_frame.xy) / camera_frame.zw;
-    if (camera_alpha > 0.0 && all(camera_local >= 0.0) && all(camera_local <= 1.0)) {
-      float2 camera_source_pixel = camera_crop.xy + camera_local * camera_crop.zw;
-      uint camera_width, camera_height;
-      camera_image.GetDimensions(camera_width, camera_height);
-      float2 camera_uv = camera_source_pixel / float2(camera_width, camera_height);
-      float4 camera = camera_image.Sample(linear_sampler, camera_uv);
-      result.rgb = lerp(result.rgb, camera.rgb, camera.a * camera_alpha);
-      result.a = camera.a * camera_alpha + result.a * (1.0 - camera.a * camera_alpha);
-    }
-  }
   float4 cursor = cursor_layer(pixel);
   if (cursor_options.z != 0) cursor.a *= image_alpha;
   result.rgb = lerp(result.rgb, cursor.rgb, cursor.a);
   result.a = cursor.a + result.a * (1.0 - cursor.a);
+  if (camera_effects.w != 0.0) result = camera_layer(result, pixel);
   result.rgb = saturate(result.rgb + hash(pixel, 0x9e3779b9) / 255.0);
   // DirectComposition consumes premultiplied alpha. Clip every composed layer
   // to the rounded canvas and premultiply only once at the final boundary.
@@ -260,6 +270,7 @@ pub(super) struct Compositor {
   constants: ID3D11Buffer,
   cursor_hotspots: [[f32; 4]; 8],
   cursor_view: ID3D11ShaderResourceView,
+  layer_blend: ID3D11BlendState,
   pixel_shader: ID3D11PixelShader,
   sampler: ID3D11SamplerState,
   vertex_shader: ID3D11VertexShader,
@@ -529,6 +540,27 @@ impl Compositor {
     let mut sampler = None;
     unsafe { device.CreateSamplerState(&sampler_description, Some(&mut sampler)) }
       .map_err(|error| error.to_string())?;
+    let layer_target = D3D11_RENDER_TARGET_BLEND_DESC {
+      BlendEnable: true.into(),
+      SrcBlend: D3D11_BLEND_ONE,
+      DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
+      BlendOp: D3D11_BLEND_OP_ADD,
+      SrcBlendAlpha: D3D11_BLEND_ONE,
+      DestBlendAlpha: D3D11_BLEND_INV_SRC_ALPHA,
+      BlendOpAlpha: D3D11_BLEND_OP_ADD,
+      RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8,
+    };
+    let mut layer_blend = None;
+    unsafe {
+      device.CreateBlendState(
+        &D3D11_BLEND_DESC {
+          RenderTarget: [layer_target; 8],
+          ..Default::default()
+        },
+        Some(&mut layer_blend),
+      )
+    }
+    .map_err(|error| error.to_string())?;
     let cursors = [
       (IDC_ARROW, "Arrow", "aero_arrow.cur"),
       (IDC_IBEAM, "IBeam", "beam_r.cur"),
@@ -599,6 +631,8 @@ impl Compositor {
       cursor_hotspots,
       cursor_view: cursor_view
         .ok_or_else(|| "D3D11 created no native cursor atlas view".to_owned())?,
+      layer_blend: layer_blend
+        .ok_or_else(|| "D3D11 created no screenshot layer blend state".to_owned())?,
       pixel_shader: pixel_shader
         .ok_or_else(|| "D3D11 created no preview pixel shader".to_owned())?,
       sampler: sampler.ok_or_else(|| "D3D11 created no preview sampler".to_owned())?,
@@ -691,9 +725,8 @@ impl Compositor {
     target: &ID3D11Texture2D,
     source: &SourceTexture,
     settings: &ScreenshotOutputSettings,
-    seconds: f64,
-    cursor: Option<GpuCursor>,
-    camera: Option<(&SourceTexture, BakeGeometry, bool)>,
+    composition: super::ComposedFrame,
+    camera: Option<(&SourceTexture, BakeGeometry, bool, bool)>,
   ) -> Result<(), String> {
     let placement = output_placement(source.size.0, source.size.1, settings)?;
     let mut mesh_points = [[0.0; 4]; 8];
@@ -785,17 +818,17 @@ impl Compositor {
         settings.mesh_warp_percent as f32,
         shadow_sigma,
       ],
-      motion: [seconds as f32, 0.0, 0.0, 0.0],
-      cursor_geometry: cursor.map_or([0.0; 4], |cursor| {
+      motion: [composition.seconds as f32, 0.0, 0.0, 0.0],
+      cursor_geometry: composition.cursor.map_or([0.0; 4], |cursor| {
         [cursor.x, cursor.y, cursor.width, cursor.height]
       }),
-      cursor_effects: cursor.map_or([0.0; 4], |cursor| {
+      cursor_effects: composition.cursor.map_or([0.0; 4], |cursor| {
         [0.0, 0.0, cursor.rotation_radians, cursor.scale]
       }),
-      cursor_blur: cursor.map_or([0.0; 4], |cursor| {
+      cursor_blur: composition.cursor.map_or([0.0; 4], |cursor| {
         [cursor.blur_delta_x, cursor.blur_delta_y, 0.0, 0.0]
       }),
-      camera_frame: camera.map_or([0.0; 4], |(_, geometry, _)| {
+      camera_frame: camera.map_or([0.0; 4], |(_, geometry, _, _)| {
         [
           geometry.frame_x as f32,
           geometry.frame_y as f32,
@@ -803,7 +836,7 @@ impl Compositor {
           geometry.frame_height as f32,
         ]
       }),
-      camera_crop: camera.map_or([0.0; 4], |(_, geometry, _)| {
+      camera_crop: camera.map_or([0.0; 4], |(_, geometry, _, _)| {
         [
           geometry.crop_x as f32,
           geometry.crop_y as f32,
@@ -811,14 +844,19 @@ impl Compositor {
           geometry.crop_height as f32,
         ]
       }),
-      camera_effects: camera.map_or([0.0; 4], |(_, geometry, drop_shadow)| {
+      camera_effects: camera.map_or([0.0; 4], |(_, geometry, drop_shadow, camera_on_top)| {
         let shortest = geometry.frame_width.min(geometry.frame_height) as f32;
         let sigma = if drop_shadow {
           (shortest * 0.055).clamp(3.0, 110.0)
         } else {
           0.0
         };
-        [geometry.radius as f32, 1.0, sigma, 0.0]
+        [
+          geometry.radius as f32,
+          1.0,
+          sigma,
+          if camera_on_top { 1.0 } else { 0.0 },
+        ]
       }),
       native_cursor_hotspots: self.cursor_hotspots,
       options: [
@@ -828,10 +866,14 @@ impl Compositor {
         u32::from(shadow),
       ],
       cursor_options: [
-        cursor.map_or(0, |cursor| cursor.style),
-        u32::from(cursor.is_some()),
-        u32::from(cursor.is_some_and(|cursor| cursor.clip_at_video_edge)),
-        0,
+        composition.cursor.map_or(0, |cursor| cursor.style),
+        u32::from(composition.cursor.is_some()),
+        u32::from(
+          composition
+            .cursor
+            .is_some_and(|cursor| cursor.clip_at_video_edge),
+        ),
+        u32::from(composition.foreground_only),
       ],
     };
     let target_resource: ID3D11Resource = target.cast().map_err(|error| error.to_string())?;
@@ -865,6 +907,11 @@ impl Compositor {
     };
     unsafe {
       context.OMSetRenderTargets(Some(&[Some(render_target)]), None);
+      context.OMSetBlendState(
+        composition.foreground_only.then_some(&self.layer_blend),
+        None,
+        u32::MAX,
+      );
       context.RSSetViewports(Some(&[viewport]));
       context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
       context.VSSetShader(&self.vertex_shader, None);
@@ -881,6 +928,7 @@ impl Compositor {
       context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
       context.Draw(3, 0);
       context.PSSetShaderResources(0, Some(&[None, None, None]));
+      context.OMSetBlendState(None::<&ID3D11BlendState>, None, u32::MAX);
       context.OMSetRenderTargets(None, None);
     }
     Ok(())

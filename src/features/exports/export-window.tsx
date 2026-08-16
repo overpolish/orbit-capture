@@ -29,7 +29,7 @@ import {
   RecordingOutputSettings,
   resetScreenshotLayout,
   restoredRecordingOutput,
-  ScreenshotOutputSettings,
+  ScreenshotWorkspaceOutputSettings,
 } from "./screenshot-output";
 import { selectArtifact, selectDirectory, useExportStore } from "./store";
 import {
@@ -40,6 +40,7 @@ import {
   RecordingVideoTrackId,
 } from "./types";
 import {
+  ExportEditGestureContext,
   ExportEditState,
   useExportEditHistory,
 } from "./use-export-edit-history";
@@ -71,9 +72,14 @@ export function ExportWindow() {
   const [cameraResolutionScalePercent, setCameraResolutionScalePercent] =
     useState(100);
   const [resolutionScalePercent, setResolutionScalePercent] = useState(100);
-  const [screenshotRadiusPercent, setScreenshotRadiusPercent] = useState(0);
   const [screenshotOutput, setScreenshotOutput] =
-    useState<ScreenshotOutputSettings>(() => defaultScreenshotOutput(1, 1));
+    useState<ScreenshotWorkspaceOutputSettings>(() => ({
+      ...defaultScreenshotOutput(1, 1),
+      items: [],
+    }));
+  const [selectedScreenshotItemId, setSelectedScreenshotItemId] = useState<
+    number | null
+  >(null);
   const [recordingOutput, setRecordingOutput] =
     useState<RecordingOutputSettings>(() =>
       defaultRecordingOutput({ primary: { height: 1, width: 1 } }),
@@ -98,6 +104,7 @@ export function ExportWindow() {
   } | null>(null);
   const screenshotRadiusRef = useRef(0);
   const screenshotBackgroundRadiusRef = useRef(0);
+  const seenScreenshotItemIdsRef = useRef<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   // Keyed on the capture rather than the object, so a replacement always
@@ -110,6 +117,7 @@ export function ExportWindow() {
   const { loadFullPreview, previewUrl } = useExportPreviewImage(
     screenshotArtifactId,
     true,
+    selectedScreenshotItemId,
   );
   const canCompress = artifact?.kind === "recording" && artifact.canCompress;
   const originalResolutionScale =
@@ -230,15 +238,17 @@ export function ExportWindow() {
     screenshotRadiusRef.current = next.screenshotOutput.radiusPercent;
     screenshotBackgroundRadiusRef.current =
       next.screenshotOutput.backgroundRadiusPercent;
-    setScreenshotRadiusPercent(next.screenshotOutput.radiusPercent);
     setScreenshotOutput(next.screenshotOutput);
     setTrackSelection(next.trackSelection);
     setVideoTrackSelection(next.videoTrackSelection);
     setError(null);
   }, []);
-  useExportEditHistory({
+  const editGesture = useExportEditHistory({
     apply: applyEditState,
-    resetKey: artifactId,
+    resetKey:
+      artifact?.kind === "screenshot"
+        ? `${artifact.id.toString()}:${artifact.items.map((item) => item.id).join(":")}`
+        : artifactId,
     state: editState,
   });
   const { estimatedSizeBytes, isEstimatingSize } = useRecordingExportEstimate({
@@ -291,7 +301,6 @@ export function ExportWindow() {
     );
     screenshotRadiusRef.current = persistedScreenshotRadius;
     screenshotBackgroundRadiusRef.current = persistedScreenshotBackgroundRadius;
-    setScreenshotRadiusPercent(persistedScreenshotRadius);
     const screenshotDefaults = defaultScreenshotOutput(
       artifact?.width ?? 1,
       artifact?.height ?? 1,
@@ -300,7 +309,7 @@ export function ExportWindow() {
         screenshot: persistedScreenshotRadius,
       },
     );
-    setScreenshotOutput(
+    const firstOutput =
       artifact?.kind === "screenshot" && persistedScreenshotOutput
         ? resetScreenshotLayout(
             {
@@ -318,7 +327,26 @@ export function ExportWindow() {
           )
         : artifact?.kind === "screenshot"
           ? resetScreenshotLayout(screenshotDefaults, artifact)
-          : screenshotDefaults,
+          : screenshotDefaults;
+    setScreenshotOutput({
+      ...firstOutput,
+      items:
+        artifact?.kind === "screenshot"
+          ? artifact.items.map((item) => ({
+              id: item.id,
+              output: resetScreenshotLayout(firstOutput, item),
+            }))
+          : [],
+    });
+    setSelectedScreenshotItemId(
+      artifact?.kind === "screenshot"
+        ? (artifact.items[artifact.items.length - 1]?.id ?? null)
+        : null,
+    );
+    seenScreenshotItemIdsRef.current = new Set(
+      artifact?.kind === "screenshot"
+        ? artifact.items.map((item) => item.id)
+        : [],
     );
     /* eslint-enable @eslint-react/set-state-in-effect */
     // A cancelled or failed save restores the same artifact through a fresh
@@ -327,8 +355,36 @@ export function ExportWindow() {
     // eslint-disable-next-line @eslint-react/exhaustive-deps
   }, [artifactId]);
 
-  // A capture taken while the window is open replaces the pending one, so the
-  // name follows the new suggestion rather than keeping the old capture's.
+  const screenshotItems =
+    artifact?.kind === "screenshot" ? artifact.items : null;
+  useEffect(() => {
+    if (!screenshotItems) return;
+    const newestId = screenshotItems[screenshotItems.length - 1]?.id ?? null;
+    const added = screenshotItems.filter(
+      (item) => !seenScreenshotItemIdsRef.current.has(item.id),
+    );
+    seenScreenshotItemIdsRef.current = new Set(
+      screenshotItems.map((item) => item.id),
+    );
+    /* eslint-disable @eslint-react/set-state-in-effect */
+    setSelectedScreenshotItemId(newestId);
+    setScreenshotOutput((current) => {
+      if (added.length === 0) return current;
+      return {
+        ...current,
+        items: [
+          ...current.items,
+          ...added.map((item) => ({
+            id: item.id,
+            output: resetScreenshotLayout(current, item),
+          })),
+        ],
+      };
+    });
+    /* eslint-enable @eslint-react/set-state-in-effect */
+  }, [screenshotItems]);
+
+  // Keep the workspace name aligned with the latest capture suggestion.
   useEffect(() => {
     // eslint-disable-next-line @eslint-react/set-state-in-effect
     setFileStem(artifact?.suggestedFileStem ?? "");
@@ -345,222 +401,242 @@ export function ExportWindow() {
   };
 
   return (
-    <ExportPanel
-      artifact={artifact}
-      audioTrackVolumes={currentAudioTrackVolumes}
-      bakeCamera={effectiveBakeCamera}
-      cameraCompression={cameraCompression}
-      cameraOverlay={cameraOverlay}
-      cameraResolutionScalePercent={cameraResolutionScalePercent}
-      collapseAudio={collapseAudio}
-      compression={compression}
-      cursorEffects={cursorEffects}
-      directory={directory}
-      enabledAudioTrackCount={enabledStreamIndices?.length ?? 0}
-      enabledStreamIndices={enabledStreamIndices ?? undefined}
-      enabledVideoTracks={enabledVideoTracks}
-      error={error}
-      estimatedSizeBytes={estimatedSizeBytes}
-      fileStem={fileStem}
-      isCancelingSave={isCancelingSave}
-      isEstimatingSize={isEstimatingSize}
-      isExportPreparationPending={isPreparingRecordingPreview}
-      isPreparingRecordingAudio={isPreparingRecordingPreview}
-      isPreparingRecordingPreview={isPreparingRecordingPreview}
-      isSaving={isSaving}
-      onBakeCameraChange={setBakeCamera}
-      onBrowse={() => {
-        browseExportDirectory()
-          .then(async (chosen) => {
-            if (chosen) await setExportDirectory(chosen);
-          })
-          .catch(report("choose a folder for"));
-      }}
-      onCameraCompressionChange={(value) => {
-        const next = Math.round(value);
-        setCameraCompression(next);
-        if (next === 0) setCameraResolutionScalePercent(100);
-        setError(null);
-      }}
-      onCameraOverlayChange={setCameraOverlay}
-      onCameraResolutionScaleChange={(scale) => {
-        setCameraResolutionScalePercent(scale);
-        if (scale < 100 && cameraCompression === 0) {
-          setCameraCompression(1);
-        }
-        setError(null);
-      }}
-      onCancel={() => {
-        cancelExport().catch(report("cancel"));
-      }}
-      onCancelSave={() => {
-        setIsCancelingSave(true);
-        cancelExportJob()
-          .then((accepted) => {
-            if (!accepted) setIsCancelingSave(false);
-          })
-          .catch((cause: unknown) => {
-            console.error("Could not cancel the active export", cause);
-            setError(cause instanceof Error ? cause.message : String(cause));
-            setIsCancelingSave(false);
-          });
-      }}
-      onCollapseAudioChange={setCollapseAudio}
-      onCompressionChange={(value) => {
-        const next = Math.round(value);
-        setCompression(next);
-        if (next === 0) setResolutionScalePercent(originalResolutionScale);
-        setError(null);
-      }}
-      onCopy={() => {
-        copyExportToClipboard(screenshotOutput).catch(report("copy"));
-      }}
-      onCursorEffectsChange={setCursorEffects}
-      onEnabledTracksChange={onEnabledTracksChange}
-      onEnabledVideoTracksChange={(tracks) => {
-        if (artifactId === undefined) return;
-        setVideoTrackSelection({ artifactId, tracks });
-      }}
-      onFileStemChange={(value) => {
-        setFileStem(value);
-        setError(null);
-      }}
-      onMinimize={() => {
-        getCurrentWindow()
-          .minimize()
-          .catch((cause: unknown) => {
-            console.error("Could not minimize the export window", cause);
-          });
-      }}
-      onNeedFullResolution={loadFullPreview}
-      onRecordingOutputChange={(trackId, settings) => {
-        setRecordingOutput((current) => ({
-          ...current,
-          [trackId]: { ...settings, backgroundRadiusPercent: 0 },
-        }));
-        setError(null);
-      }}
-      onResolutionScaleChange={(scale) => {
-        setResolutionScalePercent(scale);
-        if (scale < originalResolutionScale && compression === 0) {
-          setCompression(1);
-        }
-        setError(null);
-      }}
-      onSave={() => {
-        const plan = recordingSavePlan({
-          artifact,
-          audioTrackVolumes: currentAudioTrackVolumes,
-          bakeCamera: effectiveBakeCamera,
-          camera: cameraExport,
-          cameraOverlay,
-          collapseAudio,
-          compression,
-          cursorEffects,
-          enabledStreamIndices,
-          includeCamera,
-          includePrimaryVideo,
-          originalResolutionScale,
-          recordingOutput,
-          resolutionScalePercent,
-        });
-        setIsSaving(true);
-        setIsCancelingSave(false);
-        saveProgress.begin(plan.showsMeasuredProgress);
-        setError(null);
-        saveExport({
-          ...plan.options,
-          fileStem,
-          screenshotOutput,
-        })
-          .then((path) => {
-            if (path === null) {
-              saveProgress.reset();
+    <ExportEditGestureContext value={editGesture}>
+      <ExportPanel
+        artifact={artifact}
+        audioTrackVolumes={currentAudioTrackVolumes}
+        bakeCamera={effectiveBakeCamera}
+        cameraCompression={cameraCompression}
+        cameraOverlay={cameraOverlay}
+        cameraResolutionScalePercent={cameraResolutionScalePercent}
+        collapseAudio={collapseAudio}
+        compression={compression}
+        cursorEffects={cursorEffects}
+        directory={directory}
+        enabledAudioTrackCount={enabledStreamIndices?.length ?? 0}
+        enabledStreamIndices={enabledStreamIndices ?? undefined}
+        enabledVideoTracks={enabledVideoTracks}
+        error={error}
+        estimatedSizeBytes={estimatedSizeBytes}
+        fileStem={fileStem}
+        isCancelingSave={isCancelingSave}
+        isEstimatingSize={isEstimatingSize}
+        isExportPreparationPending={isPreparingRecordingPreview}
+        isPreparingRecordingAudio={isPreparingRecordingPreview}
+        isPreparingRecordingPreview={isPreparingRecordingPreview}
+        isSaving={isSaving}
+        onBakeCameraChange={setBakeCamera}
+        onBrowse={() => {
+          browseExportDirectory()
+            .then(async (chosen) => {
+              if (chosen) await setExportDirectory(chosen);
+            })
+            .catch(report("choose a folder for"));
+        }}
+        onCameraCompressionChange={(value) => {
+          const next = Math.round(value);
+          setCameraCompression(next);
+          if (next === 0) setCameraResolutionScalePercent(100);
+          setError(null);
+        }}
+        onCameraOverlayChange={setCameraOverlay}
+        onCameraResolutionScaleChange={(scale) => {
+          setCameraResolutionScalePercent(scale);
+          if (scale < 100 && cameraCompression === 0) {
+            setCameraCompression(1);
+          }
+          setError(null);
+        }}
+        onCancel={() => {
+          cancelExport().catch(report("cancel"));
+        }}
+        onCancelSave={() => {
+          setIsCancelingSave(true);
+          cancelExportJob()
+            .then((accepted) => {
+              if (!accepted) setIsCancelingSave(false);
+            })
+            .catch((cause: unknown) => {
+              console.error("Could not cancel the active export", cause);
+              setError(cause instanceof Error ? cause.message : String(cause));
               setIsCancelingSave(false);
-              setIsSaving(false);
-              return;
-            }
-            saveProgress.complete();
-            // Let the determinate ring visibly reach its completed state.
-            // Closing it in the same React batch left the animated stroke at
-            // whatever fraction it had reached during the final mux.
-            window.setTimeout(() => {
-              setIsCancelingSave(false);
-              setIsSaving(false);
-            }, 200);
+            });
+        }}
+        onCanvasResize={setScreenshotOutput}
+        onCollapseAudioChange={setCollapseAudio}
+        onCompressionChange={(value) => {
+          const next = Math.round(value);
+          setCompression(next);
+          if (next === 0) setResolutionScalePercent(originalResolutionScale);
+          setError(null);
+        }}
+        onCopy={() => {
+          copyExportToClipboard(screenshotOutput).catch(report("copy"));
+        }}
+        onCursorEffectsChange={setCursorEffects}
+        onEnabledTracksChange={onEnabledTracksChange}
+        onEnabledVideoTracksChange={(tracks) => {
+          if (artifactId === undefined) return;
+          setVideoTrackSelection({ artifactId, tracks });
+        }}
+        onFileStemChange={(value) => {
+          setFileStem(value);
+          setError(null);
+        }}
+        onMinimize={() => {
+          getCurrentWindow()
+            .minimize()
+            .catch((cause: unknown) => {
+              console.error("Could not minimize the export window", cause);
+            });
+        }}
+        onNeedFullResolution={loadFullPreview}
+        onRecordingOutputChange={(trackId, settings) => {
+          setRecordingOutput((current) => ({
+            ...current,
+            [trackId]: { ...settings, backgroundRadiusPercent: 0 },
+          }));
+          setError(null);
+        }}
+        onResolutionScaleChange={(scale) => {
+          setResolutionScalePercent(scale);
+          if (scale < originalResolutionScale && compression === 0) {
+            setCompression(1);
+          }
+          setError(null);
+        }}
+        onSave={() => {
+          const plan = recordingSavePlan({
+            artifact,
+            audioTrackVolumes: currentAudioTrackVolumes,
+            bakeCamera: effectiveBakeCamera,
+            camera: cameraExport,
+            cameraOverlay,
+            collapseAudio,
+            compression,
+            cursorEffects,
+            enabledStreamIndices,
+            includeCamera,
+            includePrimaryVideo,
+            originalResolutionScale,
+            recordingOutput,
+            resolutionScalePercent,
+          });
+          setIsSaving(true);
+          setIsCancelingSave(false);
+          saveProgress.begin(plan.showsMeasuredProgress);
+          setError(null);
+          saveExport({
+            ...plan.options,
+            fileStem,
+            screenshotOutput,
           })
-          .catch(report("save"));
-      }}
-      onScreenshotBackgroundRadiusChange={(value) => {
-        screenshotBackgroundRadiusRef.current = value;
-        setScreenshotOutput((current) => ({
-          ...current,
-          backgroundRadiusPercent: value,
-        }));
-        setError(null);
-      }}
-      onScreenshotBackgroundRadiusChangeEnd={() => {
-        setScreenshotBackgroundRadius(
-          screenshotBackgroundRadiusRef.current,
-        ).catch(report("remember the screenshot background radius for"));
-      }}
-      onScreenshotOutputChange={(settings) => {
-        screenshotRadiusRef.current = settings.radiusPercent;
-        setScreenshotRadiusPercent(settings.radiusPercent);
-        setScreenshotOutput(settings);
-        setError(null);
-      }}
-      onScreenshotRadiusChange={(value) => {
-        screenshotRadiusRef.current = value;
-        setScreenshotRadiusPercent(value);
-        setScreenshotOutput((current) => ({
-          ...current,
-          radiusPercent: value,
-        }));
-        setError(null);
-      }}
-      onScreenshotRadiusChangeEnd={() => {
-        setScreenshotRadius(screenshotRadiusRef.current).catch(
-          report("remember the screenshot radius for"),
-        );
-      }}
-      onSelectedTrackChange={(trackId) => {
-        if (artifactId === undefined) return;
-        setSelectedTrack({ artifactId, trackId });
-      }}
-      onSelectedTrackVolumeChange={(decibels) => {
-        if (artifactId === undefined || selectedStreamIndex === null) return;
-        const next = currentAudioTrackVolumes.filter(
-          (volume) => volume.streamIndex !== selectedStreamIndex,
-        );
-        if (decibels !== 0) {
-          next.push({
-            decibels: Math.round(decibels),
-            streamIndex: selectedStreamIndex,
-          });
-        }
-        setAudioTrackVolumes({ artifactId, values: next });
-      }}
-      onToggleMaximize={() => {
-        getCurrentWindow()
-          .toggleMaximize()
-          .catch((cause: unknown) => {
-            console.error(
-              "Could not maximize or restore the export window",
-              cause,
-            );
-          });
-      }}
-      previewUrl={previewUrl}
-      recordingOutput={recordingOutput}
-      recordingPreviewError={recordingPreviewError}
-      recordingPreviewTracks={recordingPreviewTracks}
-      resolutionScalePercent={resolutionScalePercent}
-      savePhase={saveProgress.phase}
-      saveProgress={saveProgress.progress}
-      screenshotOutput={screenshotOutput}
-      screenshotRadiusPercent={screenshotRadiusPercent}
-      selectedTrack={selectedTrackId}
-    />
+            .then((path) => {
+              if (path === null) {
+                saveProgress.reset();
+                setIsCancelingSave(false);
+                setIsSaving(false);
+                return;
+              }
+              saveProgress.complete();
+              // Let the determinate ring visibly reach its completed state.
+              // Closing it in the same React batch left the animated stroke at
+              // whatever fraction it had reached during the final mux.
+              window.setTimeout(() => {
+                setIsCancelingSave(false);
+                setIsSaving(false);
+              }, 200);
+            })
+            .catch(report("save"));
+        }}
+        onScreenshotBackgroundRadiusChange={(value) => {
+          screenshotBackgroundRadiusRef.current = value;
+          setScreenshotOutput((current) => ({
+            ...current,
+            backgroundRadiusPercent: value,
+          }));
+          setError(null);
+        }}
+        onScreenshotBackgroundRadiusChangeEnd={() => {
+          setScreenshotBackgroundRadius(
+            screenshotBackgroundRadiusRef.current,
+          ).catch(report("remember the screenshot background radius for"));
+        }}
+        onScreenshotOutputChange={(settings, itemId) => {
+          const targetItemId = itemId ?? selectedScreenshotItemId;
+          screenshotRadiusRef.current = settings.radiusPercent;
+          setScreenshotOutput((current) => ({
+            ...current,
+            ...settings,
+            items: current.items.map((item) =>
+              item.id === targetItemId ? { ...item, output: settings } : item,
+            ),
+          }));
+          setError(null);
+        }}
+        onScreenshotRadiusChange={(value) => {
+          screenshotRadiusRef.current = value;
+          setScreenshotOutput((current) => ({
+            ...current,
+            items: current.items.map((item) =>
+              item.id === selectedScreenshotItemId
+                ? { ...item, output: { ...item.output, radiusPercent: value } }
+                : item,
+            ),
+          }));
+          setError(null);
+        }}
+        onScreenshotRadiusChangeEnd={() => {
+          setScreenshotRadius(screenshotRadiusRef.current).catch(
+            report("remember the screenshot radius for"),
+          );
+        }}
+        onSelectedScreenshotItemChange={setSelectedScreenshotItemId}
+        onSelectedTrackChange={(trackId) => {
+          if (artifactId === undefined) return;
+          setSelectedTrack({ artifactId, trackId });
+        }}
+        onSelectedTrackVolumeChange={(decibels) => {
+          if (artifactId === undefined || selectedStreamIndex === null) return;
+          const next = currentAudioTrackVolumes.filter(
+            (volume) => volume.streamIndex !== selectedStreamIndex,
+          );
+          if (decibels !== 0) {
+            next.push({
+              decibels: Math.round(decibels),
+              streamIndex: selectedStreamIndex,
+            });
+          }
+          setAudioTrackVolumes({ artifactId, values: next });
+        }}
+        onToggleMaximize={() => {
+          getCurrentWindow()
+            .toggleMaximize()
+            .catch((cause: unknown) => {
+              console.error(
+                "Could not maximize or restore the export window",
+                cause,
+              );
+            });
+        }}
+        onVideoTrackOrderChange={(tracks) => {
+          setRecordingOutput((current) => ({
+            ...current,
+            cameraOnTop: tracks.indexOf("camera") < tracks.indexOf("primary"),
+          }));
+          setError(null);
+        }}
+        previewUrl={previewUrl}
+        recordingOutput={recordingOutput}
+        recordingPreviewError={recordingPreviewError}
+        recordingPreviewTracks={recordingPreviewTracks}
+        resolutionScalePercent={resolutionScalePercent}
+        savePhase={saveProgress.phase}
+        saveProgress={saveProgress.progress}
+        screenshotOutput={screenshotOutput}
+        selectedScreenshotItemId={selectedScreenshotItemId}
+        selectedTrack={selectedTrackId}
+      />
+    </ExportEditGestureContext>
   );
 }

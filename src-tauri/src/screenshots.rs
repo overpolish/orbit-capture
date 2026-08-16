@@ -29,13 +29,18 @@ pub(crate) use crate::capture_geometry::CaptureRect;
 pub use encoding::encode_png;
 #[cfg(not(target_os = "macos"))]
 pub use encoding::rounded_corners;
+#[cfg(target_os = "windows")]
 pub(crate) use mesh::validate_mesh;
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) use mesh::MeshGradientPoint;
+#[cfg(target_os = "windows")]
+pub(crate) use output::output_dimensions;
 pub use output::{compose_screenshot, ScreenshotOutputSettings};
-pub(crate) use output::{output_dimensions, output_placement, parse_hex_colour};
+pub(crate) use output::{output_placement, parse_hex_colour};
 #[cfg(target_os = "macos")]
-pub(crate) use platform::{compose_output_layers, native_canvas, NativeCanvas, StillOverlay};
+pub(crate) use platform::{
+  alpha_composite, compose_output_layers, native_canvas, NativeCanvas, StillOverlay,
+};
 
 /// A captured still: straight (non-premultiplied) RGBA8, packed rows, top down.
 /// That is what both the clipboard and the PNG encoder want.
@@ -210,19 +215,37 @@ pub async fn capture_still(
   show_cursor: bool,
   destination: ScreenshotDestination,
 ) -> Result<Option<PathBuf>, String> {
+  if !crate::recording::is_idle(&app) {
+    return Err("A screenshot cannot be taken while a recording is active".to_owned());
+  }
+  crate::exports::reserve_screenshot_workspace(
+    &app,
+    matches!(destination, ScreenshotDestination::Clipboard),
+  )?;
   crate::text_recognition::dismiss(&app);
-  let image = capture(&app, target, show_cursor).await?;
+  let image = match capture(&app, target, show_cursor).await {
+    Ok(image) => image,
+    Err(error) => {
+      crate::exports::release_screenshot_workspace(&app);
+      return Err(error);
+    }
+  };
 
   if matches!(
     destination,
     ScreenshotDestination::Clipboard | ScreenshotDestination::Both
   ) {
     // The clipboard takes the raw pixels, so there is nothing to encode.
-    app
+    if let Err(error) = app
       .clipboard()
       .write_image(&Image::new(&image.rgba, image.width, image.height))
-      .map_err(|error| error.to_string())?;
+      .map_err(|error| error.to_string())
+    {
+      crate::exports::release_screenshot_workspace(&app);
+      return Err(error);
+    }
     if matches!(destination, ScreenshotDestination::Clipboard) {
+      crate::exports::release_screenshot_workspace(&app);
       let _ = crate::windows::hide_recording_ui(app.clone());
       return Ok(None);
     }
@@ -230,7 +253,12 @@ pub async fn capture_still(
 
   // With the clipboard off, the export window takes over: the user names the
   // file and picks where it goes, so nothing is written here.
-  crate::exports::present_screenshot(&app, image, capture_file_stem(Local::now().naive_local()))?;
+  if let Err(error) =
+    crate::exports::present_screenshot(&app, image, capture_file_stem(Local::now().naive_local()))
+  {
+    crate::exports::release_screenshot_workspace(&app);
+    return Err(error);
+  }
 
   Ok(None)
 }

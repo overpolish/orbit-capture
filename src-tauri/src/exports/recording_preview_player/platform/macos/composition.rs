@@ -16,6 +16,7 @@ pub(super) fn composed_layers_rgba(
   camera: Option<&CapturedImage>,
   camera_overlay: Option<CameraOverlaySettings>,
   camera_drop_shadow: bool,
+  camera_on_top: bool,
   clip_cursor_at_video_edge: bool,
 ) -> Result<CapturedImage, String> {
   let cursor_image = cursor.as_ref().map(|(_, image)| image);
@@ -39,6 +40,7 @@ pub(super) fn composed_layers_rgba(
         mapped_cursor,
         cursor_image,
         camera_drop_shadow,
+        camera_on_top,
       )
     })
     .transpose()?
@@ -52,6 +54,7 @@ pub(super) fn composed_layers_rgba(
     camera,
     overlay.as_ref(),
     clip_cursor_at_video_edge,
+    false,
   )
 }
 
@@ -62,6 +65,7 @@ pub(super) fn still_overlay(
   camera: Option<&CapturedImage>,
   camera_overlay: Option<CameraOverlaySettings>,
   camera_drop_shadow: bool,
+  camera_on_top: bool,
 ) -> Result<(Option<CapturedImage>, Option<StillOverlay>), String> {
   let cursor_image = cursor.as_ref().map(|(_, image)| image.clone());
   let placement = screenshots::output_placement(screen.width, screen.height, output)?;
@@ -84,6 +88,7 @@ pub(super) fn still_overlay(
         mapped_cursor,
         cursor_image.as_ref(),
         camera_drop_shadow,
+        camera_on_top,
       )
     })
     .transpose()?
@@ -108,6 +113,7 @@ pub(super) fn camera_still_overlay(
   cursor: Option<(i32, i32, u32, u32)>,
   cursor_image: Option<&CapturedImage>,
   camera_drop_shadow: bool,
+  camera_on_top: bool,
 ) -> Result<StillOverlay, String> {
   let camera = camera.ok_or_else(|| "Camera pixels are missing from the preview".to_owned())?;
   let geometry = media_preview::bake_geometry(media_preview::BakedVideoExportOptions {
@@ -142,6 +148,7 @@ pub(super) fn camera_still_overlay(
     camera_source_width: camera.width,
     camera_source_height: camera.height,
     camera_drop_shadow: u32::from(camera_drop_shadow),
+    camera_on_top: u32::from(camera_on_top),
   })
 }
 

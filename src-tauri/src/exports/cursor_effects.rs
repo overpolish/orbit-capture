@@ -111,6 +111,7 @@ fn output_hotspot(appearance: Appearance) -> (f64, f64) {
 /// Small, frame-local cursor description consumed by native GPU compositors.
 /// Evaluating the event timeline is CPU work over a few numbers; cursor pixels,
 /// animation, blur and blending remain entirely in the graphics shader.
+#[cfg(target_os = "windows")]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GpuCursor {
   pub blur_delta_x: f32,
@@ -475,6 +476,7 @@ impl CursorCompositor {
     })
   }
 
+  #[cfg(target_os = "windows")]
   pub(in crate::exports) fn gpu_cursor(
     &self,
     position_ms: u64,

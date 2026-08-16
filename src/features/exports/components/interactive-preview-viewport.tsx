@@ -27,17 +27,23 @@ const WHEEL_ZOOM_RATE = 0.0015;
 const isMac = navigator.userAgent.includes("Mac");
 
 type MediaSize = { height: number; width: number };
+type MediaResizeBounds = MediaSize & { originX: number; originY: number };
 
 type InteractivePreviewViewportProps<Element extends HTMLElement> = {
   getMediaSize: (element: Element) => MediaSize | null;
   renderMedia: (props: {
+    onMediaResize: (bounds: MediaResizeBounds) => void;
+    onMediaResizeEnd: () => void;
+    onMediaResizeStart: () => void;
     onReady: () => void;
     ref: RefCallback<Element>;
     style: CSSProperties;
   }) => ReactNode;
   resetKey: string | number;
   hideUntilMeasured?: boolean;
+  mediaSizeKey?: string | number;
   onNeedFullResolution?: () => void;
+  onViewportInteraction?: () => void;
   onZoomChange?: (zoomPercent: number) => void;
   zoomPercent?: number;
 };
@@ -46,7 +52,9 @@ type InteractivePreviewViewportProps<Element extends HTMLElement> = {
 export function InteractivePreviewViewport<Element extends HTMLElement>({
   getMediaSize,
   hideUntilMeasured = false,
+  mediaSizeKey,
   onNeedFullResolution,
+  onViewportInteraction,
   onZoomChange,
   renderMedia,
   resetKey,
@@ -54,11 +62,18 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
 }: InteractivePreviewViewportProps<Element>) {
   const boxRef = useRef<HTMLDivElement>(null);
   const mediaRef = useRef<Element | null>(null);
+  const mediaHostRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<number | undefined>(undefined);
   const panRef = useRef<{
     pointerX: number;
     pointerY: number;
     start: PreviewTransform;
+  } | null>(null);
+  const mediaResizeRef = useRef<{
+    absoluteScale: number;
+    height: number;
+    transform: PreviewTransform;
+    width: number;
   } | null>(null);
   const transformRef = useRef<PreviewTransform>({ x: 0, y: 0, zoom: FIT });
   const geometryRef = useRef<PreviewGeometry>({
@@ -70,6 +85,7 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
   });
   const getMediaSizeRef = useRef(getMediaSize);
   const onNeedFullResolutionRef = useRef(onNeedFullResolution);
+  const onViewportInteractionRef = useRef(onViewportInteraction);
   const onZoomChangeRef = useRef(onZoomChange);
   const reportedZoomRef = useRef<number | undefined>(undefined);
   const requestedFullRef = useRef(false);
@@ -79,19 +95,47 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
 
   getMediaSizeRef.current = getMediaSize;
   onNeedFullResolutionRef.current = onNeedFullResolution;
+  onViewportInteractionRef.current = onViewportInteraction;
   onZoomChangeRef.current = onZoomChange;
 
   const applyTransform = (reveal: boolean) => {
     const media = mediaRef.current;
-    if (!media) return;
+    const mediaHost = mediaHostRef.current;
+    if (!media || !mediaHost) return;
     if (nativeTransformInFlightRef.current) {
       nativeTransformPendingRef.current = true;
       return;
     }
     const { fitScale } = geometryRef.current;
     const { x, y, zoom } = transformRef.current;
-    const scale = fitScale * zoom;
-    media.style.transform = `translate(${x.toString()}px, ${y.toString()}px) scale(${scale.toString()})`;
+    let scale = fitScale * zoom;
+    // `transform: scale()` snapshots the whole web subtree and magnifies its
+    // raster, including OSCs. CSS zoom performs layout at the displayed size,
+    // while the native preview surface still receives the resulting frame.
+    // Keep translation on an unscaled host so panning never raster-scales UI.
+    mediaHost.style.transform = `translate(${x.toString()}px, ${y.toString()}px)`;
+    media.style.zoom = scale.toString();
+    // WebKit silently caps oversized layout dimensions while retaining the
+    // requested CSS zoom. Read back the rendered size and keep the logical
+    // zoom, toolbar and OSC scale on the value the canvas actually reached.
+    const rendered = media.getBoundingClientRect();
+    const expectedWidth = geometryRef.current.naturalWidth * scale;
+    const expectedHeight = geometryRef.current.naturalHeight * scale;
+    if (
+      expectedWidth > 0 &&
+      expectedHeight > 0 &&
+      (rendered.width + 1 < expectedWidth ||
+        rendered.height + 1 < expectedHeight)
+    ) {
+      const actualScale = Math.min(
+        rendered.width / geometryRef.current.naturalWidth,
+        rendered.height / geometryRef.current.naturalHeight,
+      );
+      if (actualScale > 0 && Number.isFinite(actualScale)) {
+        scale = actualScale;
+        transformRef.current.zoom = actualScale / fitScale;
+      }
+    }
     media.style.setProperty(
       "--preview-inverse-scale",
       scale > 0 ? (1 / scale).toString() : "1",
@@ -129,6 +173,10 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
       naturalHeight: size.height,
       naturalWidth: size.width,
     };
+    if (mediaResizeRef.current && fitScale > 0) {
+      transformRef.current.zoom =
+        mediaResizeRef.current.absoluteScale / fitScale;
+    }
     applyTransform(true);
   };
 
@@ -149,12 +197,13 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
   };
 
   const clearTransition = () => {
-    if (mediaRef.current) mediaRef.current.style.transition = "";
+    if (mediaHostRef.current) mediaHostRef.current.style.transition = "";
   };
 
   const reset = () => {
     transformRef.current = { x: 0, y: 0, zoom: FIT };
-    if (mediaRef.current) mediaRef.current.style.transition = RESET_TRANSITION;
+    if (mediaHostRef.current)
+      mediaHostRef.current.style.transition = RESET_TRANSITION;
     applyTransform(false);
     schedule();
   };
@@ -171,6 +220,12 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
     // A reset is intentionally tied to media identity, not callback identity.
     // eslint-disable-next-line @eslint-react/exhaustive-deps
   }, [hideUntilMeasured, resetKey]);
+
+  useLayoutEffect(() => {
+    measureAndApply();
+    // Re-measure changing output bounds without treating them as new media.
+    // eslint-disable-next-line @eslint-react/exhaustive-deps
+  }, [mediaSizeKey]);
 
   useEffect(() => {
     if (controlledZoomPercent === undefined) return;
@@ -239,6 +294,7 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
     if (!box) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
+      onViewportInteractionRef.current?.();
       if (geometryRef.current.boxWidth === 0) measureAndApply();
       clearTransition();
       const current = transformRef.current;
@@ -294,6 +350,7 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
       className="relative flex min-h-0 grow touch-none items-center justify-center overflow-hidden overscroll-contain"
       data-recording-preview-viewport
       onDoubleClick={() => {
+        onViewportInteractionRef.current?.();
         measureAndApply();
         reset();
       }}
@@ -304,6 +361,7 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
       onPointerDown={(event) => {
         if (event.button !== 0 && event.button !== 1) return;
         if (event.button === 1) event.preventDefault();
+        onViewportInteractionRef.current?.();
         measureAndApply();
         clearTransition();
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -338,14 +396,52 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
         className="pointer-events-none absolute inset-0 -z-10 bg-black/5 dark:bg-black/25"
         data-preview-backdrop
       />
-      {renderMedia({
-        onReady: measureAndApply,
-        ref: (element) => {
-          mediaRef.current = element;
-          if (element) measureAndApply();
-        },
-        style: { transformOrigin: "center center" },
-      })}
+      <div
+        className="pointer-events-none absolute left-1/2 top-1/2 size-0 overflow-visible"
+        ref={mediaHostRef}
+      >
+        {renderMedia({
+          onMediaResize: (bounds) => {
+            const gesture = mediaResizeRef.current;
+            if (!gesture) return;
+            transformRef.current = {
+              x:
+                gesture.transform.x +
+                (bounds.originX + (bounds.width - gesture.width) / 2) *
+                  gesture.absoluteScale,
+              y:
+                gesture.transform.y +
+                (bounds.originY + (bounds.height - gesture.height) / 2) *
+                  gesture.absoluteScale,
+              zoom: transformRef.current.zoom,
+            };
+            clearTransition();
+            schedule();
+          },
+          onMediaResizeEnd: () => {
+            mediaResizeRef.current = null;
+          },
+          onMediaResizeStart: () => {
+            const geometry = geometryRef.current;
+            mediaResizeRef.current = {
+              absoluteScale: geometry.fitScale * transformRef.current.zoom,
+              height: geometry.naturalHeight,
+              transform: { ...transformRef.current },
+              width: geometry.naturalWidth,
+            };
+          },
+          onReady: measureAndApply,
+          ref: (element) => {
+            mediaRef.current = element;
+            if (element) measureAndApply();
+          },
+          style: {
+            pointerEvents: "auto",
+            position: "absolute",
+            transform: "translate(-50%, -50%)",
+          },
+        })}
+      </div>
     </div>
   );
 }

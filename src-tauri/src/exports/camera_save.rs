@@ -16,15 +16,13 @@ pub(super) fn validate_camera_overlay(settings: CameraOverlaySettings) -> Result
     settings.radius_percent,
   ];
   if values.iter().any(|value| !value.is_finite())
-    || !(0.0..=100.0).contains(&settings.camera_x_percent)
-    || !(0.0..=100.0).contains(&settings.camera_y_percent)
-    || !(3.0..=200.0).contains(&settings.camera_width_percent)
-    || !(3.0..=100.0).contains(&settings.frame_height_percent)
-    || !(3.0..=100.0).contains(&settings.frame_width_percent)
-    || !(0.0..=100.0).contains(&settings.frame_x_percent)
-    || !(0.0..=100.0).contains(&settings.frame_y_percent)
-    || settings.frame_x_percent + settings.frame_width_percent > 100.000_001
-    || settings.frame_y_percent + settings.frame_height_percent > 100.000_001
+    || !(-800.0..=800.0).contains(&settings.camera_x_percent)
+    || !(-800.0..=800.0).contains(&settings.camera_y_percent)
+    || !(3.0..=800.0).contains(&settings.camera_width_percent)
+    || !(3.0..=800.0).contains(&settings.frame_height_percent)
+    || !(3.0..=800.0).contains(&settings.frame_width_percent)
+    || !(-800.0..=800.0).contains(&settings.frame_x_percent)
+    || !(-800.0..=800.0).contains(&settings.frame_y_percent)
     || !(0.0..=50.0).contains(&settings.radius_percent)
   {
     return Err("The camera overlay settings are not valid".to_owned());
@@ -70,6 +68,7 @@ pub(super) fn save_baked_recording(
   screen_size: (u32, u32),
   overlay: CameraOverlaySettings,
   camera_drop_shadow: bool,
+  camera_on_top: bool,
   video_settings: (u8, u16, u16),
   cursor: Option<(&Path, cursor_effects::CursorEffectSettings)>,
   output: &ScreenshotOutputSettings,
@@ -111,6 +110,7 @@ pub(super) fn save_baked_recording(
     audio_layout: layout,
     audio_source: None,
     camera: Some((&camera.path, baked)),
+    camera_on_top,
     cancelled,
     cursor: cursor_path,
     cursor_effects,
@@ -180,6 +180,7 @@ pub(super) fn save_camera_copy(
       audio_layout: track_selection::AudioLayout::SeparateTracks,
       audio_source: None,
       camera: None,
+      camera_on_top: true,
       cancelled,
       cursor: None,
       cursor_effects: cursor_effects::CursorEffectSettings::default(),
@@ -275,6 +276,7 @@ pub(super) fn save_camera_as_primary(
       audio_layout: layout,
       audio_source: Some(audio_source),
       camera: None,
+      camera_on_top: true,
       cancelled,
       cursor: None,
       cursor_effects: cursor_effects::CursorEffectSettings::default(),

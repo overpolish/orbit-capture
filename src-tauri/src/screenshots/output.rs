@@ -170,7 +170,7 @@ pub fn compose_screenshot(
   image: &CapturedImage,
   settings: &ScreenshotOutputSettings,
 ) -> Result<CapturedImage, String> {
-  super::platform::compose_output_layers(image, settings, 0.0, true, None, None, None, false)
+  super::platform::compose_output_layers(image, settings, 0.0, true, None, None, None, false, false)
 }
 
 #[cfg(not(target_os = "macos"))]

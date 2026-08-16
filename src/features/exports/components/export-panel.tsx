@@ -4,9 +4,13 @@
 import { Button } from "../../../components/base/button/button";
 import { CircularProgressBar } from "../../../components/base/circular-progress-bar/circular-progress-bar";
 import { Overlay } from "../../../components/base/overlay/overlay";
+import { defaultCameraOverlay } from "../recording-export-settings";
 import {
   RecordingOutputSettings,
   ScreenshotOutputSettings,
+  ScreenshotWorkspaceOutputSettings,
+  resizeScreenshotWorkspaceCentered,
+  screenshotWorkspaceItemOutput,
 } from "../screenshot-output";
 import {
   AudioTrackVolume,
@@ -54,6 +58,7 @@ type ExportPanelProps = {
   onCameraResolutionScaleChange?: (scale: number) => void;
   onCancel?: () => void;
   onCancelSave?: () => void;
+  onCanvasResize?: (settings: ScreenshotWorkspaceOutputSettings) => void;
   onCollapseAudioChange?: (collapse: boolean) => void;
   onCompressionChange?: (compression: number) => void;
   onCopy?: () => void;
@@ -71,12 +76,17 @@ type ExportPanelProps = {
   onSave?: () => void;
   onScreenshotBackgroundRadiusChange?: (radiusPercent: number) => void;
   onScreenshotBackgroundRadiusChangeEnd?: () => void;
-  onScreenshotOutputChange?: (settings: ScreenshotOutputSettings) => void;
+  onScreenshotOutputChange?: (
+    settings: ScreenshotOutputSettings,
+    itemId?: number,
+  ) => void;
   onScreenshotRadiusChange?: (radiusPercent: number) => void;
   onScreenshotRadiusChangeEnd?: () => void;
+  onSelectedScreenshotItemChange?: (itemId: number | null) => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
   onSelectedTrackVolumeChange?: (decibels: number) => void;
   onToggleMaximize?: () => void;
+  onVideoTrackOrderChange?: (tracks: RecordingVideoTrackId[]) => void;
   previewUrl?: string | null;
   recordingOutput?: RecordingOutputSettings;
   recordingPreviewError?: string | null;
@@ -85,8 +95,9 @@ type ExportPanelProps = {
   resolutionScalePercent?: number;
   savePhase?: "camera" | "finalizing" | "recording";
   saveProgress?: number | null;
-  screenshotOutput?: ScreenshotOutputSettings;
+  screenshotOutput?: ScreenshotWorkspaceOutputSettings;
   screenshotRadiusPercent?: number;
+  selectedScreenshotItemId?: number | null;
   selectedTrack?: RecordingTrackId | null;
 };
 
@@ -95,7 +106,7 @@ export function ExportPanel({
   audioTrackVolumes = [],
   bakeCamera = false,
   cameraCompression = 0,
-  cameraOverlay,
+  cameraOverlay = defaultCameraOverlay(),
   cameraResolutionScalePercent = 100,
   collapseAudio,
   compression = 0,
@@ -127,6 +138,7 @@ export function ExportPanel({
   onCameraResolutionScaleChange,
   onCancel,
   onCancelSave,
+  onCanvasResize,
   onCollapseAudioChange,
   onCompressionChange,
   onCopy,
@@ -144,9 +156,11 @@ export function ExportPanel({
   onScreenshotOutputChange,
   onScreenshotRadiusChange,
   onScreenshotRadiusChangeEnd,
+  onSelectedScreenshotItemChange,
   onSelectedTrackChange,
   onSelectedTrackVolumeChange,
   onToggleMaximize,
+  onVideoTrackOrderChange,
   previewUrl,
   recordingOutput,
   recordingPreviewError,
@@ -156,7 +170,7 @@ export function ExportPanel({
   savePhase = "recording",
   saveProgress = null,
   screenshotOutput,
-  screenshotRadiusPercent = 0,
+  selectedScreenshotItemId = null,
   selectedTrack = null,
 }: ExportPanelProps) {
   const isRecording = artifact?.kind === "recording";
@@ -172,6 +186,7 @@ export function ExportPanel({
         artifact={artifact}
         bakeCamera={bakeCamera}
         cameraCompression={cameraCompression}
+        cameraOverlay={cameraOverlay}
         cameraResolutionScalePercent={cameraResolutionScalePercent}
         collapseAudio={collapseAudio}
         compression={compression}
@@ -184,6 +199,7 @@ export function ExportPanel({
         isSaving={isSaving}
         onBakeCameraChange={onBakeCameraChange}
         onCameraCompressionChange={onCameraCompressionChange}
+        onCameraOverlayChange={onCameraOverlayChange}
         onCameraResolutionScaleChange={onCameraResolutionScaleChange}
         onCollapseAudioChange={onCollapseAudioChange}
         onCompressionChange={onCompressionChange}
@@ -290,6 +306,7 @@ export function ExportPanel({
           onEnabledVideoTracksChange={onEnabledVideoTracksChange}
           onRecordingOutputChange={onRecordingOutputChange}
           onSelectedTrackChange={onSelectedTrackChange}
+          onVideoTrackOrderChange={onVideoTrackOrderChange}
           recordingOutput={recordingOutput}
           recordingPreviewError={recordingPreviewError}
           recordingPreviewLayout={recordingPreviewLayout}
@@ -303,7 +320,20 @@ export function ExportPanel({
             <ScreenshotInspector
               isSaving={isSaving}
               onChange={onScreenshotOutputChange}
-              settings={screenshotOutput}
+              onDimensionsChange={(width, height) => {
+                onCanvasResize?.(
+                  resizeScreenshotWorkspaceCentered({
+                    height,
+                    settings: screenshotOutput,
+                    sources: artifact.items,
+                    width,
+                  }),
+                );
+              }}
+              settings={screenshotWorkspaceItemOutput(
+                screenshotOutput,
+                selectedScreenshotItemId ?? -1,
+              )}
               sourceHeight={artifact.height}
               sourceWidth={artifact.width}
             />
@@ -312,13 +342,15 @@ export function ExportPanel({
             artifact={artifact}
             onBackgroundRadiusChange={onScreenshotBackgroundRadiusChange}
             onBackgroundRadiusChangeEnd={onScreenshotBackgroundRadiusChangeEnd}
+            onCanvasResize={onCanvasResize}
             onNeedFullResolution={onNeedFullResolution}
             onOutputChange={onScreenshotOutputChange}
             onRadiusChange={onScreenshotRadiusChange}
             onRadiusChangeEnd={onScreenshotRadiusChangeEnd}
+            onSelectedItemChange={onSelectedScreenshotItemChange}
             previewUrl={previewUrl}
-            radiusPercent={screenshotRadiusPercent}
             screenshotOutput={screenshotOutput}
+            selectedItemId={selectedScreenshotItemId}
           />
         </section>
       ) : (

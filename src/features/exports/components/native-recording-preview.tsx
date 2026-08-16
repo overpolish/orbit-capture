@@ -3,6 +3,7 @@
 
 import {
   ReactNode,
+  MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -15,8 +16,14 @@ import {
   copyRecordingPreviewFrameToClipboard,
   copyRecordingPreviewSourceFrame,
 } from "../api";
+import { uncroppedCameraPreviewOverlay } from "../camera-overlay-geometry";
 import { defaultCameraOverlay } from "../recording-export-settings";
-import { defaultRecordingOutput } from "../screenshot-output";
+import {
+  defaultRecordingOutput,
+  recordingVideoTrackOrder,
+  uncroppedScreenshotPreviewOutput,
+} from "../screenshot-output";
+import { RecordingVideoTrackId } from "../types";
 import { useExportWindowShortcuts } from "../use-export-window-shortcuts";
 import { useRecordingPreviewPlayer } from "../use-recording-preview-player";
 import { useRecordingTimelineThumbnails } from "../use-recording-timeline-thumbnails";
@@ -24,11 +31,18 @@ import { useRecordingTimelineThumbnails } from "../use-recording-timeline-thumbn
 import { AudioVisualizer } from "./audio-visualizer";
 import { BakedCameraPreviewViewport } from "./baked-camera-preview-viewport";
 import { PreviewToolbar } from "./preview-toolbar";
-import { RecordingCropToggle } from "./recording-crop-toggle";
+import {
+  RecordingCanvasTools,
+  RecordingCanvasTool,
+} from "./recording-crop-toggle";
 import { RecordingOutputPreviewViewport } from "./recording-output-preview-viewport";
 import { RecordingPlaybackControls } from "./recording-playback-controls";
 import { RecordingPreviewViewport } from "./recording-preview-viewport";
 import { RecordingTrackLanes } from "./recording-track-lanes";
+import {
+  LayerContextMenu,
+  LayerContextMenuState,
+} from "./screenshot-layer-context-menu";
 import { createPlayhead } from "./scrub-playhead";
 import { useCameraOverlayHistory } from "./use-camera-overlay-history";
 
@@ -64,8 +78,10 @@ export function NativeRecordingPreview({
   onEnabledVideoTracksChange,
   onRecordingOutputChange,
   onSelectedTrackChange,
+  onVideoTrackOrderChange,
   previewLayout,
   previewOutputDimensions,
+  previewSourceDimensions,
   recordingOutput,
   selectedTrack = null,
 }: ScrubPreviewProps & { inspector?: ReactNode }) {
@@ -76,7 +92,9 @@ export function NativeRecordingPreview({
   const [playhead] = useState(createPlayhead);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [zoomPercent, setZoomPercent] = useState(100);
-  const [isEditing, setIsEditing] = useState(false);
+  const [canvasTool, setCanvasTool] = useState<RecordingCanvasTool>("select");
+  const [layerContextMenu, setLayerContextMenu] =
+    useState<LayerContextMenuState<RecordingVideoTrackId> | null>(null);
   const [copyState, setCopyState] = useState<"copying" | "done" | "idle">(
     "idle",
   );
@@ -105,12 +123,74 @@ export function NativeRecordingPreview({
       camera: previewOutputDimensions?.camera,
       primary: previewOutputDimensions?.primary ?? { height: 64, width: 64 },
     });
+  const videoTrackOrder = recordingVideoTrackOrder(effectiveRecordingOutput);
+  const cropSource =
+    activeVideoTrack === "primary"
+      ? previewSourceDimensions.primary
+      : previewSourceDimensions.camera;
+  const previewRecordingOutput = useMemo(() => {
+    if (canvasTool !== "crop" || !activeVideoTrack || !cropSource)
+      return effectiveRecordingOutput;
+    if (bakeCamera && activeVideoTrack === "camera")
+      return effectiveRecordingOutput;
+    return {
+      ...effectiveRecordingOutput,
+      [activeVideoTrack]: uncroppedScreenshotPreviewOutput(
+        cropSource,
+        effectiveRecordingOutput[activeVideoTrack],
+      ),
+    };
+  }, [
+    activeVideoTrack,
+    bakeCamera,
+    canvasTool,
+    cropSource,
+    effectiveRecordingOutput,
+  ]);
+  const previewCameraOverlay = useMemo(() => {
+    if (
+      canvasTool !== "crop" ||
+      activeVideoTrack !== "camera" ||
+      !bakeCamera ||
+      !previewSourceDimensions.camera
+    )
+      return cameraOverlay;
+    const output = effectiveRecordingOutput.primary;
+    return uncroppedCameraPreviewOverlay(
+      {
+        height: output.height,
+        kind: "screen",
+        sourceHeight: output.height,
+        sourceWidth: output.width,
+        width: output.width,
+        x: 0,
+        y: 0,
+      },
+      {
+        height: previewSourceDimensions.camera.height,
+        kind: "camera",
+        sourceHeight: previewSourceDimensions.camera.height,
+        sourceWidth: previewSourceDimensions.camera.width,
+        width: previewSourceDimensions.camera.width,
+        x: 0,
+        y: 0,
+      },
+      cameraOverlay,
+    );
+  }, [
+    activeVideoTrack,
+    bakeCamera,
+    cameraOverlay,
+    canvasTool,
+    effectiveRecordingOutput.primary,
+    previewSourceDimensions.camera,
+  ]);
   const player = useRecordingPreviewPlayer({
     artifactId,
     audioTrackVolumes,
     bakeCamera,
     cameraCanvasRef,
-    cameraOverlay,
+    cameraOverlay: previewCameraOverlay,
     cursorCanvasRef,
     cursorEffects,
     enabledStreamIndices: selectedStreamIndices,
@@ -119,7 +199,7 @@ export function NativeRecordingPreview({
       const total = totalDurationRef.current;
       playhead.publish(positionMs / 1_000, total > 0 ? positionMs / total : 0);
     },
-    recordingOutput: effectiveRecordingOutput,
+    recordingOutput: previewRecordingOutput,
     screenCanvasRef,
   });
   const timelineThumbnails = useRecordingTimelineThumbnails({
@@ -143,7 +223,12 @@ export function NativeRecordingPreview({
         pane,
         trackId: index === 0 ? ("primary" as const) : ("camera" as const),
       }))
-      .filter(({ trackId }) => selectedVideoTracks.has(trackId)) ?? [];
+      .filter(({ trackId }) => selectedVideoTracks.has(trackId))
+      .sort(
+        (left, right) =>
+          videoTrackOrder.indexOf(left.trackId) -
+          videoTrackOrder.indexOf(right.trackId),
+      ) ?? [];
   const visiblePreviewHeight = visiblePaneEntries.reduce(
     (height, { pane }) => Math.max(height, pane.height),
     0,
@@ -180,32 +265,109 @@ export function NativeRecordingPreview({
     if (isPlaying) pause();
     else play();
   }, [isPlaying, pause, play]);
+  const canEditActiveTrack =
+    activeVideoTrack !== null && selectedVideoTracks.has(activeVideoTrack);
+  const canResizeActiveTrack =
+    canEditActiveTrack && (!bakeCamera || canPreviewBakedCamera);
+  const moveActiveVideoTrack = useCallback(
+    (direction: "backward" | "forward") => {
+      if (!activeVideoTrack) return;
+      const currentIndex = videoTrackOrder.indexOf(activeVideoTrack);
+      const nextIndex =
+        direction === "forward" ? currentIndex - 1 : currentIndex + 1;
+      if (nextIndex < 0 || nextIndex >= videoTrackOrder.length) return;
+      const next = [...videoTrackOrder];
+      [next[currentIndex], next[nextIndex]] = [
+        next[nextIndex],
+        next[currentIndex],
+      ];
+      onVideoTrackOrderChange?.(next);
+    },
+    [activeVideoTrack, onVideoTrackOrderChange, videoTrackOrder],
+  );
+  const openLayerContextMenu = useCallback(
+    (
+      trackId: RecordingVideoTrackId,
+      event: ReactMouseEvent<HTMLDivElement>,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onSelectedTrackChange?.(trackId);
+      setLayerContextMenu({
+        itemId: trackId,
+        x: Math.min(event.clientX, window.innerWidth - 196),
+        y: Math.min(event.clientY, window.innerHeight - 92),
+      });
+    },
+    [onSelectedTrackChange],
+  );
+  const moveVideoTrack = useCallback(
+    (trackId: RecordingVideoTrackId, direction: "backward" | "forward") => {
+      setLayerContextMenu(null);
+      const currentIndex = videoTrackOrder.indexOf(trackId);
+      const nextIndex =
+        direction === "forward" ? currentIndex - 1 : currentIndex + 1;
+      if (nextIndex < 0 || nextIndex >= videoTrackOrder.length) return;
+      const next = [...videoTrackOrder];
+      [next[currentIndex], next[nextIndex]] = [
+        next[nextIndex],
+        next[currentIndex],
+      ];
+      onVideoTrackOrderChange?.(next);
+    },
+    [onVideoTrackOrderChange, videoTrackOrder],
+  );
 
   useExportWindowShortcuts({
+    onMoveBackward:
+      activeVideoTrack && selectedVideoTracks.has(activeVideoTrack)
+        ? () => {
+            moveActiveVideoTrack("backward");
+          }
+        : undefined,
+    onMoveForward:
+      activeVideoTrack && selectedVideoTracks.has(activeVideoTrack)
+        ? () => {
+            moveActiveVideoTrack("forward");
+          }
+        : undefined,
+    onResizeCanvas: canResizeActiveTrack
+      ? () => {
+          setCanvasTool((current) => (current === "canvas" ? null : "canvas"));
+        }
+      : undefined,
+    onSelectTool:
+      visiblePaneEntries.length > 0
+        ? () => {
+            setCanvasTool((current) =>
+              current === "select" ? null : "select",
+            );
+          }
+        : undefined,
     onToggleCrop:
       visiblePaneEntries.length > 0
         ? () => {
-            setIsEditing((editing) => !editing);
+            setCanvasTool((current) => (current === "crop" ? null : "crop"));
           }
         : undefined,
     onTogglePlayback: layout ? togglePlayback : undefined,
   });
 
-  const canEditActiveTrack =
-    activeVideoTrack !== null && selectedVideoTracks.has(activeVideoTrack);
   const cropToggle =
     visiblePaneEntries.length > 0 ? (
-      <RecordingCropToggle
+      <RecordingCanvasTools
         activeTrack={activeVideoTrack}
         bakeCamera={bakeCamera}
         cameraPane={cameraPane}
-        isEditing={isEditing}
         isEnabled={canEditActiveTrack}
+        isFrameEnabled={canResizeActiveTrack}
+        isSelectEnabled={visiblePaneEntries.length > 0}
         onCameraOverlayReset={onCameraOverlayChange}
         onChange={onRecordingOutputChange}
-        onEditingChange={setIsEditing}
+        onToolChange={setCanvasTool}
         outputs={recordingOutput}
         screenPane={screenPane}
+        tool={canvasTool}
       />
     ) : undefined;
 
@@ -217,17 +379,18 @@ export function NativeRecordingPreview({
   // The crop magnifier samples them directly, so while editing is active the
   // current source frame is fetched once and drawn into the (invisible)
   // canvas of the edited pane.
-  const editedTrack = isEditing && !isScrubbing ? activeVideoTrack : null;
+  const editedTrack =
+    canvasTool === "crop" && !isScrubbing ? activeVideoTrack : null;
   const getPositionMs = player.getPositionMs;
   useEffect(() => {
     if (!editedTrack) return;
-    const isCameraPane = editedTrack === "camera" && !bakeCamera;
-    const targetRef = isCameraPane ? cameraCanvasRef : screenCanvasRef;
+    const isCameraSource = editedTrack === "camera";
+    const targetRef = isCameraSource ? cameraCanvasRef : screenCanvasRef;
     let cancelled = false;
     void copyRecordingPreviewSourceFrame({
       artifactId,
       positionMs: getPositionMs(),
-      track: isCameraPane ? 1 : 0,
+      track: isCameraSource ? 1 : 0,
     })
       .then(async (bytes) => {
         const bitmap = await createImageBitmap(
@@ -308,13 +471,17 @@ export function NativeRecordingPreview({
             ) : canPreviewBakedCamera && screenPane && cameraPane ? (
               <div className="flex min-h-0 min-w-0 grow flex-col">
                 <BakedCameraPreviewViewport
+                  activeTrack={activeVideoTrack}
+                  cameraCanvasRef={cameraCanvasRef}
                   cameraPane={cameraPane}
                   controlsVisible={
-                    isEditing &&
+                    canvasTool !== null &&
+                    canvasTool !== "canvas" &&
                     activeVideoTrack === "camera" &&
                     !isPlaying &&
                     !isScrubbing
                   }
+                  interactionEnabled={!isPlaying && !isScrubbing}
                   isBusy={
                     previewLayout === undefined &&
                     (player.isPreparing || isPreparingPreview)
@@ -325,10 +492,14 @@ export function NativeRecordingPreview({
                   onOutputChange={(settings) =>
                     onRecordingOutputChange?.("primary", settings)
                   }
+                  onSelectTrack={(trackId) => {
+                    onSelectedTrackChange?.(trackId);
+                  }}
                   onSettingsChange={cameraHistory.change}
+                  onTrackContextMenu={openLayerContextMenu}
                   onZoomChange={setZoomPercent}
-                  outputEditing={
-                    isEditing &&
+                  outputControlsVisible={
+                    canvasTool !== null &&
                     activeVideoTrack === "primary" &&
                     !isPlaying &&
                     !isScrubbing
@@ -359,6 +530,7 @@ export function NativeRecordingPreview({
                   screenCanvasRef={screenCanvasRef}
                   screenPane={screenPane}
                   settings={cameraOverlay}
+                  tool={canvasTool}
                   zoomPercent={zoomPercent}
                 />
               </div>
@@ -368,12 +540,17 @@ export function NativeRecordingPreview({
               <div className="flex min-h-0 min-w-0 grow flex-col">
                 <RecordingOutputPreviewViewport
                   activeTrack={activeVideoTrack}
+                  controlsVisible={!isPlaying && !isScrubbing}
                   entries={visiblePaneEntries}
-                  isEditing={isEditing && !isPlaying && !isScrubbing}
                   onChange={onRecordingOutputChange}
                   onNeedFullResolution={player.requestFullResolution}
+                  onSelectTrack={(trackId) => {
+                    onSelectedTrackChange?.(trackId);
+                  }}
+                  onTrackContextMenu={openLayerContextMenu}
                   onZoomChange={setZoomPercent}
                   outputs={recordingOutput}
+                  tool={canvasTool}
                   zoomPercent={zoomPercent}
                 />
               </div>
@@ -474,12 +651,32 @@ export function NativeRecordingPreview({
             onSelectedTrackChange={(streamIndex) => {
               onSelectedTrackChange?.(streamIndex);
             }}
+            onVideoTrackOrderChange={onVideoTrackOrderChange}
             playhead={playhead}
             selectedTrack={selectedTrack}
             thumbnails={timelineThumbnails}
+            videoTrackOrder={[...videoTrackOrder]}
             volumes={audioVolumeByStream}
           />
         )
+      ) : null}
+      {layerContextMenu ? (
+        <LayerContextMenu
+          ariaLabel="Video layer actions"
+          canDelete={false}
+          menu={layerContextMenu}
+          onClose={() => {
+            setLayerContextMenu(null);
+          }}
+          onDelete={() => undefined}
+          onMoveBackward={() => {
+            moveVideoTrack(layerContextMenu.itemId, "backward");
+          }}
+          onMoveForward={() => {
+            moveVideoTrack(layerContextMenu.itemId, "forward");
+          }}
+          showDelete={false}
+        />
       ) : null}
     </div>
   );

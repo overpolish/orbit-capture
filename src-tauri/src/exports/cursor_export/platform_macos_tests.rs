@@ -160,6 +160,7 @@ fn exports_composited_cursor_pixels_into_a_real_movie() {
     audio_layout: AudioLayout::SeparateTracks,
     audio_source: None,
     camera: None,
+    camera_on_top: true,
     cancelled: &cancelled,
     cursor: Some(&cursor_path),
     cursor_effects: CursorEffectSettings::default(),
@@ -227,7 +228,6 @@ fn exports_camera_and_cursor_through_the_same_gpu_compositor() {
   let source = directory.join("source.mov");
   let camera = directory.join("camera.mov");
   let cursor_path = directory.join("source.cursor.jsonl");
-  let destination = directory.join("output.mp4");
   for (path, color, size) in [(&source, "black", "320x180"), (&camera, "red", "160x120")] {
     let status = Command::new(media_preview::ffmpeg_path())
       .args([
@@ -285,82 +285,98 @@ fn exports_camera_and_cursor_through_the_same_gpu_compositor() {
   std::fs::write(&cursor_path, format!("{json}\n")).unwrap();
 
   let cancelled = AtomicBool::new(false);
-  let result = export(CursorExportRequest {
-    audio_layout: AudioLayout::SeparateTracks,
-    audio_source: None,
-    camera: Some((
-      &camera,
-      BakedVideoExportOptions {
-        camera_drop_shadow: false,
-        camera_height: 120,
-        camera_width: 160,
-        overlay: CameraOverlaySettings {
-          camera_width_percent: 25.0,
-          camera_x_percent: 31.25,
-          camera_y_percent: 38.888_89,
-          frame_height_percent: 33.333_33,
-          frame_width_percent: 25.0,
-          frame_x_percent: 18.75,
-          frame_y_percent: 22.222_22,
-          radius_percent: 10.0,
+  for camera_on_top in [true, false] {
+    let destination = directory.join(if camera_on_top {
+      "camera-on-top.mp4"
+    } else {
+      "screen-on-top.mp4"
+    });
+    let result = export(CursorExportRequest {
+      audio_layout: AudioLayout::SeparateTracks,
+      audio_source: None,
+      camera: Some((
+        &camera,
+        BakedVideoExportOptions {
+          camera_drop_shadow: false,
+          camera_height: 120,
+          camera_width: 160,
+          overlay: CameraOverlaySettings {
+            camera_width_percent: 25.0,
+            camera_x_percent: 31.25,
+            camera_y_percent: 38.888_89,
+            frame_height_percent: 33.333_33,
+            frame_width_percent: 25.0,
+            frame_x_percent: 18.75,
+            frame_y_percent: 22.222_22,
+            radius_percent: 10.0,
+          },
+          screen_height: 180,
+          screen_width: 320,
+          video: VideoExportOptions {
+            compression: 1,
+            resolution_scale_percent: 100,
+            source_scale_percent: 100,
+          },
         },
-        screen_height: 180,
-        screen_width: 320,
-        video: VideoExportOptions {
-          compression: 1,
-          resolution_scale_percent: 100,
-          source_scale_percent: 100,
-        },
+      )),
+      camera_on_top,
+      cancelled: &cancelled,
+      cursor: Some(&cursor_path),
+      cursor_effects: CursorEffectSettings::default(),
+      destination: &destination,
+      duration_ms: 1_000,
+      height: 180,
+      on_progress: &mut |_| {},
+      output: &output(320, 180),
+      screen: &source,
+      selection: &TrackSelection::default(),
+      video: VideoExportOptions {
+        compression: 1,
+        resolution_scale_percent: 100,
+        source_scale_percent: 100,
       },
-    )),
-    cancelled: &cancelled,
-    cursor: Some(&cursor_path),
-    cursor_effects: CursorEffectSettings::default(),
-    destination: &destination,
-    duration_ms: 1_000,
-    height: 180,
-    on_progress: &mut |_| {},
-    output: &output(320, 180),
-    screen: &source,
-    selection: &TrackSelection::default(),
-    video: VideoExportOptions {
-      compression: 1,
-      resolution_scale_percent: 100,
-      source_scale_percent: 100,
-    },
-    width: 320,
-  })
-  .unwrap();
-  assert_eq!(result, ExportRunResult::Completed);
-  let frame = Command::new(media_preview::ffmpeg_path())
-    .args(["-hide_banner", "-loglevel", "error", "-ss", "0.5", "-i"])
-    .arg(&destination)
-    .args([
-      "-frames:v",
-      "1",
-      "-f",
-      "rawvideo",
-      "-pix_fmt",
-      "rgb24",
-      "pipe:1",
-    ])
-    .output()
-    .unwrap();
-  assert!(frame.status.success());
-  assert!(frame
-    .stdout
-    .chunks_exact(3)
-    .any(|pixel| pixel[0] > 180 && pixel[1] < 80 && pixel[2] < 80));
-  assert!(frame
-    .stdout
-    .chunks_exact(3)
-    .enumerate()
-    .filter(|(index, _)| {
-      let x = index % 320;
-      let y = index / 320;
-      (65..135).contains(&x) && (45..95).contains(&y)
+      width: 320,
     })
-    .all(|(_, pixel)| !(pixel[0] > 180 && pixel[1] > 180 && pixel[2] > 180)));
+    .unwrap();
+    assert_eq!(result, ExportRunResult::Completed);
+    let frame = Command::new(media_preview::ffmpeg_path())
+      .args(["-hide_banner", "-loglevel", "error", "-ss", "0.5", "-i"])
+      .arg(&destination)
+      .args([
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "pipe:1",
+      ])
+      .output()
+      .unwrap();
+    assert!(frame.status.success());
+    assert_eq!(
+      frame
+        .stdout
+        .chunks_exact(3)
+        .any(|pixel| pixel[0] > 180 && pixel[1] < 80 && pixel[2] < 80),
+      camera_on_top,
+      "the camera should only remain visible when it is above the opaque screen"
+    );
+    let cursor_is_visible = frame
+      .stdout
+      .chunks_exact(3)
+      .enumerate()
+      .filter(|(index, _)| {
+        let x = index % 320;
+        let y = index / 320;
+        (65..135).contains(&x) && (45..95).contains(&y)
+      })
+      .any(|(_, pixel)| pixel[0] > 180 && pixel[1] > 180 && pixel[2] > 180);
+    assert_eq!(
+      cursor_is_visible, !camera_on_top,
+      "the cursor should follow the screen layer in the video stack"
+    );
+  }
   let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -432,6 +448,7 @@ fn benchmarks_retina_gpu_cursor_export() {
     audio_layout: AudioLayout::SeparateTracks,
     audio_source: None,
     camera: None,
+    camera_on_top: true,
     cancelled: &cancelled,
     cursor: Some(&cursor_path),
     cursor_effects: CursorEffectSettings::default(),
@@ -501,6 +518,7 @@ fn benchmarks_animated_mesh_export() {
       audio_layout: AudioLayout::SeparateTracks,
       audio_source: None,
       camera: None,
+      camera_on_top: true,
       cancelled: &cancelled,
       cursor: None,
       cursor_effects: CursorEffectSettings::default(),

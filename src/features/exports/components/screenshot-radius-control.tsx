@@ -34,9 +34,8 @@ export function ScreenshotRadiusControl({
   const radius = (Math.min(width, height) * radiusPercent) / 100;
   const inverseScale = "var(--preview-inverse-scale, 1)";
   const handleOffset = `calc(${(radius * RADIUS_HANDLE_TRAVEL).toString()}px + ${RADIUS_HANDLE_INSET.toString()}px * ${inverseScale})`;
-  const size = `calc(8px * ${inverseScale})`;
 
-  const move = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const move = (event: ReactPointerEvent<SVGSVGElement>) => {
     const bounds = mediaRef.current?.getBoundingClientRect();
     if (!activeRef.current || !bounds || bounds.width === 0) return;
     event.preventDefault();
@@ -57,7 +56,7 @@ export function ScreenshotRadiusControl({
     onChange?.((nextRadius * 100) / shortest);
   };
 
-  const finish = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const finish = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (!activeRef.current) return;
     event.stopPropagation();
     activeRef.current = false;
@@ -68,9 +67,10 @@ export function ScreenshotRadiusControl({
   };
 
   return (
-    <button
+    <svg
       aria-label={`${anchor === "top-right" ? "Background" : "Screenshot"} corner radius ${Math.round(radiusPercent).toString()} percent`}
-      className="absolute rounded-full border-0 bg-white p-0 outline-none"
+      className="absolute overflow-visible outline-none"
+      height="16"
       onPointerCancel={finish}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
@@ -81,9 +81,10 @@ export function ScreenshotRadiusControl({
       }}
       onPointerMove={move}
       onPointerUp={finish}
+      role="button"
       style={{
         cursor: anchor === "top-right" ? "nesw-resize" : "nwse-resize",
-        height: size,
+        height: `calc(16px * ${inverseScale})`,
         ...(anchor === "top-right"
           ? { right: handleOffset }
           : {
@@ -97,10 +98,14 @@ export function ScreenshotRadiusControl({
           anchor === "top-right"
             ? "translate(50%, -50%)"
             : "translate(-50%, -50%)",
-        width: size,
+        transformOrigin: "center",
+        width: `calc(16px * ${inverseScale})`,
       }}
       tabIndex={-1}
-      type="button"
-    />
+      viewBox="0 0 16 16"
+    >
+      <circle className="fill-transparent" cx="8" cy="8" r="8" />
+      <circle className="fill-white" cx="8" cy="8" r="4" />
+    </svg>
   );
 }

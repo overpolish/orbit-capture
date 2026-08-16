@@ -35,6 +35,7 @@ pub(super) struct CursorExportRequest<'a> {
   pub audio_layout: AudioLayout,
   pub audio_source: Option<&'a Path>,
   pub camera: Option<(&'a Path, BakedVideoExportOptions)>,
+  pub camera_on_top: bool,
   pub cancelled: &'a AtomicBool,
   pub cursor: Option<&'a Path>,
   pub cursor_effects: CursorEffectSettings,

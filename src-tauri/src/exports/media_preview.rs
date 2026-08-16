@@ -25,6 +25,8 @@ mod audio;
 mod bake;
 mod encode;
 mod estimate;
+#[cfg(target_os = "macos")]
+mod macos;
 mod output;
 mod tools;
 #[cfg(target_os = "windows")]
@@ -32,7 +34,9 @@ mod windows;
 
 pub use audio::prepare;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-pub(in crate::exports) use bake::{bake_geometry, BakeGeometry};
+pub(in crate::exports) use bake::bake_geometry;
+#[cfg(target_os = "windows")]
+pub(in crate::exports) use bake::BakeGeometry;
 #[cfg(target_os = "macos")]
 pub(in crate::exports) use encode::remux_error;
 pub use encode::{
@@ -42,6 +46,8 @@ pub use encode::{
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(in crate::exports) use encode::{remux_temp_path, run_export};
 pub use estimate::{estimate_compressed_video_bytes, supports_compression};
+#[cfg(target_os = "macos")]
+pub(in crate::exports) use macos::recording_info;
 pub use output::duration_ms;
 pub use tools::inspect_audio_tracks;
 #[cfg(target_os = "windows")]
@@ -57,6 +63,13 @@ use super::{AudioTrackKind, RecordingAudioTrack};
 
 const WAVEFORM_POINTS: usize = 512;
 const WAVEFORM_SAMPLE_RATE: u64 = 8_000;
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::exports) struct RecordingInfo {
+  pub duration_ms: u64,
+  pub height: u32,
+  pub width: u32,
+}
 /// Every file this module writes starts with it. Nothing else in the
 /// recordings directory does, which is what lets both the cleanup paths and
 /// the startup sweep tell a derivative from a recording by its name alone.

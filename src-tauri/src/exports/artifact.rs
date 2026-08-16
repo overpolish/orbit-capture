@@ -13,14 +13,22 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
     .map(|artifact| match artifact {
       ExportArtifact::Screenshot {
         id,
-        image,
+        items,
         suggested_file_stem,
       } => ExportArtifactSnapshot::Screenshot {
         id: *id,
+        items: items
+          .iter()
+          .map(|item| ScreenshotItemSnapshot {
+            height: item.image.height,
+            id: item.id,
+            width: item.image.width,
+          })
+          .collect(),
         suggested_file_stem: suggested_file_stem.clone(),
         extension: SCREENSHOT_EXTENSION.to_owned(),
-        width: image.width,
-        height: image.height,
+        width: items.first().map_or(0, |item| item.image.width),
+        height: items.first().map_or(0, |item| item.image.height),
       },
       ExportArtifact::Recording {
         audio_tracks,
@@ -146,6 +154,13 @@ pub(super) fn full_preview_png(image: &CapturedImage) -> Result<Vec<u8>, String>
   Ok(png)
 }
 
+pub(super) fn screenshot_image(items: &[ScreenshotItem]) -> Result<&CapturedImage, String> {
+  items
+    .first()
+    .map(|item| &item.image)
+    .ok_or_else(|| "The screenshot workspace is empty".to_owned())
+}
+
 /// Deletes the working file behind a recording that will not be saved.
 ///
 /// A screenshot lives in memory and needs nothing; a recording is a file, and
@@ -212,8 +227,9 @@ pub(super) fn next_id(app: &AppHandle) -> u64 {
     .wrapping_add(1)
 }
 
-/// Puts an artifact in front of the user, replacing whatever was waiting.
-pub(super) fn present(
+/// Puts a new artifact in front of the user. Admission is checked before any
+/// state is changed, so this path can never silently replace unsaved work.
+pub(super) fn present_new(
   app: &AppHandle,
   artifact: ExportArtifact,
   preview: Option<Vec<u8>>,
@@ -221,6 +237,18 @@ pub(super) fn present(
   clear_recording_preview(app);
   {
     let state = app.state::<ExportState>();
+    let mut artifact_slot = state
+      .artifact
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if artifact_slot.is_some() {
+      workspace::focus_pending(app);
+      return Err("An export workspace is already open".to_owned());
+    }
+    let mut reservation = state
+      .capture_reservation
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner());
     let defaults = crate::settings::current(app);
     let default_directory = match &artifact {
       ExportArtifact::Screenshot { .. } => defaults.screenshot_directory,
@@ -239,19 +267,34 @@ pub(super) fn present(
       .full_preview
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    let replaced = state
-      .artifact
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner())
-      .replace(artifact);
-    // Taking a screenshot while a recording waits to be saved abandons the
-    // recording, and an abandoned recording must not outlive its window.
-    if let Some(replaced) = replaced {
-      delete_working_file(&replaced);
-    }
+    *artifact_slot = Some(artifact);
+    *reservation = None;
   }
 
-  window::show(app).map_err(|error| error.to_string())?;
+  if let Err(error) = window::show(app) {
+    // A hidden artifact is a deadlocked workspace. Keep a recording's file on
+    // disk so startup recovery can offer it again, but release the in-memory
+    // admission state so the current app remains usable.
+    let state = app.state::<ExportState>();
+    *state
+      .artifact
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    *state
+      .preview
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    *state
+      .full_preview
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    *state
+      .capture_reservation
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    emit_snapshot(app);
+    return Err(error.to_string());
+  }
   // Once an artifact is safely in front of the user, the capture controls
   // have finished their job. Keeping this at the shared presentation boundary
   // gives screenshots and recordings the same handoff without affecting
@@ -269,12 +312,44 @@ pub fn present_screenshot(
   suggested_file_stem: String,
 ) -> Result<(), String> {
   let preview = preview_png(&image);
+  let item = ScreenshotItem {
+    id: next_id(app),
+    image,
+  };
 
-  present(
+  {
+    let state = app.state::<ExportState>();
+    let mut artifact = state
+      .artifact
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(ExportArtifact::Screenshot { items, .. }) = artifact.as_mut() {
+      items.push(item);
+      *state
+        .preview
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = preview;
+      *state
+        .full_preview
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+      *state
+        .capture_reservation
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+      drop(artifact);
+      window::show(app).map_err(|error| error.to_string())?;
+      let _ = crate::windows::hide_recording_ui(app.clone());
+      emit_snapshot(app);
+      return Ok(());
+    }
+  }
+
+  present_new(
     app,
     ExportArtifact::Screenshot {
       id: next_id(app),
-      image,
+      items: vec![item],
       suggested_file_stem,
     },
     preview,
@@ -310,7 +385,7 @@ pub fn present_recording(
     audio_tracks = media_preview::inspect_audio_tracks(&path).unwrap_or_default();
   }
 
-  present(
+  present_new(
     app,
     ExportArtifact::Recording {
       id: next_id(app),

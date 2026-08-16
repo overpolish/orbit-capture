@@ -12,12 +12,16 @@ pub fn get_export_snapshot(app: AppHandle) -> ExportSnapshot {
 /// The thumbnail by default; the full-resolution capture only once something
 /// actually needs it, and cached from then on.
 #[tauri::command]
-pub async fn get_export_preview(app: AppHandle, full: bool) -> Result<Response, String> {
+pub async fn get_export_preview(
+  app: AppHandle,
+  full: bool,
+  item_id: Option<u64>,
+) -> Result<Response, String> {
   let bytes = tauri::async_runtime::spawn_blocking(move || {
     let state = app.state::<ExportState>();
     let missing = || "There is nothing waiting to be exported".to_owned();
 
-    if !full {
+    if !full && item_id.is_none() {
       return state
         .preview
         .lock()
@@ -26,13 +30,15 @@ pub async fn get_export_preview(app: AppHandle, full: bool) -> Result<Response, 
         .ok_or_else(missing);
     }
 
-    if let Some(cached) = state
-      .full_preview
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner())
-      .clone()
-    {
-      return Ok(cached);
+    if item_id.is_none() {
+      if let Some(cached) = state
+        .full_preview
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+      {
+        return Ok(cached);
+      }
     }
 
     let encoded = {
@@ -42,15 +48,27 @@ pub async fn get_export_preview(app: AppHandle, full: bool) -> Result<Response, 
         .unwrap_or_else(|poisoned| poisoned.into_inner());
       // A recording has no full-resolution still to zoom into, so the poster
       // it was presented with is all there is.
-      let Some(ExportArtifact::Screenshot { image, .. }) = artifact.as_ref() else {
+      let Some(ExportArtifact::Screenshot { items, .. }) = artifact.as_ref() else {
         return Err(missing());
       };
+      let image = item_id.map_or_else(
+        || screenshot_image(items),
+        |item_id| {
+          items
+            .iter()
+            .find(|item| item.id == item_id)
+            .map(|item| &item.image)
+            .ok_or_else(|| "That screenshot item is no longer available".to_owned())
+        },
+      )?;
       full_preview_png(image)?
     };
-    *state
-      .full_preview
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(encoded.clone());
+    if item_id.is_none() {
+      *state
+        .full_preview
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(encoded.clone());
+    }
 
     Ok(encoded)
   })
@@ -65,25 +83,25 @@ pub async fn render_screenshot_output_preview(
   app: AppHandle,
   artifact_id: u64,
   request_id: u32,
-  output: ScreenshotOutputSettings,
+  output: ScreenshotWorkspaceOutputSettings,
   channel: Channel,
 ) -> Result<(), String> {
   tauri::async_runtime::spawn_blocking(move || {
-    let image = {
+    let items = {
       let state = app.state::<ExportState>();
       let artifact = state
         .artifact
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-      let Some(ExportArtifact::Screenshot { id, image, .. }) = artifact.as_ref() else {
+      let Some(ExportArtifact::Screenshot { id, items, .. }) = artifact.as_ref() else {
         return Err("There is no screenshot to preview".to_owned());
       };
       if *id != artifact_id {
         return Err("That screenshot is no longer waiting to be exported".to_owned());
       }
-      image.clone()
+      items.clone()
     };
-    let composed = compose_screenshot(&image, &output)?;
+    let composed = compose_screenshot_workspace(&app, &items, &output)?;
     let mut payload = Vec::with_capacity(12 + composed.rgba.len());
     payload.extend_from_slice(&request_id.to_le_bytes());
     payload.extend_from_slice(&composed.width.to_le_bytes());

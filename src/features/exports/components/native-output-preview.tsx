@@ -5,7 +5,7 @@ import { Channel } from "@tauri-apps/api/core";
 import { RefObject, useEffect, useRef } from "react";
 
 import { renderScreenshotOutputPreview } from "../api";
-import { ScreenshotOutputSettings } from "../screenshot-output";
+import { ScreenshotWorkspaceOutputSettings } from "../screenshot-output";
 
 const HEADER_LENGTH = 12;
 
@@ -17,7 +17,7 @@ export function NativeOutputPreview({
 }: {
   artifactId: number;
   canvasRef: RefObject<HTMLCanvasElement | null>;
-  output: ScreenshotOutputSettings;
+  output: ScreenshotWorkspaceOutputSettings;
   onReady?: () => void;
 }) {
   const requestRef = useRef(0);

@@ -204,10 +204,16 @@ fn accepts_only_camera_overlay_values_the_window_can_produce() {
   })
   .is_err());
   assert!(validate_camera_overlay(CameraOverlaySettings {
-    frame_width_percent: 61.0,
+    frame_width_percent: 801.0,
     ..valid
   })
   .is_err());
+  assert!(validate_camera_overlay(CameraOverlaySettings {
+    camera_x_percent: -20.0,
+    frame_x_percent: -30.0,
+    ..valid
+  })
+  .is_ok());
   assert!(validate_camera_overlay(CameraOverlaySettings {
     camera_x_percent: f64::NAN,
     ..valid

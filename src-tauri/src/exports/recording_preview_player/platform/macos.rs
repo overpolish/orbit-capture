@@ -54,6 +54,7 @@ pub(crate) fn send_frame(
       cursor,
     } => {
       if let Some(surface) = &sources.preview_surface {
+        let _batch = surface.present_batch();
         let screen_presented = surface.present(0, &screen);
         let camera_presented = camera
           .as_ref()

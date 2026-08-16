@@ -44,6 +44,7 @@ pub(super) fn save_baked(request: CursorSaveRequest<'_>) -> Result<Option<PathBu
     audio_layout: request.layout,
     audio_source: None,
     camera: None,
+    camera_on_top: true,
     cancelled: request.cancelled,
     cursor: Some(request.cursor),
     cursor_effects: request.effects,

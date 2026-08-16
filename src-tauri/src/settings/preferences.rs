@@ -132,14 +132,16 @@ pub fn set_general_settings(
     crate::windows::sync_capture_affinity(&app, settings.record_screenwide_windows)
       .map_err(|error| error.to_string())?;
   }
+  #[cfg(target_os = "windows")]
   if let Err(error) = write(&app, &settings) {
-    #[cfg(target_os = "windows")]
     if capture_affinity_changed {
       let _ =
         crate::windows::sync_capture_affinity(&app, current_settings.record_screenwide_windows);
     }
     return Err(error);
   }
+  #[cfg(not(target_os = "windows"))]
+  write(&app, &settings)?;
   *app
     .state::<GeneralSettingsState>()
     .0

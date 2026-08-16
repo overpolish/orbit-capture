@@ -1,16 +1,19 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { RefObject, useRef } from "react";
+import { MouseEvent as ReactMouseEvent, RefObject, useRef } from "react";
 
 import {
   RecordingOutputSettings,
   screenshotOutputDimensions,
+  screenshotWorkspaceItemOutput,
 } from "../screenshot-output";
 import { RecordingPreviewPane, RecordingVideoTrackId } from "../types";
 import { usePreviewCapabilities } from "../use-preview-capabilities";
 
 import { InteractivePreviewViewport } from "./interactive-preview-viewport";
+import { RecordingCanvasTool } from "./recording-crop-toggle";
+import { ScreenshotCanvasControl } from "./screenshot-canvas-control";
 import { ScreenshotPreviewLayer } from "./screenshot-preview-layer";
 
 const PANE_GAP = 24;
@@ -24,13 +27,25 @@ type Entry = {
 function RecordingOutputPane({
   controlsVisible,
   entry,
+  isActive,
   onChange,
+  onMediaResizeEnd,
+  onMediaResizeStart,
+  onSelect,
+  onTrackContextMenu,
   settings,
+  tool,
 }: {
   controlsVisible: boolean;
   entry: Entry;
+  isActive: boolean;
   settings: RecordingOutputSettings[RecordingVideoTrackId];
+  tool: RecordingCanvasTool;
   onChange?: (settings: RecordingOutputSettings[RecordingVideoTrackId]) => void;
+  onMediaResizeEnd?: () => void;
+  onMediaResizeStart?: () => void;
+  onSelect?: () => void;
+  onTrackContextMenu?: (event: ReactMouseEvent<HTMLDivElement>) => void;
 }) {
   const outputRef = useRef<HTMLDivElement | null>(null);
   const nativeSurface = usePreviewCapabilities()?.nativeRecordingPreview;
@@ -39,9 +54,11 @@ function RecordingOutputPane({
     height: entry.pane.sourceHeight,
     width: entry.pane.sourceWidth,
   };
+  const workspace = workspaceFor(settings);
   return (
     <div
       className="absolute select-none"
+      onContextMenu={onTrackContextMenu}
       ref={outputRef}
       style={{ height: output.height, width: output.width }}
     >
@@ -52,7 +69,11 @@ function RecordingOutputPane({
         role="img"
       />
       <ScreenshotPreviewLayer
-        isEditing={controlsVisible}
+        isCropTarget={controlsVisible && !isActive && tool === "crop"}
+        isEditing={controlsVisible && isActive && tool === "crop"}
+        isItemSelected={isActive}
+        isSelecting={controlsVisible && tool === "select"}
+        onItemSelect={onSelect}
         onOutputChange={onChange}
         onRadiusChange={(radiusPercent) => {
           onChange?.({ ...settings, radiusPercent });
@@ -67,29 +88,61 @@ function RecordingOutputPane({
           width: source.width,
         }}
       />
+      {controlsVisible && tool === "canvas" ? (
+        <ScreenshotCanvasControl
+          items={[{ ...source, id: 0 }]}
+          mediaRef={outputRef}
+          onChange={(next) => {
+            onChange?.(screenshotWorkspaceItemOutput(next, 0));
+          }}
+          onResizeEnd={(next) => {
+            onMediaResizeEnd?.();
+            onChange?.(screenshotWorkspaceItemOutput(next, 0));
+          }}
+          onResizeStart={() => {
+            onSelect?.();
+            onMediaResizeStart?.();
+          }}
+          output={output}
+          settings={workspace}
+        />
+      ) : null}
     </div>
   );
 }
 
+const workspaceFor = (
+  settings: RecordingOutputSettings[RecordingVideoTrackId],
+) => ({ ...settings, items: [{ id: 0, output: settings }] });
+
 export function RecordingOutputPreviewViewport({
   activeTrack,
+  controlsVisible,
   entries,
-  isEditing,
   onChange,
   onNeedFullResolution,
+  onSelectTrack,
+  onTrackContextMenu,
   onZoomChange,
   outputs,
+  tool,
   zoomPercent,
 }: {
   activeTrack: RecordingVideoTrackId | null;
+  controlsVisible: boolean;
   entries: Entry[];
-  isEditing: boolean;
   outputs: RecordingOutputSettings;
+  tool: RecordingCanvasTool;
   onChange?: (
     trackId: RecordingVideoTrackId,
     settings: RecordingOutputSettings[RecordingVideoTrackId],
   ) => void;
   onNeedFullResolution?: () => void;
+  onSelectTrack?: (trackId: RecordingVideoTrackId) => void;
+  onTrackContextMenu?: (
+    trackId: RecordingVideoTrackId,
+    event: ReactMouseEvent<HTMLDivElement>,
+  ) => void;
   onZoomChange?: (zoomPercent: number) => void;
   zoomPercent?: number;
 }) {
@@ -108,9 +161,10 @@ export function RecordingOutputPreviewViewport({
   return (
     <InteractivePreviewViewport<HTMLDivElement>
       getMediaSize={() => ({ height, width })}
+      mediaSizeKey={`${width.toString()}x${height.toString()}`}
       onNeedFullResolution={onNeedFullResolution}
       onZoomChange={onZoomChange}
-      renderMedia={({ ref, style }) => {
+      renderMedia={({ onMediaResizeEnd, onMediaResizeStart, ref, style }) => {
         let x = 0;
         return (
           <div
@@ -134,12 +188,22 @@ export function RecordingOutputPreviewViewport({
                   }}
                 >
                   <RecordingOutputPane
-                    controlsVisible={isEditing && activeTrack === entry.trackId}
+                    controlsVisible={controlsVisible}
                     entry={entry}
+                    isActive={activeTrack === entry.trackId}
                     onChange={(settings) => {
                       onChange?.(entry.trackId, settings);
                     }}
+                    onMediaResizeEnd={onMediaResizeEnd}
+                    onMediaResizeStart={onMediaResizeStart}
+                    onSelect={() => {
+                      onSelectTrack?.(entry.trackId);
+                    }}
+                    onTrackContextMenu={(event) => {
+                      onTrackContextMenu?.(entry.trackId, event);
+                    }}
                     settings={outputs[entry.trackId]}
+                    tool={tool}
                   />
                 </div>
               );
@@ -147,7 +211,7 @@ export function RecordingOutputPreviewViewport({
           </div>
         );
       }}
-      resetKey={`recording-output:${entries.map(({ trackId }) => `${trackId}-${outputs[trackId].width.toString()}x${outputs[trackId].height.toString()}`).join(":")}`}
+      resetKey={`recording-output:${entries.map(({ trackId }) => trackId).join(":")}`}
       zoomPercent={zoomPercent}
     />
   );

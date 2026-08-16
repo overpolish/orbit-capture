@@ -29,6 +29,7 @@ unsafe extern "C" {
     y: f64,
     width: f64,
     height: f64,
+    defer_resize: i32,
   );
   fn screenwide_preview_surface_set_viewport(
     handle: *mut std::ffi::c_void,
@@ -39,9 +40,12 @@ unsafe extern "C" {
     red: f64,
     green: f64,
     blue: f64,
+    alpha: f64,
   );
   fn screenwide_preview_surface_begin_layout(handle: *mut std::ffi::c_void);
   fn screenwide_preview_surface_finish_layout(handle: *mut std::ffi::c_void);
+  fn screenwide_preview_surface_begin_present(handle: *mut std::ffi::c_void);
+  fn screenwide_preview_surface_end_present(handle: *mut std::ffi::c_void);
   fn screenwide_preview_surface_present(
     handle: *mut std::ffi::c_void,
     index: u32,
@@ -101,13 +105,6 @@ impl RecordingPreviewSurface {
   }
 
   pub(crate) fn set_viewport(&self, rect: PreviewSurfaceRect, backdrop: [f64; 4]) {
-    // AppKit's container remains opaque. Flatten over black to preserve the
-    // established macOS appearance while Windows retains the live alpha.
-    let backdrop = [
-      backdrop[0] * backdrop[3],
-      backdrop[1] * backdrop[3],
-      backdrop[2] * backdrop[3],
-    ];
     unsafe {
       screenwide_preview_surface_set_viewport(
         self.handle,
@@ -118,6 +115,10 @@ impl RecordingPreviewSurface {
         backdrop[0],
         backdrop[1],
         backdrop[2],
+        // The export window is transparent, so re-blending the sampled CSS
+        // stack against AppKit's backing material shifts #1c1c1c to #1d1d1d.
+        // Its RGB is already the final composited WebView colour.
+        1.0,
       );
     }
   }
@@ -130,7 +131,10 @@ impl RecordingPreviewSurface {
 
   pub(crate) fn set_scale(&self, _scale: f64) {}
 
-  pub(crate) fn layout(&self, index: u32, rect: PreviewSurfaceRect) {
+  /// `defer_resize` holds back a size change until the next present so the
+  /// new pane rect and its re-composed frame reach the screen together; pass
+  /// it when a present for this layout is on its way.
+  pub(crate) fn layout(&self, index: u32, rect: PreviewSurfaceRect, defer_resize: bool) {
     unsafe {
       screenwide_preview_surface_layout(
         self.handle,
@@ -139,6 +143,7 @@ impl RecordingPreviewSurface {
         rect.y,
         rect.width,
         rect.height,
+        i32::from(defer_resize),
       );
     }
   }
@@ -189,6 +194,35 @@ impl RecordingPreviewSurface {
     })
   }
 
+  pub(crate) fn present_screenshot_layer(
+    &self,
+    index: u32,
+    source_token: u64,
+    source: &CapturedImage,
+    settings: &ScreenshotOutputSettings,
+    foreground_only: bool,
+  ) -> Result<bool, String> {
+    let mut canvas = native_canvas(source.width, source.height, settings, true)?;
+    canvas.foreground_only = u32::from(foreground_only);
+    Ok(unsafe {
+      screenwide_preview_surface_present_composed(
+        self.handle,
+        index,
+        source_token,
+        source.rgba.as_ptr(),
+        source.width,
+        source.height,
+        settings.width,
+        settings.height,
+        std::ptr::from_ref(&canvas),
+        0.0,
+        std::ptr::null(),
+        std::ptr::null(),
+        std::ptr::null(),
+      ) != 0
+    })
+  }
+
   #[allow(clippy::too_many_arguments)]
   pub(crate) fn present_composed_pixels(
     &self,
@@ -224,6 +258,17 @@ impl RecordingPreviewSurface {
     })
   }
 
+  /// Opens a present batch: every present until the guard drops lands in one
+  /// Core Animation commit together with all frames deferred by `layout`.
+  /// Dropping the guard flushes even when nothing was presented, so a
+  /// deferred layout never strands the panes.
+  pub(crate) fn present_batch(&self) -> PresentBatch<'_> {
+    unsafe {
+      screenwide_preview_surface_begin_present(self.handle);
+    }
+    PresentBatch { surface: self }
+  }
+
   pub(crate) fn finish_layout(&self) {
     unsafe {
       screenwide_preview_surface_finish_layout(self.handle);
@@ -241,6 +286,18 @@ impl Drop for RecordingPreviewSurface {
   fn drop(&mut self) {
     unsafe {
       screenwide_preview_surface_destroy(self.handle);
+    }
+  }
+}
+
+pub(crate) struct PresentBatch<'a> {
+  surface: &'a RecordingPreviewSurface,
+}
+
+impl Drop for PresentBatch<'_> {
+  fn drop(&mut self) {
+    unsafe {
+      screenwide_preview_surface_end_present(self.surface.handle);
     }
   }
 }

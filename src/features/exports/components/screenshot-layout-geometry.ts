@@ -6,20 +6,6 @@ import { clamp, OverlayRect } from "../camera-overlay-geometry";
 
 export type ScreenshotLayoutEdge = TransformEdge;
 
-export const radialResizeCursor = (
-  point: { x: number; y: number },
-  center: { x: number; y: number },
-) => {
-  const angle =
-    ((Math.atan2(point.y - center.y, point.x - center.x) * 180) / Math.PI +
-      360) %
-    180;
-  if (angle < 22.5 || angle >= 157.5) return "ew-resize";
-  if (angle < 67.5) return "nwse-resize";
-  if (angle < 112.5) return "ns-resize";
-  return "nesw-resize";
-};
-
 export const constrainedHandlePoint = (
   crop: OverlayRect,
   edges: ScreenshotLayoutEdge[],

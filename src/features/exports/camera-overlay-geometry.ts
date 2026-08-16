@@ -18,9 +18,6 @@ export type CameraOverlayGeometry = {
 
 export const RADIUS_HANDLE_INSET = 10;
 export const RADIUS_HANDLE_TRAVEL = 0.55;
-export const SCALE_GIZMO_DIMENSION = 600;
-const CAMERA_PLACEMENT_PADDING_PERCENT = 2;
-export const CAMERA_FRAME_BASE_WIDTH_PERCENT = 25;
 const CAMERA_FRAME_MINIMUM_SHORT_EDGE_PERCENT = 10;
 
 export const clamp = (value: number, minimum: number, maximum: number) =>
@@ -36,47 +33,6 @@ export const minimumCameraFrameWidth = (
     100;
   const aspectRatio = frame.width / frame.height;
   return aspectRatio >= 1 ? minimumShortEdge * aspectRatio : minimumShortEdge;
-};
-
-const nearestValue = (value: number, candidates: number[]) =>
-  candidates.reduce((nearest, candidate) =>
-    Math.abs(candidate - value) < Math.abs(nearest - value)
-      ? candidate
-      : nearest,
-  );
-
-/**
- * Snaps a camera frame to a 3 x 3 placement grid. One proportional padding
- * distance is used on both axes so the visual inset remains even.
- */
-export const snapCameraFramePosition = ({
-  frame,
-  paddingPercent = CAMERA_PLACEMENT_PADDING_PERCENT,
-  position,
-  screen,
-}: {
-  frame: OverlayRect;
-  position: { x: number; y: number };
-  screen: Pick<RecordingPreviewPane, "height" | "width">;
-  paddingPercent?: number;
-}) => {
-  const maximumX = Math.max(0, screen.width - frame.width);
-  const maximumY = Math.max(0, screen.height - frame.height);
-  const padding =
-    (Math.min(screen.width, screen.height) * paddingPercent) / 100;
-
-  return {
-    x: nearestValue(position.x, [
-      clamp(padding, 0, maximumX),
-      maximumX / 2,
-      clamp(maximumX - padding, 0, maximumX),
-    ]),
-    y: nearestValue(position.y, [
-      clamp(padding, 0, maximumY),
-      maximumY / 2,
-      clamp(maximumY - padding, 0, maximumY),
-    ]),
-  };
 };
 
 export const cameraOverlayGeometry = (
@@ -114,22 +70,80 @@ export const cameraOverlayGeometry = (
   };
 };
 
-/** Keyframeless' compact nonlinear scale-gizmo curve. */
-export const scaleRingExtent = (percent: number, minimumDimension: number) => {
-  const start = minimumDimension * 0.12;
-  const span = minimumDimension * 0.057;
-  if (percent <= 100) return start + (span * percent) / 100;
-  return start + span + 2 * span * (Math.sqrt(1 + (percent - 100) / 100) - 1);
+/** Display-only overlay used by the native compositor while camera crop is active. */
+export const uncroppedCameraPreviewOverlay = (
+  screen: RecordingPreviewPane,
+  camera: RecordingPreviewPane,
+  settings: CameraOverlaySettings,
+): CameraOverlaySettings => {
+  const { camera: image } = cameraOverlayGeometry(screen, camera, settings);
+  return {
+    ...settings,
+    frameHeightPercent: (image.height * 100) / screen.height,
+    frameWidthPercent: (image.width * 100) / screen.width,
+    frameXPercent: (image.x * 100) / screen.width,
+    frameYPercent: (image.y * 100) / screen.height,
+    radiusPercent: 0,
+  };
 };
 
-export const scalePercentFromRingExtent = (
-  extent: number,
-  minimumDimension: number,
-) => {
-  const start = minimumDimension * 0.12;
-  const span = minimumDimension * 0.057;
-  if (extent <= start + span)
-    return clamp(((extent - start) * 100) / span, 1, 100);
-  const normalized = (extent - start - span) / (2 * span) + 1;
-  return clamp(100 + (normalized * normalized - 1) * 100, 100, 800);
+/** Preserve baked-camera geometry while the shared output canvas is resized. */
+export const resizeCameraOverlayCanvas = (
+  settings: CameraOverlaySettings,
+  previous: { height: number; width: number },
+  bounds: { height: number; originX: number; originY: number; width: number },
+): CameraOverlaySettings => {
+  const width = Math.max(1, bounds.width);
+  const height = Math.max(1, bounds.height);
+  const frameX = (previous.width * settings.frameXPercent) / 100;
+  const frameY = (previous.height * settings.frameYPercent) / 100;
+  const cameraX = (previous.width * settings.cameraXPercent) / 100;
+  const cameraY = (previous.height * settings.cameraYPercent) / 100;
+  return {
+    ...settings,
+    cameraWidthPercent: (previous.width * settings.cameraWidthPercent) / width,
+    cameraXPercent: ((cameraX - bounds.originX) * 100) / width,
+    cameraYPercent: ((cameraY - bounds.originY) * 100) / height,
+    frameHeightPercent:
+      (previous.height * settings.frameHeightPercent) / height,
+    frameWidthPercent: (previous.width * settings.frameWidthPercent) / width,
+    frameXPercent: ((frameX - bounds.originX) * 100) / width,
+    frameYPercent: ((frameY - bounds.originY) * 100) / height,
+  };
+};
+
+/** Uniformly reframe a baked camera with the shared output dimensions. */
+export const resizeCameraOverlayCentered = (
+  settings: CameraOverlaySettings,
+  previous: { height: number; width: number },
+  next: { height: number; width: number },
+): CameraOverlaySettings => {
+  const width = Math.max(1, next.width);
+  const height = Math.max(1, next.height);
+  const scale = Math.min(width / previous.width, height / previous.height);
+  const offsetX = (width - previous.width * scale) / 2;
+  const offsetY = (height - previous.height * scale) / 2;
+  const transformX = (value: number) => offsetX + value * scale;
+  const transformY = (value: number) => offsetY + value * scale;
+  return {
+    ...settings,
+    cameraWidthPercent:
+      (previous.width * settings.cameraWidthPercent * scale) / width,
+    cameraXPercent:
+      (transformX((previous.width * settings.cameraXPercent) / 100) * 100) /
+      width,
+    cameraYPercent:
+      (transformY((previous.height * settings.cameraYPercent) / 100) * 100) /
+      height,
+    frameHeightPercent:
+      (previous.height * settings.frameHeightPercent * scale) / height,
+    frameWidthPercent:
+      (previous.width * settings.frameWidthPercent * scale) / width,
+    frameXPercent:
+      (transformX((previous.width * settings.frameXPercent) / 100) * 100) /
+      width,
+    frameYPercent:
+      (transformY((previous.height * settings.frameYPercent) / 100) * 100) /
+      height,
+  };
 };

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { Crop } from "lucide-react";
+import { Crop, MousePointer2, ScanSquare } from "lucide-react";
 import { MouseEvent as ReactMouseEvent, ReactNode, useState } from "react";
 import { TooltipTrigger } from "react-aria-components";
 
@@ -15,9 +15,13 @@ import {
 } from "../resolution";
 import {
   RecordingOutputSettings,
-  resetScreenshotLayout,
+  resetScreenshotCrop,
+  resetScreenshotTransform,
+  resizeScreenshotWorkspaceCentered,
   ScreenshotOutputSettings,
+  ScreenshotWorkspaceOutputSettings,
   screenshotOutputDimensions,
+  screenshotWorkspaceItemOutput,
 } from "../screenshot-output";
 import {
   AudioTrackVolume,
@@ -33,6 +37,14 @@ import { useExportWindowShortcuts } from "../use-export-window-shortcuts";
 
 import { PreviewToolbar } from "./preview-toolbar";
 import { PreviewViewport } from "./preview-viewport";
+import {
+  deleteScreenshotLayer,
+  moveScreenshotLayer,
+} from "./screenshot-layer-actions";
+import {
+  ScreenshotLayerContextMenu,
+  ScreenshotLayerContextMenuState,
+} from "./screenshot-layer-context-menu";
 import { ScrubPreview } from "./scrub-preview";
 
 /**
@@ -43,35 +55,97 @@ export function ScreenshotSection({
   artifact,
   onBackgroundRadiusChange,
   onBackgroundRadiusChangeEnd,
+  onCanvasResize,
   onNeedFullResolution,
   onOutputChange,
   onRadiusChange,
   onRadiusChangeEnd,
+  onSelectedItemChange,
   previewUrl,
-  radiusPercent,
   screenshotOutput,
+  selectedItemId = null,
 }: {
-  artifact: ExportArtifact;
-  radiusPercent: number;
+  artifact: Extract<ExportArtifact, { kind: "screenshot" }>;
   onBackgroundRadiusChange?: (radiusPercent: number) => void;
   onBackgroundRadiusChangeEnd?: () => void;
+  onCanvasResize?: (settings: ScreenshotWorkspaceOutputSettings) => void;
   onNeedFullResolution?: () => void;
-  onOutputChange?: (settings: ScreenshotOutputSettings) => void;
+  onOutputChange?: (
+    settings: ScreenshotOutputSettings,
+    itemId?: number,
+  ) => void;
   onRadiusChange?: (radiusPercent: number) => void;
   onRadiusChangeEnd?: () => void;
+  onSelectedItemChange?: (itemId: number | null) => void;
   previewUrl?: string | null;
-  screenshotOutput?: ScreenshotOutputSettings;
+  screenshotOutput?: ScreenshotWorkspaceOutputSettings;
+  selectedItemId?: number | null;
 }) {
   const [zoomPercent, setZoomPercent] = useState(100);
-  const [isEditing, setIsEditing] = useState(false);
+  const [tool, setTool] = useState<"canvas" | "crop" | "select" | null>(
+    "select",
+  );
+  const [contextMenu, setContextMenu] =
+    useState<ScreenshotLayerContextMenuState | null>(null);
+  const newestItemId = artifact.items[artifact.items.length - 1]?.id ?? null;
+  const moveSelectedLayer = (
+    direction: "backward" | "forward",
+    itemId = selectedItemId,
+  ) => {
+    if (!screenshotOutput || itemId === null) return;
+    const next = moveScreenshotLayer({
+      direction,
+      itemId,
+      settings: screenshotOutput,
+    });
+    if (next !== screenshotOutput) onCanvasResize?.(next);
+    setContextMenu(null);
+  };
+  const deleteSelectedLayer = (itemId = selectedItemId) => {
+    if (
+      !screenshotOutput ||
+      itemId === null ||
+      screenshotOutput.items.length <= 1
+    )
+      return;
+    const result = deleteScreenshotLayer({
+      itemId,
+      settings: screenshotOutput,
+    });
+    if (!result) return;
+    onCanvasResize?.(result.settings);
+    onSelectedItemChange?.(result.nextSelectedItemId);
+    setContextMenu(null);
+  };
   useExportWindowShortcuts({
+    onDelete: deleteSelectedLayer,
+    onMoveBackward: () => {
+      moveSelectedLayer("backward");
+    },
+    onMoveForward: () => {
+      moveSelectedLayer("forward");
+    },
+    onResizeCanvas: () => {
+      setTool((current) => (current === "canvas" ? null : "canvas"));
+    },
+    onSelectTool: () => {
+      setTool((current) => (current === "select" ? null : "select"));
+    },
     onToggleCrop: () => {
-      setIsEditing((editing) => !editing);
+      if (selectedItemId === null) onSelectedItemChange?.(newestItemId);
+      setTool((current) => (current === "crop" ? null : "crop"));
     },
   });
   const outputDimensions = screenshotOutput
     ? screenshotOutputDimensions(screenshotOutput)
     : { height: artifact.height, width: artifact.width };
+  const selectedItem = artifact.items.find(
+    (item) => item.id === selectedItemId,
+  );
+  const selectedOutput =
+    screenshotOutput && selectedItem
+      ? screenshotWorkspaceItemOutput(screenshotOutput, selectedItem.id)
+      : null;
 
   return (
     <div className="flex min-h-0 min-w-0 grow flex-col">
@@ -84,63 +158,190 @@ export function ScreenshotSection({
           },
         ]}
         center={
-          <TooltipTrigger delay={400}>
-            <span
-              className="inline-flex"
-              onContextMenu={(event: ReactMouseEvent<HTMLSpanElement>) => {
-                event.preventDefault();
-                if (!screenshotOutput) return;
-                onOutputChange?.(
-                  resetScreenshotLayout(screenshotOutput, {
-                    height: artifact.height,
-                    width: artifact.width,
-                  }),
-                );
-              }}
-            >
-              <ToggleButton
-                aria-keyshortcuts="C"
-                aria-label="Edit screenshot placement and crop"
-                isSelected={isEditing}
-                onChange={setIsEditing}
-                showFocus={false}
-                size="sm"
-                variant="ghost"
+          <div className="flex items-center gap-1">
+            <TooltipTrigger delay={400}>
+              <span
+                className="inline-flex"
+                onContextMenu={(event: ReactMouseEvent<HTMLSpanElement>) => {
+                  event.preventDefault();
+                  if (!selectedItem || !selectedOutput) return;
+                  onOutputChange?.(
+                    resetScreenshotTransform(selectedOutput, selectedItem),
+                    selectedItem.id,
+                  );
+                }}
               >
-                <Crop size={15} />
-              </ToggleButton>
-            </span>
-            <Tooltip placement="bottom">
-              <span className="flex items-center gap-2">
-                Edit placement and crop
-                <Keyboard size="xs" variant="tooltip">
-                  C
-                </Keyboard>
+                <ToggleButton
+                  animation="scale-selected"
+                  aria-keyshortcuts="V"
+                  aria-label="Select screenshot"
+                  isSelected={tool === "select"}
+                  onChange={(selected) => {
+                    setTool(selected ? "select" : null);
+                  }}
+                  showFocus={false}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <MousePointer2 size={15} />
+                </ToggleButton>
               </span>
-            </Tooltip>
-          </TooltipTrigger>
+              <Tooltip placement="bottom">
+                <span className="flex items-center gap-2">
+                  Select
+                  <Keyboard size="xs" variant="tooltip">
+                    V
+                  </Keyboard>
+                </span>
+              </Tooltip>
+            </TooltipTrigger>
+            <TooltipTrigger delay={400}>
+              <span
+                className="inline-flex"
+                onContextMenu={(event: ReactMouseEvent<HTMLSpanElement>) => {
+                  event.preventDefault();
+                  if (!screenshotOutput) return;
+                  onCanvasResize?.(
+                    resizeScreenshotWorkspaceCentered({
+                      height: artifact.height,
+                      settings: screenshotOutput,
+                      sources: artifact.items,
+                      width: artifact.width,
+                    }),
+                  );
+                }}
+              >
+                <ToggleButton
+                  animation="scale-selected"
+                  aria-keyshortcuts="F"
+                  aria-label="Resize canvas"
+                  isSelected={tool === "canvas"}
+                  onChange={(selected) => {
+                    setTool(selected ? "canvas" : null);
+                  }}
+                  showFocus={false}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <ScanSquare size={15} />
+                </ToggleButton>
+              </span>
+              <Tooltip placement="bottom">
+                <span className="flex items-center gap-2">
+                  Resize canvas
+                  <Keyboard size="xs" variant="tooltip">
+                    F
+                  </Keyboard>
+                </span>
+              </Tooltip>
+            </TooltipTrigger>
+            <TooltipTrigger delay={400}>
+              <span
+                className="inline-flex"
+                onContextMenu={(event: ReactMouseEvent<HTMLSpanElement>) => {
+                  event.preventDefault();
+                  if (!selectedItem || !selectedOutput) return;
+                  onOutputChange?.(
+                    resetScreenshotCrop(selectedOutput, selectedItem),
+                    selectedItem.id,
+                  );
+                }}
+              >
+                <ToggleButton
+                  animation="scale-selected"
+                  aria-keyshortcuts="C"
+                  aria-label="Edit screenshot placement and crop"
+                  isSelected={tool === "crop"}
+                  onChange={(selected) => {
+                    if (selectedItemId === null)
+                      onSelectedItemChange?.(newestItemId);
+                    setTool(selected ? "crop" : null);
+                  }}
+                  showFocus={false}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <Crop size={15} />
+                </ToggleButton>
+              </span>
+              <Tooltip placement="bottom">
+                <span className="flex items-center gap-2">
+                  Edit placement and crop
+                  <Keyboard size="xs" variant="tooltip">
+                    C
+                  </Keyboard>
+                </span>
+              </Tooltip>
+            </TooltipTrigger>
+          </div>
         }
-        onZoomChange={setZoomPercent}
+        onZoomChange={(nextZoom) => {
+          setContextMenu(null);
+          setZoomPercent(nextZoom);
+        }}
         zoomPercent={zoomPercent}
       />
       <PreviewViewport
         alt="Screenshot preview"
         artifactId={artifact.id}
-        isEditing={isEditing}
+        isEditing={tool === "crop"}
+        isResizingCanvas={tool === "canvas"}
+        isSelecting={tool === "select"}
+        items={artifact.items}
         naturalHeight={artifact.height}
         naturalWidth={artifact.width}
         onBackgroundRadiusChange={onBackgroundRadiusChange}
         onBackgroundRadiusChangeEnd={onBackgroundRadiusChangeEnd}
+        onCanvasResize={onCanvasResize}
+        onItemContextMenu={(itemId, event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onSelectedItemChange?.(itemId);
+          setContextMenu({
+            itemId,
+            x: Math.min(event.clientX, window.innerWidth - 196),
+            y: Math.min(event.clientY, window.innerHeight - 132),
+          });
+        }}
+        onItemDeselect={() => {
+          // Clicking the empty canvas only exits the active manipulation.
+          setTool(null);
+        }}
+        onItemSelect={onSelectedItemChange}
         onNeedFullResolution={onNeedFullResolution}
         onOutputChange={onOutputChange}
         onRadiusChange={onRadiusChange}
         onRadiusChangeEnd={onRadiusChangeEnd}
-        onZoomChange={setZoomPercent}
+        onViewportInteraction={() => {
+          setContextMenu(null);
+        }}
+        onZoomChange={(nextZoom) => {
+          setContextMenu(null);
+          setZoomPercent(nextZoom);
+        }}
         previewUrl={previewUrl}
-        radiusPercent={radiusPercent}
         screenshotOutput={screenshotOutput}
+        selectedItemId={selectedItemId}
         zoomPercent={zoomPercent}
       />
+      {contextMenu ? (
+        <ScreenshotLayerContextMenu
+          canDelete={(screenshotOutput?.items.length ?? 0) > 1}
+          menu={contextMenu}
+          onClose={() => {
+            setContextMenu(null);
+          }}
+          onDelete={() => {
+            deleteSelectedLayer(contextMenu.itemId);
+          }}
+          onMoveBackward={() => {
+            moveSelectedLayer("backward", contextMenu.itemId);
+          }}
+          onMoveForward={() => {
+            moveSelectedLayer("forward", contextMenu.itemId);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -170,6 +371,7 @@ export function RecordingSection({
   onEnabledVideoTracksChange,
   onRecordingOutputChange,
   onSelectedTrackChange,
+  onVideoTrackOrderChange,
   recordingOutput,
   recordingPreviewError,
   recordingPreviewLayout,
@@ -197,6 +399,7 @@ export function RecordingSection({
     settings: RecordingOutputSettings[RecordingVideoTrackId],
   ) => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
+  onVideoTrackOrderChange?: (tracks: RecordingVideoTrackId[]) => void;
   recordingOutput?: RecordingOutputSettings;
   recordingPreviewError?: string | null;
   recordingPreviewLayout?: RecordingPreviewLayout;
@@ -250,10 +453,22 @@ export function RecordingSection({
         onEnabledVideoTracksChange={onEnabledVideoTracksChange}
         onRecordingOutputChange={onRecordingOutputChange}
         onSelectedTrackChange={onSelectedTrackChange}
+        onVideoTrackOrderChange={onVideoTrackOrderChange}
         previewLayout={recordingPreviewLayout}
         previewOutputDimensions={{
           primary: primaryOutputDimensions,
           ...(cameraOutputDimensions ? { camera: cameraOutputDimensions } : {}),
+        }}
+        previewSourceDimensions={{
+          primary: { height: artifact.height, width: artifact.width },
+          ...(artifact.camera
+            ? {
+                camera: {
+                  height: artifact.camera.height,
+                  width: artifact.camera.width,
+                },
+              }
+            : {}),
         }}
         recordingOutput={recordingOutput}
         selectedTrack={selectedTrack}

@@ -7,6 +7,8 @@ import { ReactNode } from "react";
 import { Badge } from "../../../components/base/badge/badge";
 import { NumberField } from "../../../components/base/input-fields/number-field";
 
+import { MAXIMUM_ZOOM } from "./preview-transform";
+
 export type PreviewBadge = {
   height: number;
   kind: "camera" | "screen" | "screenshot";
@@ -56,7 +58,7 @@ export function PreviewToolbar({
         aria-label="Preview zoom"
         className="w-24 font-light tabular-nums"
         leftSection={<ZoomIn className="shrink-0 text-muted" size={14} />}
-        maxValue={1_600}
+        maxValue={MAXIMUM_ZOOM * 100}
         minValue={10}
         onChange={(value) => {
           onZoomChange(Math.round(value));

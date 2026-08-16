@@ -33,6 +33,7 @@ pub(crate) struct NativeCanvas {
   pub(crate) mesh_colors: [[f32; 4]; 5],
   pub(crate) clip_cursor_at_video_edge: u32,
   pub(crate) transparent_background: u32,
+  pub(crate) foreground_only: u32,
 }
 
 #[repr(C)]
@@ -48,14 +49,15 @@ pub(crate) struct StillOverlay {
   pub camera_crop_y: u32,
   pub camera_crop_width: u32,
   pub camera_crop_height: u32,
-  pub camera_frame_x: u32,
-  pub camera_frame_y: u32,
+  pub camera_frame_x: i32,
+  pub camera_frame_y: i32,
   pub camera_frame_width: u32,
   pub camera_frame_height: u32,
   pub camera_radius: u32,
   pub camera_source_width: u32,
   pub camera_source_height: u32,
   pub camera_drop_shadow: u32,
+  pub camera_on_top: u32,
 }
 
 unsafe extern "C" {
@@ -70,6 +72,15 @@ unsafe extern "C" {
     cursor_rgba: *const u8,
     camera_rgba: *const u8,
     overlay: *const StillOverlay,
+    output_rgba: *mut u8,
+    error_text: *mut c_char,
+    error_capacity: usize,
+  ) -> i32;
+  fn screenwide_gpu_alpha_composite(
+    base_rgba: *const u8,
+    overlay_rgba: *const u8,
+    width: u32,
+    height: u32,
     output_rgba: *mut u8,
     error_text: *mut c_char,
     error_capacity: usize,
@@ -151,9 +162,11 @@ pub(crate) fn compose_output_layers(
   camera: Option<&CapturedImage>,
   overlay: Option<&StillOverlay>,
   clip_cursor_at_video_edge: bool,
+  foreground_only: bool,
 ) -> Result<CapturedImage, String> {
   let mut canvas = native_canvas(image.width, image.height, settings, transparent_background)?;
   canvas.clip_cursor_at_video_edge = u32::from(clip_cursor_at_video_edge);
+  canvas.foreground_only = u32::from(foreground_only);
   let mut rgba = vec![0_u8; settings.width as usize * settings.height as usize * 4];
   let mut error = vec![0_i8; 2_048];
   let result = unsafe {
@@ -187,6 +200,43 @@ pub(crate) fn compose_output_layers(
     height: settings.height,
     rgba,
     width: settings.width,
+  })
+}
+
+pub(crate) fn alpha_composite(
+  base: &CapturedImage,
+  overlay: &CapturedImage,
+) -> Result<CapturedImage, String> {
+  if base.width != overlay.width || base.height != overlay.height {
+    return Err("The screenshot layers do not share a canvas size".to_owned());
+  }
+  let mut rgba = vec![0_u8; base.rgba.len()];
+  let mut error = vec![0_i8; 2_048];
+  let result = unsafe {
+    screenwide_gpu_alpha_composite(
+      base.rgba.as_ptr(),
+      overlay.rgba.as_ptr(),
+      base.width,
+      base.height,
+      rgba.as_mut_ptr(),
+      error.as_mut_ptr(),
+      error.len(),
+    )
+  };
+  if result == 0 {
+    let message = unsafe { std::ffi::CStr::from_ptr(error.as_ptr()) }
+      .to_string_lossy()
+      .into_owned();
+    return Err(if message.is_empty() {
+      "The native screenshot layer compositor failed".to_owned()
+    } else {
+      message
+    });
+  }
+  Ok(CapturedImage {
+    height: base.height,
+    rgba,
+    width: base.width,
   })
 }
 

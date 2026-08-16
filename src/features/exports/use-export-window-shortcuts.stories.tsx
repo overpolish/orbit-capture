@@ -14,6 +14,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 function ShortcutPreview() {
   const [activations, setActivations] = useState(0);
   const [isCropping, setIsCropping] = useState(false);
+  const [isResizingCanvas, setIsResizingCanvas] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [lastAction, setLastAction] = useState("None");
   const playhead = useMemo(() => createPlayhead(), []);
@@ -23,6 +24,9 @@ function ShortcutPreview() {
     },
     onExport: () => {
       setLastAction("Exported");
+    },
+    onResizeCanvas: () => {
+      setIsResizingCanvas((resizing) => !resizing);
     },
     onToggleCrop: () => {
       setIsCropping((cropping) => !cropping);
@@ -42,7 +46,8 @@ function ShortcutPreview() {
         <span role="status">
           {isPlaying ? "Playing" : "Paused"} ·{" "}
           {isCropping ? "Crop on" : "Crop off"} · {lastAction} · Activations{" "}
-          {activations}
+          {activations} ·{" "}
+          {isResizingCanvas ? "Canvas resize on" : "Canvas resize off"}
         </span>
       </div>
       <Button

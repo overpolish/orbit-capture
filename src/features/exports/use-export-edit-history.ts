@@ -1,12 +1,19 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useCallback, useEffect, useRef } from "react";
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 
 import { ownsTextEditingKeys } from "./keyboard-target";
 import {
   RecordingOutputSettings,
-  ScreenshotOutputSettings,
+  ScreenshotWorkspaceOutputSettings,
 } from "./screenshot-output";
 import {
   AudioTrackVolume,
@@ -17,6 +24,18 @@ import {
 
 const HISTORY_LIMIT = 100;
 const GROUP_DELAY_MS = 300;
+
+type ExportEditGesture = {
+  beginGesture: () => void;
+  endGesture: () => void;
+};
+
+export const ExportEditGestureContext = createContext<ExportEditGesture>({
+  beginGesture: () => undefined,
+  endGesture: () => undefined,
+});
+
+export const useExportEditGesture = () => use(ExportEditGestureContext);
 
 export type ExportEditState = {
   audioTrackVolumes: {
@@ -32,7 +51,7 @@ export type ExportEditState = {
   cursorEffects: CursorEffectSettings;
   recordingOutput: RecordingOutputSettings;
   resolutionScalePercent: number;
-  screenshotOutput: ScreenshotOutputSettings;
+  screenshotOutput: ScreenshotWorkspaceOutputSettings;
   trackSelection: { artifactId: number; streamIndices: number[] } | null;
   videoTrackSelection: {
     artifactId: number;
@@ -52,7 +71,7 @@ export function useExportEditHistory<State extends object>({
   state,
 }: {
   apply: (state: State) => void;
-  resetKey: number | undefined;
+  resetKey: unknown;
   state: State;
 }) {
   const applyRef = useRef(apply);
@@ -66,6 +85,7 @@ export function useExportEditHistory<State extends object>({
   } | null>(null);
   const timerRef = useRef<number | null>(null);
   const applyingRef = useRef(false);
+  const gestureRef = useRef(false);
   const suppressRef = useRef(true);
   applyRef.current = apply;
   currentRef.current = state;
@@ -76,6 +96,7 @@ export function useExportEditHistory<State extends object>({
     const pending = pendingRef.current;
     pendingRef.current = null;
     if (!pending) return;
+    if (pending.start === currentRef.current) return;
     pastRef.current.push(pending.start);
     if (pastRef.current.length > HISTORY_LIMIT) pastRef.current.shift();
     futureRef.current = [];
@@ -86,6 +107,7 @@ export function useExportEditHistory<State extends object>({
     pastRef.current = [];
     futureRef.current = [];
     pendingRef.current = null;
+    gestureRef.current = false;
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = null;
     observedRef.current = currentRef.current;
@@ -107,12 +129,29 @@ export function useExportEditHistory<State extends object>({
       return;
     }
 
+    if (gestureRef.current) return;
     const key = changedKey(previous, state);
     if (pendingRef.current && pendingRef.current.key !== key) finishGroup();
     pendingRef.current ??= { key, start: previous };
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(finishGroup, GROUP_DELAY_MS);
   }, [finishGroup, state]);
+
+  const beginGesture = useCallback(() => {
+    if (gestureRef.current) return;
+    finishGroup();
+    gestureRef.current = true;
+    pendingRef.current = { key: undefined, start: currentRef.current };
+  }, [finishGroup]);
+
+  const endGesture = useCallback(() => {
+    if (!gestureRef.current) return;
+    gestureRef.current = false;
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    // React commits the final pointer update after the handler returns. Finish
+    // on the next task so the gesture's last frame belongs to this undo step.
+    timerRef.current = window.setTimeout(finishGroup, 0);
+  }, [finishGroup]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -158,4 +197,9 @@ export function useExportEditHistory<State extends object>({
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [finishGroup]);
+
+  return useMemo(
+    () => ({ beginGesture, endGesture }),
+    [beginGesture, endGesture],
+  );
 }

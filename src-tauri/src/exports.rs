@@ -20,12 +20,14 @@ pub(crate) mod save;
 pub(crate) mod screenshot_preview;
 mod track_selection;
 mod validation;
+mod workspace;
 
 pub use artifact::{discard, present_recording, present_screenshot};
-use artifact::{emit_snapshot, full_preview_png, snapshot, take_artifact};
+use artifact::{emit_snapshot, full_preview_png, screenshot_image, snapshot, take_artifact};
 use camera_save::validate_camera_overlay;
 use commands::set_export_directory;
 use directory::current_directory;
+#[cfg(target_os = "windows")]
 pub(crate) use media_preview::ffmpeg_path;
 use naming::sanitize_file_stem;
 use preferences::{
@@ -38,6 +40,14 @@ pub use recovery::initialize;
 use recovery::orphan_plan;
 use save::{delivered_extension, scale_percent};
 use validation::{validate_camera_resolution_scale, validate_primary_resolution_scale};
+pub use workspace::{
+  focus_if_pending as focus_pending_workspace,
+  focus_if_screenshot_blocked as focus_if_screenshot_workspace_blocked,
+  has_pending as has_pending_workspace, release_recording as release_recording_workspace,
+  release_screenshot as release_screenshot_workspace,
+  reserve_recording as reserve_recording_workspace,
+  reserve_screenshot as reserve_screenshot_workspace,
+};
 mod window;
 
 use std::collections::HashMap;
@@ -53,9 +63,10 @@ use tauri::{image::Image, ipc::Response, AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::recording::{FinalizeInfo, PrimaryRecordingKind};
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+use crate::screenshots::compose_screenshot;
 use crate::screenshots::{
-  compose_screenshot, encode_png, screenshot_directory, unique_path, CapturedImage,
-  ScreenshotOutputSettings,
+  encode_png, screenshot_directory, unique_path, CapturedImage, ScreenshotOutputSettings,
 };
 
 #[cfg(target_os = "macos")]
@@ -99,7 +110,9 @@ pub enum ExportArtifact {
     /// in every other respect, so the window needs this to tell them apart
     /// and start the new one at fit rather than inheriting the old zoom.
     id: u64,
-    image: CapturedImage,
+    /// Ordered back-to-front. The first slice keeps the existing single-item
+    /// compositor contract while the native scene renderer is introduced.
+    items: Vec<ScreenshotItem>,
     suggested_file_stem: String,
   },
   Recording {
@@ -119,6 +132,130 @@ pub enum ExportArtifact {
   },
 }
 
+/// One independently editable image in a screenshot workspace.
+///
+/// Pixels remain owned by Rust and are uploaded to the native renderer once;
+/// the webview only ever needs this identity and the scene metadata added in
+/// the next slice.
+#[derive(Clone)]
+pub struct ScreenshotItem {
+  pub id: u64,
+  pub image: CapturedImage,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenshotWorkspaceItemOutput {
+  pub id: u64,
+  pub output: ScreenshotOutputSettings,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenshotWorkspaceOutputSettings {
+  #[serde(flatten)]
+  pub canvas: ScreenshotOutputSettings,
+  #[serde(default)]
+  pub items: Vec<ScreenshotWorkspaceItemOutput>,
+}
+
+impl ScreenshotWorkspaceOutputSettings {
+  pub(super) fn output_for(&self, item: &ScreenshotItem) -> ScreenshotOutputSettings {
+    self.output_for_id(item.id)
+  }
+
+  pub(super) fn output_for_id(&self, id: u64) -> ScreenshotOutputSettings {
+    let mut output = self
+      .items
+      .iter()
+      .find(|candidate| candidate.id == id)
+      .map_or_else(|| self.canvas.clone(), |candidate| candidate.output.clone());
+    output.background_color = self.canvas.background_color.clone();
+    output.background_type = self.canvas.background_type.clone();
+    output.background_radius_percent = self.canvas.background_radius_percent;
+    output.height = self.canvas.height;
+    output.mesh_colors = self.canvas.mesh_colors.clone();
+    output.mesh_locked_colors = self.canvas.mesh_locked_colors.clone();
+    output.mesh_points = self.canvas.mesh_points.clone();
+    output.mesh_seed = self.canvas.mesh_seed;
+    output.mesh_warp_percent = self.canvas.mesh_warp_percent;
+    output.width = self.canvas.width;
+    output
+  }
+}
+
+fn compose_screenshot_workspace(
+  app: &AppHandle,
+  items: &[ScreenshotItem],
+  output: &ScreenshotWorkspaceOutputSettings,
+) -> Result<CapturedImage, String> {
+  #[cfg(not(target_os = "windows"))]
+  let _ = app;
+  let ordered_items = output
+    .items
+    .iter()
+    .filter_map(|item_output| items.iter().find(|item| item.id == item_output.id))
+    .collect::<Vec<_>>();
+  #[cfg(not(target_os = "windows"))]
+  let first = ordered_items
+    .first()
+    .copied()
+    .ok_or_else(|| "The screenshot workspace is empty".to_owned())?;
+  #[cfg(target_os = "macos")]
+  {
+    let mut composed = crate::screenshots::compose_output_layers(
+      &first.image,
+      &output.output_for(first),
+      0.0,
+      true,
+      None,
+      None,
+      None,
+      false,
+      false,
+    )?;
+    for item in &ordered_items[1..] {
+      let layer = crate::screenshots::compose_output_layers(
+        &item.image,
+        &output.output_for(item),
+        0.0,
+        true,
+        None,
+        None,
+        None,
+        false,
+        true,
+      )?;
+      composed = crate::screenshots::alpha_composite(&composed, &layer)?;
+    }
+    Ok(composed)
+  }
+  #[cfg(target_os = "windows")]
+  {
+    let window = app
+      .get_webview_window(crate::windows::WindowLabel::Export.as_str())
+      .ok_or_else(|| "The export window is unavailable".to_owned())?;
+    let surface = preview_platform::RecordingPreviewSurface::from_window(&window)?;
+    let layers = ordered_items
+      .iter()
+      .map(|item| (&item.image, output.output_for(item)))
+      .collect::<Vec<_>>();
+    surface.compose_screenshot_layers_to_image(&layers)
+  }
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  {
+    compose_screenshot(&first.image, &output.output_for(first))
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenshotItemSnapshot {
+  pub height: u32,
+  pub id: u64,
+  pub width: u32,
+}
+
 /// What the window is told about the pending artifact. Deliberately without
 /// pixels: the preview travels separately, as bytes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -130,6 +267,7 @@ pub enum ExportArtifact {
 pub enum ExportArtifactSnapshot {
   Screenshot {
     id: u64,
+    items: Vec<ScreenshotItemSnapshot>,
     suggested_file_stem: String,
     extension: String,
     width: u32,
@@ -217,14 +355,20 @@ pub struct RecordingExportOptions {
   pub include_primary_video: bool,
   pub resolution_scale_percent: u16,
   pub recording_output: RecordingOutputSettings,
-  pub screenshot_output: ScreenshotOutputSettings,
+  pub screenshot_output: ScreenshotWorkspaceOutputSettings,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingOutputSettings {
   pub camera: ScreenshotOutputSettings,
+  #[serde(default = "default_camera_on_top")]
+  pub camera_on_top: bool,
   pub primary: ScreenshotOutputSettings,
+}
+
+fn default_camera_on_top() -> bool {
+  true
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -286,6 +430,7 @@ struct ActiveExportJob {
 pub struct ExportState {
   active_export: Mutex<Option<ActiveExportJob>>,
   artifact: Mutex<Option<ExportArtifact>>,
+  capture_reservation: Mutex<Option<workspace::CaptureWorkspaceReservation>>,
   generation: AtomicU64,
   preview: Mutex<Option<Vec<u8>>>,
   /// Built only if the user zooms in, because it is the whole capture.

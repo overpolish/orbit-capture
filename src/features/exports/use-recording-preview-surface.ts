@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { RefObject, useEffect } from "react";
+import { RefObject, useEffect, useRef } from "react";
 
 import { layoutRecordingPreviewSurface } from "./api";
+import { RecordingOutputSettings } from "./screenshot-output";
+import { CameraOverlaySettings } from "./types";
 import { usePreviewCapabilities } from "./use-preview-capabilities";
 
 /**
@@ -21,13 +23,21 @@ export type Hole = {
   width: number;
   x: number;
   y: number;
+  radius?: number;
 };
 
 export const applyBackdropMask = (element: HTMLElement, holes: Hole[]) => {
-  const key = JSON.stringify(holes);
+  const bounds = element.getBoundingClientRect();
+  const key = JSON.stringify({
+    height: Math.round(bounds.height * 100) / 100,
+    holes,
+    width: Math.round(bounds.width * 100) / 100,
+  });
   if (element.dataset.previewBackdropKey === key) return;
   element.dataset.previewBackdropKey = key;
   if (holes.length === 0) {
+    element.style.removeProperty("clip-path");
+    element.style.removeProperty("-webkit-clip-path");
     element.style.removeProperty("mask-image");
     element.style.removeProperty("mask-size");
     element.style.removeProperty("mask-position");
@@ -35,6 +45,52 @@ export const applyBackdropMask = (element: HTMLElement, holes: Hole[]) => {
     element.style.removeProperty("mask-composite");
     return;
   }
+  const rounded = holes.some((hole) => (hole.radius ?? 0) > 0);
+  if (rounded) {
+    const roundedRect = (hole: Hole) => {
+      const radius = Math.min(
+        Math.max(0, hole.radius ?? 0),
+        hole.width / 2,
+        hole.height / 2,
+      );
+      const right = hole.x + hole.width;
+      const bottom = hole.y + hole.height;
+      if (radius === 0)
+        return `M ${hole.x.toString()} ${hole.y.toString()} H ${right.toString()} V ${bottom.toString()} H ${hole.x.toString()} Z`;
+      return [
+        `M ${(hole.x + radius).toString()} ${hole.y.toString()}`,
+        `H ${(right - radius).toString()}`,
+        `A ${radius.toString()} ${radius.toString()} 0 0 1 ${right.toString()} ${(hole.y + radius).toString()}`,
+        `V ${(bottom - radius).toString()}`,
+        `A ${radius.toString()} ${radius.toString()} 0 0 1 ${(right - radius).toString()} ${bottom.toString()}`,
+        `H ${(hole.x + radius).toString()}`,
+        `A ${radius.toString()} ${radius.toString()} 0 0 1 ${hole.x.toString()} ${(bottom - radius).toString()}`,
+        `V ${(hole.y + radius).toString()}`,
+        `A ${radius.toString()} ${radius.toString()} 0 0 1 ${(hole.x + radius).toString()} ${hole.y.toString()}`,
+        "Z",
+      ].join(" ");
+    };
+    const path = [
+      `M 0 0 H ${bounds.width.toString()} V ${bounds.height.toString()} H 0 Z`,
+      ...holes.map(roundedRect),
+    ].join(" ");
+    const clipPath = `path(evenodd, '${path}')`;
+    if (
+      CSS.supports("clip-path", clipPath) ||
+      CSS.supports("-webkit-clip-path", clipPath)
+    ) {
+      element.style.setProperty("clip-path", clipPath);
+      element.style.setProperty("-webkit-clip-path", clipPath);
+      element.style.removeProperty("mask-image");
+      element.style.removeProperty("mask-size");
+      element.style.removeProperty("mask-position");
+      element.style.removeProperty("mask-repeat");
+      element.style.removeProperty("mask-composite");
+      return;
+    }
+  }
+  element.style.removeProperty("clip-path");
+  element.style.removeProperty("-webkit-clip-path");
   element.style.maskImage = [
     ...holes.map(() => "linear-gradient(#fff,#fff)"),
     "linear-gradient(#fff,#fff)",
@@ -115,21 +171,29 @@ export const clearBackdropMasks = () => {
 };
 
 export function useRecordingPreviewSurface({
+  bakeCamera,
   cameraCanvasRef,
+  cameraOverlay,
   isEnabled,
   onError,
+  recordingOutput,
   screenCanvasRef,
   sessionIdRef,
   startedRef,
 }: {
+  bakeCamera: boolean;
   cameraCanvasRef: RefObject<HTMLCanvasElement | null>;
+  cameraOverlay: CameraOverlaySettings;
   isEnabled: boolean;
   onError: (message: string) => void;
+  recordingOutput: RecordingOutputSettings;
   screenCanvasRef: RefObject<HTMLCanvasElement | null>;
   sessionIdRef: RefObject<number>;
   startedRef: RefObject<boolean>;
 }) {
   const nativeSurface = usePreviewCapabilities()?.nativeRecordingPreview;
+  const compositionRef = useRef({ bakeCamera, cameraOverlay, recordingOutput });
+  compositionRef.current = { bakeCamera, cameraOverlay, recordingOutput };
   useEffect(() => {
     // Wait for the capability probe rather than guessing: masking backdrops
     // for panes that will never render would punch holes through the UI.
@@ -204,6 +268,7 @@ export function useRecordingPreviewSurface({
           queueLayout(
             {
               backdrop: effectiveBackdrop(),
+              ...compositionRef.current,
               panes: [],
               requestId: 0,
               scale: window.devicePixelRatio || 1,
@@ -232,37 +297,40 @@ export function useRecordingPreviewSurface({
             };
           });
           if (nativeSurface) {
+            // Punch the whole viewport, not the pane rects. The native
+            // container behind the panes paints the same composited backdrop,
+            // so the result looks identical - but a per-pane hole would have
+            // to move in lockstep with the panes, and the webview commits its
+            // layer tree from another process on its own schedule. During a
+            // canvas resize that hole would land a display tick before or
+            // after the native pane and shimmer along its edge.
+            const holes: Hole[] =
+              viewportRect.width >= 1 && viewportRect.height >= 1
+                ? [
+                    {
+                      height: Math.round(viewportRect.height * 100) / 100,
+                      width: Math.round(viewportRect.width * 100) / 100,
+                      x: 0,
+                      y: 0,
+                    },
+                  ]
+                : [];
             for (const element of document.querySelectorAll<HTMLElement>(
               "[data-preview-backdrop]",
             )) {
               const elementRect = element.getBoundingClientRect();
-              const holes: Hole[] = [];
-              for (const { rect } of panes) {
-                // The native panes are clipped to the viewport, so a zoomed
-                // pane must not punch beyond it - that would see through UI
-                // the video never covers.
-                const left = Math.max(rect.x, 0);
-                const top = Math.max(rect.y, 0);
-                const right = Math.min(rect.x + rect.width, viewportRect.width);
-                const bottom = Math.min(
-                  rect.y + rect.height,
-                  viewportRect.height,
-                );
-                if (right - left < 1 || bottom - top < 1) continue;
-                holes.push({
-                  height: Math.round((bottom - top) * 100) / 100,
-                  width: Math.round((right - left) * 100) / 100,
+              applyBackdropMask(
+                element,
+                holes.map((hole) => ({
+                  ...hole,
                   x:
-                    Math.round(
-                      (viewportRect.left + left - elementRect.left) * 100,
-                    ) / 100,
+                    Math.round((viewportRect.left - elementRect.left) * 100) /
+                    100,
                   y:
-                    Math.round(
-                      (viewportRect.top + top - elementRect.top) * 100,
-                    ) / 100,
-                });
-              }
-              applyBackdropMask(element, holes);
+                    Math.round((viewportRect.top - elementRect.top) * 100) /
+                    100,
+                })),
+              );
             }
           }
           const viewportSurface = {
@@ -278,6 +346,7 @@ export function useRecordingPreviewSurface({
           queueLayout(
             {
               backdrop: effectiveBackdrop(),
+              ...compositionRef.current,
               panes,
               requestId: 0,
               scale,

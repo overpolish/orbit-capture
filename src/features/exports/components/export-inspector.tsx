@@ -16,17 +16,16 @@ import { Checkbox } from "../../../components/base/checkbox/checkbox";
 import { OverflowShadow } from "../../../components/base/overflow-shadow/overflow-shadow";
 import { PillGroup } from "../../../components/base/pill-group/pill-group";
 import { Slider } from "../../../components/base/slider/slider";
-import {
-  cameraResolutionScales,
-  resolutionScales,
-  scaledDimensions,
-  scaledVideoDimensions,
-} from "../resolution";
+import { resizeCameraOverlayCentered } from "../camera-overlay-geometry";
+import { resolutionScales, scaledDimensions } from "../resolution";
 import {
   RecordingOutputSettings,
+  recordingVideoTrackOrder,
+  resizeScreenshotOutputCentered,
   ScreenshotOutputSettings,
 } from "../screenshot-output";
 import {
+  CameraOverlaySettings,
   ExportArtifact,
   CursorEffectSettings,
   recordingAudioStreamIndex,
@@ -35,6 +34,7 @@ import {
   RecordingVideoTrackId,
 } from "../types";
 
+import { CameraTrackSettings } from "./camera-track-settings";
 import { CursorEffectControls } from "./cursor-effect-controls";
 import {
   RecordingSizeEstimate,
@@ -49,28 +49,40 @@ const inspectorTabs = [
   { icon: <MousePointer2 size={15} />, id: "cursor", label: "Cursor" },
 ];
 
-const trackTabs = (artifact: RecordingArtifact) => {
+const trackTabs = (
+  artifact: RecordingArtifact,
+  recordingOutput?: RecordingOutputSettings,
+) => {
   const tabs: {
     icon: React.ReactNode;
     id: RecordingTrackId;
     label: string;
   }[] = [];
+  const videoTabs: typeof tabs = [];
   if (artifact.primaryKind !== "audio") {
     const isCamera = artifact.primaryKind === "camera";
-    tabs.push({
+    videoTabs.push({
       icon: isCamera ? <Camera size={15} /> : <Monitor size={15} />,
       id: "primary",
       label: isCamera ? "Camera" : "Screen",
     });
   }
   if (artifact.camera) {
-    tabs.push({
+    videoTabs.push({
       icon: <Camera size={15} />,
       id: "camera",
       label: "Camera",
     });
   }
+  const videoOrder = recordingOutput
+    ? recordingVideoTrackOrder(recordingOutput)
+    : (["camera", "primary"] as const);
   tabs.push(
+    ...videoTabs.sort(
+      (left, right) =>
+        videoOrder.indexOf(left.id as RecordingVideoTrackId) -
+        videoOrder.indexOf(right.id as RecordingVideoTrackId),
+    ),
     ...artifact.audioTracks.map((track) => ({
       icon:
         track.kind === "microphone" ? <Mic size={15} /> : <Volume2 size={15} />,
@@ -85,6 +97,7 @@ export function ExportInspector({
   artifact,
   bakeCamera,
   cameraCompression,
+  cameraOverlay,
   cameraResolutionScalePercent,
   collapseAudio,
   compression,
@@ -97,6 +110,7 @@ export function ExportInspector({
   isSaving,
   onBakeCameraChange,
   onCameraCompressionChange,
+  onCameraOverlayChange,
   onCameraResolutionScaleChange,
   onCollapseAudioChange,
   onCompressionChange,
@@ -113,6 +127,7 @@ export function ExportInspector({
   artifact: RecordingArtifact;
   bakeCamera: boolean;
   cameraCompression: number;
+  cameraOverlay: CameraOverlaySettings;
   cameraResolutionScalePercent: number;
   compression: number;
   cursorEffects: CursorEffectSettings;
@@ -126,6 +141,7 @@ export function ExportInspector({
   isSaving?: boolean;
   onBakeCameraChange?: (bake: boolean) => void;
   onCameraCompressionChange?: (compression: number) => void;
+  onCameraOverlayChange?: (settings: CameraOverlaySettings) => void;
   onCameraResolutionScaleChange?: (scale: number) => void;
   onCollapseAudioChange?: (collapse: boolean) => void;
   onCompressionChange?: (compression: number) => void;
@@ -154,8 +170,26 @@ export function ExportInspector({
     videoSelection.has("primary") && videoSelection.has("camera");
   const hasRecordingSettings =
     Boolean(artifact.camera) || artifact.audioTracks.length > 1;
-  const tabs = trackTabs(artifact);
+  const tabs = trackTabs(artifact, recordingOutput);
   const effectiveSelectedTrack = selectedTrack ?? tabs[0].id;
+  const resizePrimaryOutput = (width: number, height: number) => {
+    if (!recordingOutput) return;
+    const next = resizeScreenshotOutputCentered({
+      height,
+      settings: recordingOutput.primary,
+      source: { height: artifact.height, width: artifact.width },
+      width,
+    });
+    if (bakeCamera && canBakeCamera)
+      onCameraOverlayChange?.(
+        resizeCameraOverlayCentered(
+          cameraOverlay,
+          recordingOutput.primary,
+          next,
+        ),
+      );
+    onRecordingOutputChange?.("primary", next);
+  };
 
   return (
     <aside className="flex min-h-0 min-w-0 flex-col border-r border-muted/15 bg-content/35">
@@ -259,6 +293,9 @@ export function ExportInspector({
                       onChange={(settings) => {
                         onRecordingOutputChange?.("primary", settings);
                       }}
+                      onDimensionsChange={(width, height) => {
+                        resizePrimaryOutput(width, height);
+                      }}
                       settings={recordingOutput.primary}
                       sourceHeight={artifact.height}
                       sourceWidth={artifact.width}
@@ -268,38 +305,23 @@ export function ExportInspector({
               ) : null}
 
               {effectiveSelectedTrack === "camera" && artifact.camera ? (
-                <div className="flex flex-col gap-4">
-                  <VideoExportSettings
-                    compression={cameraCompression}
-                    isDisabled={!artifact.canCompress || isSaving}
-                    onCompressionChange={onCameraCompressionChange}
-                    onResolutionScaleChange={onCameraResolutionScaleChange}
-                    resolutionDimensions={(scale) =>
-                      scaledVideoDimensions({
-                        height: artifact.camera?.height ?? 0,
-                        scale,
-                        sourceScale: 100,
-                        width: artifact.camera?.width ?? 0,
-                      })
-                    }
-                    resolutionScale={cameraResolutionScalePercent}
-                    resolutionScales={
-                      recordingOutput ? [] : cameraResolutionScales
-                    }
-                  />
-                  {recordingOutput ? (
-                    <ScreenshotOutputControls
-                      className=""
-                      isSaving={isSaving}
-                      onChange={(settings) => {
-                        onRecordingOutputChange?.("camera", settings);
-                      }}
-                      settings={recordingOutput.camera}
-                      sourceHeight={artifact.camera.height}
-                      sourceWidth={artifact.camera.width}
-                    />
-                  ) : null}
-                </div>
+                <CameraTrackSettings
+                  artifact={artifact}
+                  availableResolutionScales={availableResolutionScales}
+                  baked={bakeCamera && canBakeCamera}
+                  cameraCompression={cameraCompression}
+                  cameraResolutionScalePercent={cameraResolutionScalePercent}
+                  compression={compression}
+                  effectiveResolutionScale={effectiveResolutionScale}
+                  isSaving={isSaving}
+                  onCameraCompressionChange={onCameraCompressionChange}
+                  onCameraResolutionScaleChange={onCameraResolutionScaleChange}
+                  onCompressionChange={onCompressionChange}
+                  onRecordingOutputChange={onRecordingOutputChange}
+                  onResolutionScaleChange={onResolutionScaleChange}
+                  recordingOutput={recordingOutput}
+                  resizePrimaryOutput={resizePrimaryOutput}
+                />
               ) : null}
 
               {selectedAudioTrack ? (

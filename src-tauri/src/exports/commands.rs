@@ -31,7 +31,7 @@ pub fn cancel_export_job(app: AppHandle) -> bool {
 #[tauri::command]
 pub fn copy_export_to_clipboard(
   app: AppHandle,
-  screenshot_output: ScreenshotOutputSettings,
+  screenshot_output: ScreenshotWorkspaceOutputSettings,
 ) -> Result<(), String> {
   // Refused before the artifact is taken, not after: the clipboard cannot hold
   // a movie, and taking one only to put it back would drop its poster on the
@@ -50,16 +50,16 @@ pub fn copy_export_to_clipboard(
   }
 
   let artifact = take_artifact(&app).ok_or_else(|| "There is nothing to copy".to_owned())?;
-  let ExportArtifact::Screenshot { image, .. } = artifact else {
+  let ExportArtifact::Screenshot { items, .. } = artifact else {
     return Err("There is nothing to copy".to_owned());
   };
-  let composed = compose_screenshot(&image, &screenshot_output)?;
+  let composed = compose_screenshot_workspace(&app, &items, &screenshot_output)?;
 
   app
     .clipboard()
     .write_image(&Image::new(&composed.rgba, composed.width, composed.height))
     .map_err(|error| error.to_string())?;
-  if let Err(error) = remember_screenshot_output(&app, screenshot_output) {
+  if let Err(error) = remember_screenshot_output(&app, screenshot_output.canvas) {
     eprintln!("Could not remember screenshot export settings: {error}");
   }
 

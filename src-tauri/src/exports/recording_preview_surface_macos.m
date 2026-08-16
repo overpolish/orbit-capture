@@ -4,6 +4,7 @@
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <QuartzCore/CATransaction.h>
 #import <WebKit/WebKit.h>
 
 #import "cursor_export/gpu_compositor_macos.h"
@@ -11,6 +12,12 @@
 @interface ScreenwidePreviewView : NSView
 @property(nonatomic) BOOL active;
 @property(nonatomic) void *compositor;
+/// A resize the webview has laid out but whose matching frame has not been
+/// composed yet. Applying it early would show the previous drawable fitted
+/// into the new rect for a display tick; the next present applies it in the
+/// same Core Animation transaction as the new pixels.
+@property(nonatomic) BOOL hasPendingFrame;
+@property(nonatomic) NSRect pendingFrame;
 @end
 
 @implementation ScreenwidePreviewView
@@ -24,6 +31,14 @@
 @property(nonatomic, strong) NSView *host;
 @property(nonatomic, strong) ScreenwidePreviewView *container;
 @property(nonatomic, strong) NSMutableArray<ScreenwidePreviewView *> *views;
+/// An open present batch: drawables collected between `begin_present` and
+/// `end_present` are presented in ONE Core Animation transaction together
+/// with every pane's pending frame, so screen, camera and their new rects
+/// change on the same display tick.
+@property(nonatomic, strong) NSLock *batchLock;
+@property(nonatomic) NSInteger batchDepth;
+@property(nonatomic, strong) NSMutableArray<id<CAMetalDrawable>> *batchDrawables;
+@property(nonatomic, strong) NSMutableArray<ScreenwidePreviewView *> *batchViews;
 @end
 
 @implementation ScreenwidePreviewSurface
@@ -51,6 +66,93 @@ static void on_main(dispatch_block_t block) {
   else dispatch_sync(dispatch_get_main_queue(), block);
 }
 
+/// Runs `body` on the main thread inside an explicit Core Animation
+/// transaction. From a background thread it is dispatched asynchronously: the
+/// decoder thread is joined from the main thread on stop, so it must never
+/// block on the main queue. On the main thread it runs inline so a caller
+/// that lays out right after (the screenshot preview) shares the transaction.
+static void run_on_main_transaction(dispatch_block_t body) {
+  dispatch_block_t block = ^{
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    body();
+    [CATransaction commit];
+  };
+  if ([NSThread isMainThread]) block();
+  else dispatch_async(dispatch_get_main_queue(), block);
+}
+
+/// Main thread only. Applies every pane's pending frame and presents the given
+/// drawables inside the caller's transaction.
+static void commit_frames_and_drawables(ScreenwidePreviewSurface *surface,
+                                        NSArray<id<CAMetalDrawable>> *drawables,
+                                        NSArray<ScreenwidePreviewView *> *views) {
+  for (ScreenwidePreviewView *view in surface.views) {
+    if (!view.hasPendingFrame) continue;
+    view.frame = view.pendingFrame;
+    view.hasPendingFrame = NO;
+  }
+  for (id<CAMetalDrawable> drawable in drawables) [drawable present];
+  for (ScreenwidePreviewView *view in views) {
+    if (!view.active) continue;
+    surface.container.hidden = NO;
+    view.hidden = NO;
+  }
+}
+
+/// Commits `command` and presents `drawable` together with every pending pane
+/// frame in one transaction (or hands it to the open batch, which does the
+/// same for all panes at `end_present`). `presentsWithTransaction` requires
+/// the command buffer to be scheduled before `present`, so that wait happens
+/// here on the calling (compositing) thread.
+static void present_in_transaction(ScreenwidePreviewSurface *surface,
+                                   ScreenwidePreviewView *view,
+                                   id<MTLCommandBuffer> command,
+                                   id<CAMetalDrawable> drawable) {
+  [command commit];
+  [command waitUntilScheduled];
+  [surface.batchLock lock];
+  if (surface.batchDepth > 0) {
+    [surface.batchDrawables addObject:drawable];
+    [surface.batchViews addObject:view];
+    [surface.batchLock unlock];
+    return;
+  }
+  [surface.batchLock unlock];
+  run_on_main_transaction(^{
+    commit_frames_and_drawables(surface, @[drawable], @[view]);
+  });
+}
+
+void screenwide_preview_surface_begin_present(void *handle) {
+  if (handle == NULL) return;
+  ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
+  [surface.batchLock lock];
+  surface.batchDepth += 1;
+  [surface.batchLock unlock];
+}
+
+/// Closes a batch. Runs even when nothing was presented so a deferred layout
+/// whose composition failed still lands instead of leaving the panes stuck.
+void screenwide_preview_surface_end_present(void *handle) {
+  if (handle == NULL) return;
+  ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
+  [surface.batchLock lock];
+  surface.batchDepth = MAX(surface.batchDepth - 1, 0);
+  if (surface.batchDepth > 0) {
+    [surface.batchLock unlock];
+    return;
+  }
+  NSArray<id<CAMetalDrawable>> *drawables = [surface.batchDrawables copy];
+  NSArray<ScreenwidePreviewView *> *views = [surface.batchViews copy];
+  [surface.batchDrawables removeAllObjects];
+  [surface.batchViews removeAllObjects];
+  [surface.batchLock unlock];
+  run_on_main_transaction(^{
+    commit_frames_and_drawables(surface, drawables, views);
+  });
+}
+
 static ScreenwidePreviewView *make_view(ScreenwidePreviewSurface *surface) {
   ScreenwidePreviewView *view = [[ScreenwidePreviewView alloc] initWithFrame:NSZeroRect];
   view.wantsLayer = YES;
@@ -59,6 +161,13 @@ static ScreenwidePreviewView *make_view(ScreenwidePreviewSurface *surface) {
   layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
   layer.framebufferOnly = NO;
   layer.displaySyncEnabled = YES;
+  // Presents ride the Core Animation transaction, so a pane's new frame and
+  // its freshly composed drawable reach the screen in the same commit instead
+  // of racing each other across two display ticks (see `present_in_transaction`).
+  layer.presentsWithTransaction = YES;
+  // Never stretch an old drawable while a fast canvas resize prepares its
+  // replacement. The presenter swaps in the correctly sized frame next.
+  layer.contentsGravity = kCAGravityResizeAspect;
   layer.opaque = NO;
   // Composed frames are sRGB. Tagging the layer makes Core Animation colour
   // match them exactly like the webview matches its canvases, so the native
@@ -117,6 +226,9 @@ void *screenwide_preview_surface_create(void *host_view) {
       [surface.host addSubview:surface.container positioned:NSWindowAbove relativeTo:nil];
     }
     surface.views = [NSMutableArray array];
+    surface.batchLock = [NSLock new];
+    surface.batchDrawables = [NSMutableArray array];
+    surface.batchViews = [NSMutableArray array];
   });
   if (surface.pipeline == nil) return NULL;
   return (__bridge_retained void *)surface;
@@ -125,7 +237,8 @@ void *screenwide_preview_surface_create(void *host_view) {
 void screenwide_preview_surface_set_viewport(void *handle,
                                         double x, double y,
                                         double width, double height,
-                                        double red, double green, double blue) {
+                                        double red, double green, double blue,
+                                        double alpha) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   on_main(^{
@@ -135,7 +248,11 @@ void screenwide_preview_surface_set_viewport(void *handle,
     // layout briefly disagree (pan, zoom, resize), the gap shows the app's
     // dark backdrop instead of seeing through the window.
     surface.container.layer.backgroundColor =
-        CGColorCreateSRGB(red, green, blue, 1.0);
+        CGColorCreateSRGB(red, green, blue, alpha);
+    // The webview punches the whole viewport out of its backdrop, so the
+    // backstop must be there from the first layout on, not only from the
+    // first presented frame. The panes themselves stay hidden until then.
+    if (width > 0 && height > 0) surface.container.hidden = NO;
   });
 }
 
@@ -148,14 +265,27 @@ void screenwide_preview_surface_begin_layout(void *handle) {
 }
 
 void screenwide_preview_surface_layout(void *handle, uint32_t index,
-                                  double x, double y, double width, double height) {
+                                  double x, double y, double width, double height,
+                                  int defer_resize) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   on_main(^{
     while (surface.views.count <= index) [surface.views addObject:make_view(surface)];
     ScreenwidePreviewView *view = surface.views[index];
     CGFloat viewport_height = surface.container.bounds.size.height;
-    view.frame = NSMakeRect(x, viewport_height - y - height, width, height);
+    NSRect frame = NSMakeRect(x, viewport_height - y - height, width, height);
+    // With a present on the way the frame waits for it, so every pane's rect
+    // and its pixels change in that one commit (a pane that only moves would
+    // otherwise shift a tick before its neighbour that also resized). A pan
+    // with no present coming applies at once; a hidden pane has nothing
+    // stale to show and needs no such care.
+    if (defer_resize && !view.hidden) {
+      view.pendingFrame = frame;
+      view.hasPendingFrame = YES;
+    } else {
+      view.frame = frame;
+      view.hasPendingFrame = NO;
+    }
     view.active = YES;
     CGFloat scale = surface.host.window.backingScaleFactor ?: 1.0;
     CAMetalLayer *layer = (CAMetalLayer *)view.layer;
@@ -167,8 +297,11 @@ void screenwide_preview_surface_finish_layout(void *handle) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   on_main(^{
-    for (ScreenwidePreviewView *view in surface.views)
-      if (!view.active) view.hidden = YES;
+    for (ScreenwidePreviewView *view in surface.views) {
+      if (view.active) continue;
+      view.hidden = YES;
+      view.hasPendingFrame = NO;
+    }
   });
 }
 
@@ -204,15 +337,16 @@ int screenwide_preview_surface_present(void *handle, uint32_t index,
   [encoder dispatchThreads:MTLSizeMake(drawable_width, drawable_height, 1)
        threadsPerThreadgroup:MTLSizeMake(group_width, group_height, 1)];
   [encoder endEncoding];
-  [command presentDrawable:drawable];
-  [command commit];
-  dispatch_async(dispatch_get_main_queue(), ^{
-    if (view.active) {
-      surface.container.hidden = NO;
-      view.hidden = NO;
-    }
-  });
+  present_in_transaction(surface, view, command, drawable);
   return 1;
+}
+
+static ScreenwidePresentBlock transaction_presenter(ScreenwidePreviewSurface *surface,
+                                                    ScreenwidePreviewView *view) {
+  return ^(void *command, void *drawable) {
+    present_in_transaction(surface, view, (__bridge id<MTLCommandBuffer>)command,
+                           (__bridge id<CAMetalDrawable>)drawable);
+  };
 }
 
 int screenwide_preview_surface_present_composed(
@@ -228,17 +362,10 @@ int screenwide_preview_surface_present_composed(
   if (!view.active) return 1;
   CAMetalLayer *layer = (CAMetalLayer *)view.layer;
   layer.drawableSize = CGSizeMake(MAX(output_width, 2u), MAX(output_height, 2u));
-  int presented = screenwide_gpu_still_presenter_present(
+  return screenwide_gpu_still_presenter_present(
       view.compositor, (__bridge void *)layer, source_token, source_rgba,
       source_width, source_height, canvas, seconds, cursor_rgba, camera_rgba,
-      overlay);
-  if (presented) dispatch_async(dispatch_get_main_queue(), ^{
-    if (view.active) {
-      surface.container.hidden = NO;
-      view.hidden = NO;
-    }
-  });
-  return presented;
+      overlay, transaction_presenter(surface, view));
 }
 
 int screenwide_preview_surface_present_composed_pixels(
@@ -254,16 +381,10 @@ int screenwide_preview_surface_present_composed_pixels(
   if (!view.active) return 1;
   CAMetalLayer *layer = (CAMetalLayer *)view.layer;
   layer.drawableSize = CGSizeMake(MAX(output_width, 2u), MAX(output_height, 2u));
-  int presented = screenwide_gpu_still_presenter_present_pixels(
+  return screenwide_gpu_still_presenter_present_pixels(
       view.compositor, (__bridge void *)layer, source_token, source_pixels,
-      canvas, seconds, cursor_rgba, camera_rgba, camera_pixels, overlay);
-  if (presented) dispatch_async(dispatch_get_main_queue(), ^{
-    if (view.active) {
-      surface.container.hidden = NO;
-      view.hidden = NO;
-    }
-  });
-  return presented;
+      canvas, seconds, cursor_rgba, camera_rgba, camera_pixels, overlay,
+      transaction_presenter(surface, view));
 }
 
 void screenwide_preview_surface_hide(void *handle) {
