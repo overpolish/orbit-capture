@@ -87,6 +87,25 @@ export const uncroppedCameraPreviewOverlay = (
   };
 };
 
+/** Grow the output canvas around a camera frame dragged past its edges. */
+export const fitCanvasToCameraOverlay = (
+  screen: RecordingPreviewPane,
+  camera: RecordingPreviewPane,
+  settings: CameraOverlaySettings,
+) => {
+  const { frame } = cameraOverlayGeometry(screen, camera, settings);
+  const left = Math.min(0, Math.floor(frame.x));
+  const top = Math.min(0, Math.floor(frame.y));
+  const right = Math.max(screen.width, Math.ceil(frame.x + frame.width));
+  const bottom = Math.max(screen.height, Math.ceil(frame.y + frame.height));
+  return {
+    height: bottom - top,
+    originX: left,
+    originY: top,
+    width: right - left,
+  };
+};
+
 /** Preserve baked-camera geometry while the shared output canvas is resized. */
 export const resizeCameraOverlayCanvas = (
   settings: CameraOverlaySettings,

@@ -416,6 +416,28 @@ export function InteractivePreviewViewport<Element extends HTMLElement>({
               zoom: transformRef.current.zoom,
             };
             clearTransition();
+            // The media box's new size lands in this very flush, ungated. Its
+            // anchor compensation must not trail through the animation frame
+            // or the native in-flight gate in `applyTransform`, or the corner
+            // opposite the grab detaches until they catch up. Write the
+            // translation now; the full pipeline still runs on the frame.
+            const mediaHost = mediaHostRef.current;
+            if (mediaHost) {
+              const { x, y } = transformRef.current;
+              mediaHost.style.transform = `translate(${x.toString()}px, ${y.toString()}px)`;
+            }
+            // Measure and queue the native layout from this very move too.
+            // The gated `applyTransform` pipeline only re-measures when an
+            // invoke acknowledgement returns, and under a saturated main
+            // thread those acknowledgements starve - the native pane would
+            // follow a resize in rare, large jumps. The surface hook keeps
+            // only the newest queued payload, so this stays one-in-flight.
+            mediaRef.current?.dispatchEvent(
+              new Event("screenwide-preview-transformed", {
+                bubbles: true,
+                cancelable: true,
+              }),
+            );
             schedule();
           },
           onMediaResizeEnd: () => {

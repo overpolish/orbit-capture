@@ -34,17 +34,40 @@ const frameInsideCamera = (frame: OverlayRect, camera: OverlayRect) =>
   frame.x + frame.width <= camera.x + camera.width &&
   frame.y + frame.height <= camera.y + camera.height;
 
+/** Mirrors the screenshot layer's alt drag: the canvas grows around the move. */
+export type CameraOverlayAutoFit = {
+  autoFitCanvas: boolean;
+  autoFitStarted: boolean;
+  output: { height: number; width: number };
+  settings: CameraOverlaySettings;
+};
+
 type MoveContext = {
+  autoFitCanvas: boolean;
   centered: boolean;
   next: CameraOverlaySettings;
   point: { x: number; y: number };
+  pointerDelta: { x: number; y: number };
+  screen: RecordingPreviewPane;
   snapPosition: boolean;
   start: ReturnType<typeof cameraOverlayGeometry>;
+};
+
+type ActiveGesture = {
+  action: OverlayAction;
+  autoFitCanvas: boolean;
+  clientX: number;
+  clientY: number;
+  scaleX: number;
+  scaleY: number;
+  screen: RecordingPreviewPane;
+  settings: CameraOverlaySettings;
 };
 
 export const useCameraOverlayInteraction = ({
   cameraPane,
   mediaRef,
+  onAutoFitCanvas,
   onInteractionEnd,
   onInteractionStart,
   onSettingsChange,
@@ -56,6 +79,9 @@ export const useCameraOverlayInteraction = ({
   mediaRef: RefObject<HTMLDivElement | null>;
   screenPane: RecordingPreviewPane;
   settings: CameraOverlaySettings;
+  onAutoFitCanvas?: (
+    change: CameraOverlayAutoFit,
+  ) => CameraOverlaySettings | undefined;
   onInteractionEnd?: () => void;
   onInteractionStart?: () => void;
   onSettingsChange?: (settings: CameraOverlaySettings) => void;
@@ -64,9 +90,7 @@ export const useCameraOverlayInteraction = ({
     y?: ScreenshotSnapGuide;
   }) => void;
 }) => {
-  const actionRef = useRef<
-    { action: OverlayAction; settings: CameraOverlaySettings } | undefined
-  >(undefined);
+  const actionRef = useRef<ActiveGesture | undefined>(undefined);
 
   const naturalPoint = (event: ReactPointerEvent) => {
     const bounds = mediaRef.current?.getBoundingClientRect();
@@ -81,58 +105,89 @@ export const useCameraOverlayInteraction = ({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
+    const bounds = mediaRef.current?.getBoundingClientRect();
+    if (!bounds || bounds.width === 0 || bounds.height === 0) return;
     onInteractionStart?.();
-    actionRef.current = { action, settings };
+    actionRef.current = {
+      action,
+      autoFitCanvas: event.altKey,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      scaleX: screenPane.width / bounds.width,
+      scaleY: screenPane.height / bounds.height,
+      screen: screenPane,
+      settings,
+    };
   };
 
   const moveFrame = (
     action: Extract<OverlayAction, { kind: "frame" | "whole" }>,
-    { next, point, snapPosition, start }: MoveContext,
+    {
+      autoFitCanvas,
+      next,
+      point,
+      pointerDelta,
+      screen,
+      snapPosition,
+      start,
+    }: MoveContext,
   ) => {
     const frameOnly = action.kind === "frame";
     const minimumX = frameOnly ? start.camera.x : -start.frame.width;
     const maximumX = frameOnly
       ? start.camera.x + start.camera.width - start.frame.width
-      : screenPane.width;
+      : screen.width;
     const minimumY = frameOnly ? start.camera.y : -start.frame.height;
     const maximumY = frameOnly
       ? start.camera.y + start.camera.height - start.frame.height
-      : screenPane.height;
-    let x = clamp(point.x - action.pointerX, minimumX, maximumX);
-    let y = clamp(point.y - action.pointerY, minimumY, maximumY);
+      : screen.height;
+    // A whole move tracks pointer displacement rather than its position: an
+    // auto-fitting canvas moves the origin underneath the gesture.
+    const rawX = frameOnly
+      ? point.x - action.pointerX
+      : start.frame.x + pointerDelta.x;
+    const rawY = frameOnly
+      ? point.y - action.pointerY
+      : start.frame.y + pointerDelta.y;
+    // The canvas follows the frame out while alt is held, so leaving it is
+    // the point of the gesture rather than something to clamp away.
+    const hold = (value: number, minimum: number, maximum: number) =>
+      autoFitCanvas && !frameOnly ? value : clamp(value, minimum, maximum);
+    let x = hold(rawX, minimumX, maximumX);
+    let y = hold(rawY, minimumY, maximumY);
     if (!frameOnly && snapPosition) {
       const bounds = mediaRef.current?.getBoundingClientRect();
       const snapped = snapScreenshotFrame({
-        canvas: screenPane,
+        canvas: screen,
         frame: start.frame,
         objects: [],
         position: { x, y },
-        thresholdX: (screenPane.width / Math.max(1, bounds?.width ?? 1)) * 8,
-        thresholdY: (screenPane.height / Math.max(1, bounds?.height ?? 1)) * 8,
+        thresholdX: (screen.width / Math.max(1, bounds?.width ?? 1)) * 8,
+        thresholdY: (screen.height / Math.max(1, bounds?.height ?? 1)) * 8,
       });
-      x = clamp(snapped.position.x, minimumX, maximumX);
-      y = clamp(snapped.position.y, minimumY, maximumY);
+      x = hold(snapped.position.x, minimumX, maximumX);
+      y = hold(snapped.position.y, minimumY, maximumY);
       onSnapGuidesChange?.(snapped.guides);
     } else {
       onSnapGuidesChange?.({});
     }
     const deltaX = x - start.frame.x;
     const deltaY = y - start.frame.y;
-    next.frameXPercent = (x * 100) / screenPane.width;
-    next.frameYPercent = (y * 100) / screenPane.height;
+    next.frameXPercent = (x * 100) / screen.width;
+    next.frameYPercent = (y * 100) / screen.height;
     if (!frameOnly) {
-      next.cameraXPercent += (deltaX * 100) / screenPane.width;
-      next.cameraYPercent += (deltaY * 100) / screenPane.height;
+      next.cameraXPercent += (deltaX * 100) / screen.width;
+      next.cameraYPercent += (deltaY * 100) / screen.height;
     }
   };
 
   const resizeFrame = (
     action: Extract<OverlayAction, { edges: OverlayEdge[] }>,
-    { next, point, start }: MoveContext,
+    { next, point, screen, start }: MoveContext,
   ) => {
     const minimumSize = Math.max(
       3,
-      40 * (screenPane.width / (mediaRef.current?.clientWidth || 1)),
+      40 * (screen.width / (mediaRef.current?.clientWidth || 1)),
     );
     let left = start.frame.x;
     let top = start.frame.y;
@@ -161,15 +216,15 @@ export const useCameraOverlayInteraction = ({
       y: top,
     };
     if (!frameInsideCamera(frame, start.camera)) return;
-    next.frameXPercent = (left * 100) / screenPane.width;
-    next.frameYPercent = (top * 100) / screenPane.height;
-    next.frameWidthPercent = (frame.width * 100) / screenPane.width;
-    next.frameHeightPercent = (frame.height * 100) / screenPane.height;
+    next.frameXPercent = (left * 100) / screen.width;
+    next.frameYPercent = (top * 100) / screen.height;
+    next.frameWidthPercent = (frame.width * 100) / screen.width;
+    next.frameHeightPercent = (frame.height * 100) / screen.height;
   };
 
   const resizeWhole = (
     action: Extract<OverlayAction, { edges: OverlayEdge[] }>,
-    { centered, next, point, start }: MoveContext,
+    { centered, next, point, screen, start }: MoveContext,
   ) => {
     const { edges } = action;
     const anchorX = centered
@@ -200,7 +255,7 @@ export const useCameraOverlayInteraction = ({
     const vectorY = handleY - anchorY;
     const denominator = vectorX * vectorX + vectorY * vectorY;
     const minimumScale =
-      minimumCameraFrameWidth(screenPane, start.frame) / start.frame.width;
+      minimumCameraFrameWidth(screen, start.frame) / start.frame.width;
     const requestedScale =
       denominator > 0
         ? ((point.x - anchorX) * vectorX + (point.y - anchorY) * vectorY) /
@@ -212,37 +267,61 @@ export const useCameraOverlayInteraction = ({
     const cameraCenterX = start.camera.x + start.camera.width / 2;
     const cameraCenterY = start.camera.y + start.camera.height / 2;
     next.frameXPercent =
-      (transform(start.frame.x, anchorX) * 100) / screenPane.width;
+      (transform(start.frame.x, anchorX) * 100) / screen.width;
     next.frameYPercent =
-      (transform(start.frame.y, anchorY) * 100) / screenPane.height;
-    next.frameWidthPercent =
-      (start.frame.width * scale * 100) / screenPane.width;
+      (transform(start.frame.y, anchorY) * 100) / screen.height;
+    next.frameWidthPercent = (start.frame.width * scale * 100) / screen.width;
     next.frameHeightPercent =
-      (start.frame.height * scale * 100) / screenPane.height;
-    next.cameraWidthPercent =
-      (start.camera.width * scale * 100) / screenPane.width;
+      (start.frame.height * scale * 100) / screen.height;
+    next.cameraWidthPercent = (start.camera.width * scale * 100) / screen.width;
     next.cameraXPercent =
-      (transform(cameraCenterX, anchorX) * 100) / screenPane.width;
+      (transform(cameraCenterX, anchorX) * 100) / screen.width;
     next.cameraYPercent =
-      (transform(cameraCenterY, anchorY) * 100) / screenPane.height;
+      (transform(cameraCenterY, anchorY) * 100) / screen.height;
   };
 
   const move = (event: ReactPointerEvent) => {
-    const active = actionRef.current;
+    let active = actionRef.current;
     const point = naturalPoint(event);
     if (!active || !point) return;
     event.preventDefault();
     event.stopPropagation();
-    const start = cameraOverlayGeometry(
-      screenPane,
-      cameraPane,
-      active.settings,
-    );
+    const autoFitCanvas = event.altKey;
+    let autoFitStarted = false;
+    // Toggling alt mid-gesture changes the canvas the move is measured in, so
+    // the gesture restarts from what is on screen right now.
+    if (
+      active.action.kind === "whole" &&
+      active.autoFitCanvas !== autoFitCanvas
+    ) {
+      const bounds = mediaRef.current?.getBoundingClientRect();
+      if (!bounds || bounds.width === 0 || bounds.height === 0) return;
+      autoFitStarted = autoFitCanvas;
+      active = {
+        ...active,
+        autoFitCanvas,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        scaleX: screenPane.width / bounds.width,
+        scaleY: screenPane.height / bounds.height,
+        screen: screenPane,
+        settings,
+      };
+      actionRef.current = active;
+    }
+    const screen = active.screen;
+    const start = cameraOverlayGeometry(screen, cameraPane, active.settings);
     const next = { ...active.settings };
     const context = {
+      autoFitCanvas,
       centered: event.altKey,
       next,
       point,
+      pointerDelta: {
+        x: (event.clientX - active.clientX) * active.scaleX,
+        y: (event.clientY - active.clientY) * active.scaleY,
+      },
+      screen,
       snapPosition: event.metaKey || event.ctrlKey,
       start,
     };
@@ -255,8 +334,8 @@ export const useCameraOverlayInteraction = ({
     } else {
       const shortest = Math.min(start.frame.width, start.frame.height);
       const displayScale =
-        (mediaRef.current?.getBoundingClientRect().width || screenPane.width) /
-        screenPane.width;
+        (mediaRef.current?.getBoundingClientRect().width || screen.width) /
+        screen.width;
       const radius = clamp(
         ((point.x - start.frame.x + point.y - start.frame.y) / 2 -
           RADIUS_HANDLE_INSET / displayScale) /
@@ -266,7 +345,18 @@ export const useCameraOverlayInteraction = ({
       );
       next.radiusPercent = (radius * 100) / shortest;
     }
-    onSettingsChange?.(next);
+    // The auto-fit owner grows the canvas around the move and hands back the
+    // overlay re-expressed in it; every other action commits as it stands.
+    const committed =
+      (active.action.kind === "whole"
+        ? onAutoFitCanvas?.({
+            autoFitCanvas,
+            autoFitStarted,
+            output: { height: screen.height, width: screen.width },
+            settings: next,
+          })
+        : undefined) ?? next;
+    onSettingsChange?.(committed);
   };
 
   const finish = (event: ReactPointerEvent) => {

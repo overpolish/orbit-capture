@@ -84,7 +84,11 @@ export function ScreenshotPreviewLayer({
           onChange={(change) => {
             const next = onLayoutChange?.(change) ?? change.settings;
             setDraft(next);
-            if (!change.autoFitCanvas) onOutputChange?.(next);
+            // An auto-fitting canvas commits the whole workspace through
+            // `onLayoutChange` instead. Without such a handler nothing else
+            // commits, so the alt drag has to land here like any other.
+            if (!change.autoFitCanvas || !onLayoutChange)
+              onOutputChange?.(next);
             return next;
           }}
           onInteractionEnd={onLayoutInteractionEnd}

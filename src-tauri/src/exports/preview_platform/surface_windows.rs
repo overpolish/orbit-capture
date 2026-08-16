@@ -6,7 +6,10 @@
 //! recording frames never enter system memory or cross Tauri IPC, while transparent webview
 //! regions leave DOM controls above the video.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{
+  atomic::{AtomicU32, Ordering},
+  Mutex, OnceLock,
+};
 
 use tauri::WebviewWindow;
 use windows::{
@@ -87,10 +90,28 @@ struct Backdrop {
 }
 
 struct Pane {
+  /// Allocated swap-chain size. Grown with headroom and kept, so an
+  /// interactive canvas resize does not reallocate GPU buffers per pointer
+  /// move; `SetSourceSize` presents only the `content_size` region.
   buffer_size: (u32, u32),
   clip: IDCompositionRectangleClip,
   clip_edges: (i32, i32, i32, i32),
+  /// The presented region of the buffer - the actual output resolution.
+  content_size: (u32, u32),
   display_size: (i32, i32),
+  /// Geometry laid out but not yet committed. Applying it before the matching
+  /// frame is composed would show the previous buffer fitted into the new
+  /// rect for a display tick; the next present (or batch flush) publishes it
+  /// together with the new pixels.
+  pending_geometry: bool,
+  /// The cursor and timeline state of the last composed frame. A paused
+  /// output-settings change redraws from the cached source with this
+  /// composition instead of round-tripping through the decoder.
+  last_composition: Option<ComposedFrame>,
+  /// A frame drawn inside an open present batch, waiting for the batch flush
+  /// to call `Present` so every pane's new pixels reach the compositor in the
+  /// same pass.
+  pending_present: bool,
   position: (i32, i32),
   scale_transform: IDCompositionScaleTransform,
   seen: bool,
@@ -110,6 +131,11 @@ struct SurfaceState {
 }
 
 struct SurfaceInner {
+  /// Open `present_batch` guards. While positive, presents park their frames
+  /// on the pane and the closing guard publishes every frame and every
+  /// pending geometry in one flush (the DirectComposition analogue of the
+  /// macOS single-`CATransaction` batch).
+  batch_depth: AtomicU32,
   gpu: Gpu,
   state: Mutex<SurfaceState>,
 }
@@ -188,7 +214,7 @@ impl Gpu {
     })
   }
 
-  fn pane(&self) -> Result<Pane, String> {
+  fn pane(&self, below: Option<&IDCompositionVisual>) -> Result<Pane, String> {
     let description = DXGI_SWAP_CHAIN_DESC1 {
       Width: 2,
       Height: 2,
@@ -226,9 +252,12 @@ impl Gpu {
         visual.SetContent(&swap_chain)?;
         visual.SetTransform(&scale_transform)?;
         visual.SetClip(&clip)?;
+        // Screenshot layer panes share one full-canvas rect, so sibling order
+        // is the layer order: each pane sits directly above the nearest
+        // lower-index pane, leaving higher indices frontmost as on macOS.
         self
           .root
-          .AddVisual(&visual, true, Some(&self.backdrop.visual))?;
+          .AddVisual(&visual, true, Some(below.unwrap_or(&self.backdrop.visual)))?;
         self.composition.Commit()?;
       }
       Ok(())
@@ -238,7 +267,11 @@ impl Gpu {
       buffer_size: (2, 2),
       clip,
       clip_edges: (0, 0, 2, 2),
+      content_size: (2, 2),
       display_size: (2, 2),
+      last_composition: None,
+      pending_geometry: false,
+      pending_present: false,
       position: (0, 0),
       scale_transform,
       seen: true,
@@ -356,15 +389,15 @@ impl Backdrop {
 
 impl Pane {
   fn display_aspect_matches_buffer(&self) -> bool {
-    let first = f64::from(self.buffer_size.0) * f64::from(self.display_size.1);
-    let second = f64::from(self.buffer_size.1) * f64::from(self.display_size.0);
+    let first = f64::from(self.content_size.0) * f64::from(self.display_size.1);
+    let second = f64::from(self.content_size.1) * f64::from(self.display_size.0);
     let scale = first.max(second).max(1.0);
     (first - second).abs() / scale < 0.005
   }
 
   fn update_geometry(&self) -> windows::core::Result<()> {
-    let buffer_width = self.buffer_size.0.max(1) as f32;
-    let buffer_height = self.buffer_size.1.max(1) as f32;
+    let content_width = self.content_size.0.max(1) as f32;
+    let content_height = self.content_size.1.max(1) as f32;
     let display_width = self.display_size.0.max(1) as f32;
     let display_height = self.display_size.1.max(1) as f32;
     let (clip_left, clip_top, clip_right, clip_bottom) = self.clip_edges;
@@ -373,22 +406,22 @@ impl Pane {
       self.visual.SetOffsetY2(self.position.1 as f32)?;
       self
         .scale_transform
-        .SetScaleX2(display_width / buffer_width)?;
+        .SetScaleX2(display_width / content_width)?;
       self
         .scale_transform
-        .SetScaleY2(display_height / buffer_height)?;
+        .SetScaleY2(display_height / content_height)?;
       self
         .clip
-        .SetLeft2(clip_left as f32 * buffer_width / display_width)?;
+        .SetLeft2(clip_left as f32 * content_width / display_width)?;
       self
         .clip
-        .SetTop2(clip_top as f32 * buffer_height / display_height)?;
+        .SetTop2(clip_top as f32 * content_height / display_height)?;
       self
         .clip
-        .SetRight2(clip_right as f32 * buffer_width / display_width)?;
+        .SetRight2(clip_right as f32 * content_width / display_width)?;
       self
         .clip
-        .SetBottom2(clip_bottom as f32 * buffer_height / display_height)?;
+        .SetBottom2(clip_bottom as f32 * content_height / display_height)?;
     }
     Ok(())
   }
@@ -418,21 +451,37 @@ impl RecordingPreviewSurface {
     crate::screenshots::output_dimensions(settings)?;
     // Keep one stable output chain for the current preview resolution. The
     // source texture is cached separately and edits only redraw this target.
+    // Buffers are only reallocated when the output outgrows them (with
+    // headroom, so an interactive resize reallocates rarely rather than per
+    // pointer move - per-move ResizeBuffers churn stalls the compositor).
+    // The visual's scale transform and clip in `update_geometry` map and
+    // bound exactly the drawn `content_size` region, so the unused margin of
+    // the larger buffer is never composed. (`SetSourceSize` cannot express
+    // this here: with the mandatory stretch scaling of a composition swap
+    // chain it rescales the region to the buffer bounds and warps.)
     let output_size = (settings.width, settings.height);
-    let resized = pane.buffer_size != output_size;
-    if resized {
+    let resized = pane.content_size != output_size;
+    if pane.buffer_size.0 < output_size.0 || pane.buffer_size.1 < output_size.1 {
+      let buffer = (
+        output_size.0.max(pane.buffer_size.0).next_multiple_of(256),
+        output_size.1.max(pane.buffer_size.1).next_multiple_of(256),
+      );
       unsafe {
         pane.swap_chain.ResizeBuffers(
           2,
-          output_size.0,
-          output_size.1,
+          buffer.0,
+          buffer.1,
           DXGI_FORMAT_B8G8R8A8_UNORM,
           DXGI_SWAP_CHAIN_FLAG(0),
         )
       }
       .map_err(|error| format!("The Windows composed preview could not resize: {error}"))?;
-      pane.buffer_size = output_size;
+      pane.buffer_size = buffer;
     }
+    if resized {
+      pane.content_size = output_size;
+    }
+    pane.last_composition = Some(composition);
     let source = pane
       .source
       .as_ref()
@@ -440,6 +489,24 @@ impl RecordingPreviewSurface {
     let buffer_index = unsafe { pane.swap_chain.GetCurrentBackBufferIndex() };
     let target = unsafe { pane.swap_chain.GetBuffer::<ID3D11Texture2D>(buffer_index) }
       .map_err(|error| format!("The composed preview has no back buffer: {error}"))?;
+    // A foreground layer blends over the existing target, and a flip-discard
+    // back buffer is undefined after each present: its uncovered pixels must
+    // read as transparent, not as stale frame data.
+    if composition.foreground_only {
+      let resource: ID3D11Resource = target.cast().map_err(|error| error.to_string())?;
+      let mut view: Option<ID3D11RenderTargetView> = None;
+      unsafe {
+        self
+          .inner
+          .gpu
+          .device
+          .CreateRenderTargetView(&resource, None, Some(&mut view))
+      }
+      .map_err(|error| format!("The layer preview could not clear its target: {error}"))?;
+      if let Some(view) = view {
+        unsafe { self.inner.gpu.context.ClearRenderTargetView(&view, &[0.0; 4]) };
+      }
+    }
     self.inner.gpu.compositor.draw_with_camera(
       &self.inner.gpu.context,
       &target,
@@ -449,11 +516,23 @@ impl RecordingPreviewSurface {
       camera,
     )?;
     unsafe { self.inner.gpu.context.Flush() };
+    // Inside an open batch the frame is parked: the closing guard presents
+    // every pane and commits every pending geometry in one flush, so sibling
+    // layers change on the same compositor pass.
+    if self.inner.batch_depth.load(Ordering::Acquire) > 0 {
+      pane.pending_present = true;
+      if resized {
+        pane.pending_geometry = true;
+      }
+      return Ok(true);
+    }
     unsafe { pane.swap_chain.Present(0, DXGI_PRESENT(0)) }
       .ok()
       .map_err(|error| format!("The composed preview could not present: {error}"))?;
-    // Publish resized buffer geometry only after the replacement frame exists.
-    if resized {
+    // Publish resized or deferred geometry only after the replacement frame
+    // exists, immediately behind its present so both land in one pass.
+    if resized || pane.pending_geometry {
+      pane.pending_geometry = false;
       pane.update_geometry().map_err(|error| error.to_string())?;
       unsafe { self.inner.gpu.composition.Commit() }.map_err(|error| error.to_string())?;
     }
@@ -477,6 +556,7 @@ impl RecordingPreviewSurface {
         let host = window.hwnd().map_err(|error| error.to_string())?;
         let host = HWND(host.0);
         Ok(std::sync::Arc::new(SurfaceInner {
+          batch_depth: AtomicU32::new(0),
           gpu: Gpu::new(host)?,
           state: Mutex::new(SurfaceState {
             backdrop: [0.09, 0.09, 0.10, 1.0],
@@ -570,7 +650,10 @@ impl RecordingPreviewSurface {
     }
   }
 
-  pub(crate) fn layout(&self, index: u32, rect: PreviewSurfaceRect, _defer_resize: bool) {
+  /// `defer_resize` holds the new pane geometry back until the re-composed
+  /// frame for it presents, so rect and pixels reach the compositor together
+  /// instead of the old buffer shifting into the new rect for a tick.
+  pub(crate) fn layout(&self, index: u32, rect: PreviewSurfaceRect, defer_resize: bool) {
     let Ok(mut state) = self.inner.state.lock() else {
       return;
     };
@@ -579,7 +662,13 @@ impl RecordingPreviewSurface {
       state.panes.resize_with(index + 1, || None);
     }
     if state.panes[index].is_none() {
-      state.panes[index] = self.inner.gpu.pane().ok();
+      let below = state.panes[..index]
+        .iter()
+        .rev()
+        .flatten()
+        .next()
+        .map(|pane| pane.visual.clone());
+      state.panes[index] = self.inner.gpu.pane(below.as_ref()).ok();
     }
     let scale = state.scale;
     let viewport = state.viewport;
@@ -601,24 +690,50 @@ impl RecordingPreviewSurface {
       (viewport_right - x).clamp(0, width),
       (viewport_bottom - y).clamp(0, height),
     );
-    // A canvas aspect change updates the DOM marker before its replacement
-    // GPU frame is ready. Keep the last correctly proportioned pane in place
-    // instead of stretching its old swap-chain buffer for one transaction.
-    // `present_cached_source` publishes this pending geometry immediately
-    // after the correctly sized replacement frame has been presented.
-    if pane.display_aspect_matches_buffer() {
+    // With a present on the way the geometry waits for it, so the pane's rect
+    // and its freshly composed pixels land in the same commit. A pure pan (no
+    // present coming) applies at once - but never while the DOM rect's aspect
+    // has outrun the buffer: stretching the old frame into a new-aspect rect
+    // for one transaction is exactly the jitter this avoids. Deferred
+    // geometry is published by the pane's next present or the batch flush.
+    if defer_resize {
+      pane.pending_geometry = true;
+    } else if pane.display_aspect_matches_buffer() {
+      pane.pending_geometry = false;
       let _ = pane.update_geometry();
+    } else {
+      pane.pending_geometry = true;
     }
   }
 
+  /// Opens a present batch: frames drawn until the guard drops are parked on
+  /// their panes and published by one flush together with every geometry
+  /// deferred by `layout`. Dropping the guard flushes even when nothing was
+  /// presented, so a deferred layout never strands the panes.
   pub(crate) fn present_batch(&self) -> PresentBatch<'_> {
-    PresentBatch { _surface: self }
+    self.inner.batch_depth.fetch_add(1, Ordering::AcqRel);
+    PresentBatch { surface: self }
   }
 
   pub(crate) fn finish_layout(&self) {
-    if let Ok(state) = self.inner.state.lock() {
-      for pane in state.panes.iter().flatten().filter(|pane| !pane.seen) {
+    if let Ok(mut state) = self.inner.state.lock() {
+      for pane in state
+        .panes
+        .iter_mut()
+        .flatten()
+        .filter(|pane| !pane.seen)
+      {
         pane.hide();
+        // A hidden pane has nothing stale to show; drop leftovers so a later
+        // flush cannot resurrect it at a parked offset.
+        pane.pending_geometry = false;
+        pane.pending_present = false;
+      }
+      // An open batch commits for everything on its flush; a second
+      // commit-and-wait here would add a display tick of latency to every
+      // layout that presents in the same invoke.
+      if self.inner.batch_depth.load(Ordering::Acquire) > 0 {
+        return;
       }
       if unsafe { self.inner.gpu.composition.Commit() }.is_ok() {
         // Commit is otherwise only queued. Waiting here prevents rapid DOM
@@ -766,6 +881,78 @@ impl RecordingPreviewSurface {
       composition,
       Some((&camera, geometry, drop_shadow, camera_on_top)),
     )
+  }
+
+  /// Redraws the paused stills from their cached full-resolution sources and
+  /// compositions with the given output settings - no decoder round trip, so
+  /// a canvas resize follows the pointer instead of trailing a Media
+  /// Foundation reopen. Returns `Ok(false)` when a needed frame is not
+  /// cached yet and the decoder has to supply it. `bake_camera` means "bake
+  /// with an available camera track" - the caller folds the track's
+  /// existence in, exactly like the present path does.
+  #[allow(clippy::too_many_arguments)]
+  pub(crate) fn redraw_still(
+    &self,
+    bake_camera: bool,
+    primary: &ScreenshotOutputSettings,
+    camera_settings: &ScreenshotOutputSettings,
+    overlay: crate::exports::CameraOverlaySettings,
+    drop_shadow: bool,
+    camera_on_top: bool,
+  ) -> Result<bool, String> {
+    let batch = self.present_batch();
+    {
+      let Ok(mut state) = self.inner.state.lock() else {
+        return Ok(false);
+      };
+      let camera_source = state.camera_source.clone();
+      let Some(pane) = state.panes.first_mut().and_then(Option::as_mut) else {
+        return Ok(false);
+      };
+      let (Some(composition), Some(_)) = (pane.last_composition, pane.source.as_ref()) else {
+        return Ok(false);
+      };
+      if bake_camera {
+        // The camera texture is only cached while baked presents run; right
+        // after a bake toggle it is absent (or stale) and the decoder must
+        // deliver it. Never draw a baked still without its camera.
+        let Some(camera) = camera_source.as_ref() else {
+          return Ok(false);
+        };
+        {
+          let geometry = crate::exports::media_preview::bake_geometry(BakedVideoExportOptions {
+            camera_drop_shadow: drop_shadow,
+            camera_height: camera.size.1,
+            camera_width: camera.size.0,
+            overlay,
+            screen_height: primary.height,
+            screen_width: primary.width,
+            video: VideoExportOptions {
+              compression: 0,
+              resolution_scale_percent: 100,
+              source_scale_percent: 100,
+            },
+          })?;
+          self.present_cached_source_with_camera(
+            pane,
+            primary,
+            composition,
+            Some((camera, geometry, drop_shadow, camera_on_top)),
+          )?;
+        }
+      } else {
+        self.present_cached_source(pane, primary, composition)?;
+      }
+      if !bake_camera {
+        if let Some(pane) = state.panes.get_mut(1).and_then(Option::as_mut) {
+          if let (Some(composition), Some(_)) = (pane.last_composition, pane.source.as_ref()) {
+            self.present_cached_source(pane, camera_settings, composition)?;
+          }
+        }
+      }
+    }
+    drop(batch);
+    Ok(true)
   }
 
   /// Renders one explicit clipboard frame through the exact preview shader,
@@ -1195,7 +1382,41 @@ impl WindowsExportCompositor {
   }
 }
 
-/// Presents are already atomic per pane here; the guard only mirrors macOS.
+/// An open present batch. Dropping it presents every parked frame
+/// back-to-back, applies every pending pane geometry, and commits once, so
+/// all panes reach the compositor in (almost always) the same pass - the
+/// DirectComposition counterpart of the macOS single-`CATransaction` batch.
 pub(crate) struct PresentBatch<'a> {
-  _surface: &'a RecordingPreviewSurface,
+  surface: &'a RecordingPreviewSurface,
+}
+
+impl Drop for PresentBatch<'_> {
+  fn drop(&mut self) {
+    let inner = &self.surface.inner;
+    if inner.batch_depth.fetch_sub(1, Ordering::AcqRel) != 1 {
+      return;
+    }
+    let Ok(mut state) = inner.state.lock() else {
+      return;
+    };
+    for pane in state.panes.iter_mut().flatten() {
+      if pane.pending_present {
+        pane.pending_present = false;
+        let _ = unsafe { pane.swap_chain.Present(0, DXGI_PRESENT(0)) }.ok();
+      }
+    }
+    for pane in state.panes.iter_mut().flatten() {
+      if pane.pending_geometry {
+        pane.pending_geometry = false;
+        let _ = pane.update_geometry();
+      }
+    }
+    // Unconditional: `finish_layout` leaves its hides to this commit whenever
+    // the batch was already open.
+    if unsafe { inner.gpu.composition.Commit() }.is_ok() {
+      // As in `finish_layout`: an unawaited commit backlog lets rapid drags
+      // visibly desynchronise the panes from the DOM controls above them.
+      let _ = unsafe { inner.gpu.composition.WaitForCommitCompletion() };
+    }
+  }
 }

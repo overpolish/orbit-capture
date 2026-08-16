@@ -66,10 +66,12 @@ export function ScreenshotRadiusControl({
     event.currentTarget.blur();
   };
 
+  // `z-10` matches the transform handles: a layer stacked above the selected
+  // one may claim the inside of its box, never the handles on the box edge.
   return (
     <svg
       aria-label={`${anchor === "top-right" ? "Background" : "Screenshot"} corner radius ${Math.round(radiusPercent).toString()} percent`}
-      className="absolute overflow-visible outline-none"
+      className="absolute z-10 overflow-visible outline-none"
       height="16"
       onPointerCancel={finish}
       onPointerDown={(event) => {

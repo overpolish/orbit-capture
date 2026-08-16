@@ -19,11 +19,12 @@ import {
 import { uncroppedCameraPreviewOverlay } from "../camera-overlay-geometry";
 import { defaultCameraOverlay } from "../recording-export-settings";
 import {
+  RecordingOutputSettings,
   defaultRecordingOutput,
   recordingVideoTrackOrder,
   uncroppedScreenshotPreviewOutput,
 } from "../screenshot-output";
-import { RecordingVideoTrackId } from "../types";
+import { RecordingTrackId, RecordingVideoTrackId } from "../types";
 import { useExportWindowShortcuts } from "../use-export-window-shortcuts";
 import { useRecordingPreviewPlayer } from "../use-recording-preview-player";
 import { useRecordingTimelineThumbnails } from "../use-recording-timeline-thumbnails";
@@ -93,16 +94,33 @@ export function NativeRecordingPreview({
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [zoomPercent, setZoomPercent] = useState(100);
   const [canvasTool, setCanvasTool] = useState<RecordingCanvasTool>("select");
+  // A canvas resize runs at pointer rate; committing every move to the export
+  // window's state re-renders the inspector, lanes and timeline and starves
+  // the native pane's layout loop. The gesture renders from this draft and
+  // commits once on release, exactly like the screenshot editor.
+  const [canvasResizeDraft, setCanvasResizeDraft] =
+    useState<RecordingOutputSettings | null>(null);
   const [layerContextMenu, setLayerContextMenu] =
     useState<LayerContextMenuState<RecordingVideoTrackId> | null>(null);
   const [copyState, setCopyState] = useState<"copying" | "done" | "idle">(
     "idle",
   );
   const [copyError, setCopyError] = useState<string | null>(null);
-  const selectedStreamIndices =
-    enabledStreamIndices ?? audioTracks.map((track) => track.streamIndex);
-  const enabledTracks = new Set(selectedStreamIndices);
-  const selectedVideoTracks = new Set(enabledVideoTracks);
+  // Everything derived below feeds memoized children. A canvas-resize gesture
+  // re-renders this component at pointer rate, so a derived array or Set rebuilt
+  // per render would defeat the memo of every subtree it reaches.
+  const selectedStreamIndices = useMemo(
+    () => enabledStreamIndices ?? audioTracks.map((track) => track.streamIndex),
+    [audioTracks, enabledStreamIndices],
+  );
+  const enabledTracks = useMemo(
+    () => new Set(selectedStreamIndices),
+    [selectedStreamIndices],
+  );
+  const selectedVideoTracks = useMemo(
+    () => new Set(enabledVideoTracks),
+    [enabledVideoTracks],
+  );
   const activeVideoTrack =
     selectedTrack === "primary" || selectedTrack === "camera"
       ? selectedTrack
@@ -117,13 +135,25 @@ export function NativeRecordingPreview({
       ),
     [audioTrackVolumes],
   );
+  const activeRecordingOutput =
+    (canvasTool === "canvas" ? canvasResizeDraft : null) ?? recordingOutput;
   const effectiveRecordingOutput =
-    recordingOutput ??
+    activeRecordingOutput ??
     defaultRecordingOutput({
       camera: previewOutputDimensions?.camera,
       primary: previewOutputDimensions?.primary ?? { height: 64, width: 64 },
     });
-  const videoTrackOrder = recordingVideoTrackOrder(effectiveRecordingOutput);
+  // Only the layer order matters here, and it is the one part of the output a
+  // resize never touches; keying on it holds the array identity across a drag.
+  const videoTrackOrder = useMemo(
+    () => recordingVideoTrackOrder(effectiveRecordingOutput),
+    // eslint-disable-next-line @eslint-react/exhaustive-deps
+    [effectiveRecordingOutput.cameraOnTop],
+  );
+  const videoTrackOrderList = useMemo(
+    () => [...videoTrackOrder],
+    [videoTrackOrder],
+  );
   const cropSource =
     activeVideoTrack === "primary"
       ? previewSourceDimensions.primary
@@ -215,42 +245,43 @@ export function NativeRecordingPreview({
   const totalDurationMs = player.durationMs || durationMs;
   totalDurationRef.current = totalDurationMs;
   const layout = player.layout ?? previewLayout ?? null;
-  const canvasRefs = [screenCanvasRef, cameraCanvasRef];
-  const visiblePaneEntries =
-    layout?.panes
-      .map((pane, index) => ({
-        canvasRef: canvasRefs[index],
-        pane,
-        trackId: index === 0 ? ("primary" as const) : ("camera" as const),
-      }))
-      .filter(({ trackId }) => selectedVideoTracks.has(trackId))
-      .sort(
-        (left, right) =>
-          videoTrackOrder.indexOf(left.trackId) -
-          videoTrackOrder.indexOf(right.trackId),
-      ) ?? [];
-  const visiblePreviewHeight = visiblePaneEntries.reduce(
-    (height, { pane }) => Math.max(height, pane.height),
-    0,
+  const canvasRefs = useMemo(
+    () => [screenCanvasRef, cameraCanvasRef],
+    [cameraCanvasRef, screenCanvasRef],
   );
-  let visiblePreviewX = 0;
-  const visibleLayout = layout
-    ? {
-        height: visiblePreviewHeight,
-        panes: visiblePaneEntries.map(({ pane }) => {
-          const visiblePane = {
-            ...pane,
-            x: visiblePreviewX,
-            y: (visiblePreviewHeight - pane.height) / 2,
-          };
-          visiblePreviewX += pane.width + PREVIEW_PANE_GAP;
-          return visiblePane;
-        }),
-        width: Math.max(0, visiblePreviewX - PREVIEW_PANE_GAP),
-      }
-    : null;
-  const visibleCanvasRefs = visiblePaneEntries.map(
-    ({ canvasRef }) => canvasRef,
+  const visiblePaneEntries = useMemo(
+    () =>
+      layout?.panes
+        .map((pane, index) => ({
+          canvasRef: canvasRefs[index],
+          pane,
+          trackId: index === 0 ? ("primary" as const) : ("camera" as const),
+        }))
+        .filter(({ trackId }) => selectedVideoTracks.has(trackId))
+        .sort(
+          (left, right) =>
+            videoTrackOrder.indexOf(left.trackId) -
+            videoTrackOrder.indexOf(right.trackId),
+        ) ?? [],
+    [canvasRefs, layout, selectedVideoTracks, videoTrackOrder],
+  );
+  const visibleLayout = useMemo(() => {
+    if (!layout) return null;
+    const height = visiblePaneEntries.reduce(
+      (maximum, { pane }) => Math.max(maximum, pane.height),
+      0,
+    );
+    let x = 0;
+    const panes = visiblePaneEntries.map(({ pane }) => {
+      const visiblePane = { ...pane, x, y: (height - pane.height) / 2 };
+      x += pane.width + PREVIEW_PANE_GAP;
+      return visiblePane;
+    });
+    return { height, panes, width: Math.max(0, x - PREVIEW_PANE_GAP) };
+  }, [layout, visiblePaneEntries]);
+  const visibleCanvasRefs = useMemo(
+    () => visiblePaneEntries.map(({ canvasRef }) => canvasRef),
+    [visiblePaneEntries],
   );
   const screenPane = layout?.panes[0];
   const cameraPane = layout?.panes[1];
@@ -318,58 +349,87 @@ export function NativeRecordingPreview({
     [onVideoTrackOrderChange, videoTrackOrder],
   );
 
+  // The shortcut hook re-binds its window listener whenever a handler identity
+  // changes, so these stay stable across the per-move draft renders.
+  const canMoveActiveVideoTrack =
+    activeVideoTrack !== null && selectedVideoTracks.has(activeVideoTrack);
+  const hasVisiblePanes = visiblePaneEntries.length > 0;
+  const moveActiveVideoTrackBackward = useCallback(() => {
+    moveActiveVideoTrack("backward");
+  }, [moveActiveVideoTrack]);
+  const moveActiveVideoTrackForward = useCallback(() => {
+    moveActiveVideoTrack("forward");
+  }, [moveActiveVideoTrack]);
+  const toggleCanvasTool = useCallback(() => {
+    setCanvasTool((current) => (current === "canvas" ? null : "canvas"));
+  }, []);
+  const toggleSelectTool = useCallback(() => {
+    setCanvasTool((current) => (current === "select" ? null : "select"));
+  }, []);
+  const toggleCropTool = useCallback(() => {
+    setCanvasTool((current) => (current === "crop" ? null : "crop"));
+  }, []);
+
   useExportWindowShortcuts({
-    onMoveBackward:
-      activeVideoTrack && selectedVideoTracks.has(activeVideoTrack)
-        ? () => {
-            moveActiveVideoTrack("backward");
-          }
-        : undefined,
-    onMoveForward:
-      activeVideoTrack && selectedVideoTracks.has(activeVideoTrack)
-        ? () => {
-            moveActiveVideoTrack("forward");
-          }
-        : undefined,
-    onResizeCanvas: canResizeActiveTrack
-      ? () => {
-          setCanvasTool((current) => (current === "canvas" ? null : "canvas"));
-        }
+    onMoveBackward: canMoveActiveVideoTrack
+      ? moveActiveVideoTrackBackward
       : undefined,
-    onSelectTool:
-      visiblePaneEntries.length > 0
-        ? () => {
-            setCanvasTool((current) =>
-              current === "select" ? null : "select",
-            );
-          }
-        : undefined,
-    onToggleCrop:
-      visiblePaneEntries.length > 0
-        ? () => {
-            setCanvasTool((current) => (current === "crop" ? null : "crop"));
-          }
-        : undefined,
+    onMoveForward: canMoveActiveVideoTrack
+      ? moveActiveVideoTrackForward
+      : undefined,
+    onResizeCanvas: canResizeActiveTrack ? toggleCanvasTool : undefined,
+    onSelectTool: hasVisiblePanes ? toggleSelectTool : undefined,
+    onToggleCrop: hasVisiblePanes ? toggleCropTool : undefined,
     onTogglePlayback: layout ? togglePlayback : undefined,
   });
 
-  const cropToggle =
-    visiblePaneEntries.length > 0 ? (
-      <RecordingCanvasTools
-        activeTrack={activeVideoTrack}
-        bakeCamera={bakeCamera}
-        cameraPane={cameraPane}
-        isEnabled={canEditActiveTrack}
-        isFrameEnabled={canResizeActiveTrack}
-        isSelectEnabled={visiblePaneEntries.length > 0}
-        onCameraOverlayReset={onCameraOverlayChange}
-        onChange={onRecordingOutputChange}
-        onToolChange={setCanvasTool}
-        outputs={recordingOutput}
-        screenPane={screenPane}
-        tool={canvasTool}
-      />
-    ) : undefined;
+  // The tools read the committed `recordingOutput`, never the resize draft, so
+  // holding the element keeps the memoized toolbar's props stable mid-gesture.
+  const cropToggle = useMemo(
+    () =>
+      visiblePaneEntries.length > 0 ? (
+        <RecordingCanvasTools
+          activeTrack={activeVideoTrack}
+          bakeCamera={bakeCamera}
+          cameraPane={cameraPane}
+          isEnabled={canEditActiveTrack}
+          isFrameEnabled={canResizeActiveTrack}
+          isSelectEnabled={visiblePaneEntries.length > 0}
+          onCameraOverlayReset={onCameraOverlayChange}
+          onChange={onRecordingOutputChange}
+          onToolChange={setCanvasTool}
+          outputs={recordingOutput}
+          screenPane={screenPane}
+          tool={canvasTool}
+        />
+      ) : undefined,
+    [
+      activeVideoTrack,
+      bakeCamera,
+      cameraPane,
+      canEditActiveTrack,
+      canResizeActiveTrack,
+      canvasTool,
+      onCameraOverlayChange,
+      onRecordingOutputChange,
+      recordingOutput,
+      screenPane,
+      visiblePaneEntries.length,
+    ],
+  );
+  const previewBadges = useMemo(
+    () =>
+      visibleLayout?.panes.map((pane, index) => {
+        const outputDimensions =
+          previewOutputDimensions?.[visiblePaneEntries[index].trackId];
+        return {
+          height: outputDimensions?.height ?? pane.sourceHeight,
+          kind: pane.kind,
+          width: outputDimensions?.width ?? pane.sourceWidth,
+        };
+      }) ?? [],
+    [previewOutputDimensions, visibleLayout, visiblePaneEntries],
+  );
 
   useEffect(() => {
     playhead.publish(0, 0);
@@ -423,17 +483,73 @@ export function NativeRecordingPreview({
     screenCanvasRef,
   ]);
 
-  const seek = (ratio: number, phase: "end" | "move" | "start") => {
-    if (phase === "start") setIsScrubbing(true);
-    if (phase === "end") setIsScrubbing(false);
-    const positionMs = ratio * totalDurationMs;
-    playhead.publish(positionMs / 1_000, ratio);
-    player.seek(positionMs, phase);
+  // The lanes are memoized, so the handlers they receive must outlive a resize
+  // draft update. The player's seek is re-created per render by design, so it is
+  // reached through a ref rather than captured.
+  const playerSeekRef = useRef(player.seek);
+  playerSeekRef.current = player.seek;
+  const seek = useCallback(
+    (ratio: number, phase: "end" | "move" | "start") => {
+      if (phase === "start") setIsScrubbing(true);
+      if (phase === "end") setIsScrubbing(false);
+      const positionMs = ratio * totalDurationRef.current;
+      playhead.publish(positionMs / 1_000, ratio);
+      playerSeekRef.current(positionMs, phase);
+    },
+    [playhead],
+  );
+  const changeEnabledTracks = useCallback(
+    (tracks: Set<number>) => {
+      onEnabledTracksChange?.([...tracks]);
+    },
+    [onEnabledTracksChange],
+  );
+  const changeEnabledVideoTracks = useCallback(
+    (tracks: Set<RecordingVideoTrackId>) => {
+      onEnabledVideoTracksChange?.([...tracks]);
+    },
+    [onEnabledVideoTracksChange],
+  );
+  const changeSelectedTrack = useCallback(
+    (trackId: RecordingTrackId) => {
+      onSelectedTrackChange?.(trackId);
+    },
+    [onSelectedTrackChange],
+  );
+  // The copied frame must use the output on screen, which during a resize is
+  // the draft; a ref keeps the handler stable without staling the payload.
+  const copyPayloadRef = useRef({
+    cursorEffects,
+    recordingOutput: effectiveRecordingOutput,
+  });
+  copyPayloadRef.current = {
+    cursorEffects,
+    recordingOutput: effectiveRecordingOutput,
   };
+  const copyCurrentFrame = useCallback(() => {
+    setCopyState("copying");
+    setCopyError(null);
+    void copyRecordingPreviewFrameToClipboard({
+      artifactId,
+      cursorEffects: copyPayloadRef.current.cursorEffects,
+      positionMs: getPositionMs(),
+      recordingOutput: copyPayloadRef.current.recordingOutput,
+    })
+      .then(() => {
+        setCopyState("done");
+        window.setTimeout(() => {
+          setCopyState("idle");
+        }, 1_500);
+      })
+      .catch((cause: unknown) => {
+        setCopyState("idle");
+        setCopyError(cause instanceof Error ? cause.message : String(cause));
+      });
+  }, [artifactId, getPositionMs]);
 
   return (
     <div className="flex min-h-0 grow flex-col">
-      <div className="grid min-h-0 grow grid-cols-[clamp(240px,23vw,300px)_minmax(0,1fr)]">
+      <div className="grid min-h-0 grow grid-cols-[clamp(270px,23vw,300px)_minmax(0,1fr)]">
         {inspector}
         <section className="relative flex min-h-0 min-w-0 flex-col">
           <div
@@ -443,15 +559,7 @@ export function NativeRecordingPreview({
           />
           {visibleLayout && visibleLayout.panes.length > 0 ? (
             <PreviewToolbar
-              badges={visibleLayout.panes.map((pane, index) => {
-                const outputDimensions =
-                  previewOutputDimensions?.[visiblePaneEntries[index].trackId];
-                return {
-                  height: outputDimensions?.height ?? pane.sourceHeight,
-                  kind: pane.kind,
-                  width: outputDimensions?.width ?? pane.sourceWidth,
-                };
-              })}
+              badges={previewBadges}
               center={cropToggle}
               onZoomChange={setZoomPercent}
               zoomPercent={zoomPercent}
@@ -486,6 +594,15 @@ export function NativeRecordingPreview({
                     previewLayout === undefined &&
                     (player.isPreparing || isPreparingPreview)
                   }
+                  onCanvasResizeDraft={(settings) => {
+                    // Same contract as the unbaked viewport: the gesture
+                    // renders from the draft and commits once on release.
+                    setCanvasResizeDraft(
+                      settings === null
+                        ? null
+                        : { ...effectiveRecordingOutput, primary: settings },
+                    );
+                  }}
                   onInteractionEnd={cameraHistory.endGesture}
                   onInteractionStart={cameraHistory.beginGesture}
                   onNeedFullResolution={player.requestFullResolution}
@@ -505,7 +622,10 @@ export function NativeRecordingPreview({
                     !isScrubbing
                   }
                   outputSettings={
-                    recordingOutput?.primary ?? {
+                    // The draft-derived output, so the composed frame, camera
+                    // overlay geometry and on-screen controls all follow the
+                    // resize before it reaches the export window's state.
+                    activeRecordingOutput?.primary ?? {
                       backgroundColor: "#171717",
                       backgroundRadiusPercent: 0,
                       backgroundType: "solid",
@@ -536,12 +656,22 @@ export function NativeRecordingPreview({
               </div>
             ) : visibleLayout &&
               visibleLayout.panes.length > 0 &&
-              recordingOutput ? (
+              activeRecordingOutput ? (
               <div className="flex min-h-0 min-w-0 grow flex-col">
                 <RecordingOutputPreviewViewport
                   activeTrack={activeVideoTrack}
                   controlsVisible={!isPlaying && !isScrubbing}
                   entries={visiblePaneEntries}
+                  onCanvasResizeDraft={(trackId, settings) => {
+                    // `effectiveRecordingOutput` already renders from the
+                    // draft while the gesture runs, so the other track's
+                    // settings carry over from the frame on screen.
+                    setCanvasResizeDraft(
+                      settings === null
+                        ? null
+                        : { ...effectiveRecordingOutput, [trackId]: settings },
+                    );
+                  }}
                   onChange={onRecordingOutputChange}
                   onNeedFullResolution={player.requestFullResolution}
                   onSelectTrack={(trackId) => {
@@ -549,7 +679,7 @@ export function NativeRecordingPreview({
                   }}
                   onTrackContextMenu={openLayerContextMenu}
                   onZoomChange={setZoomPercent}
-                  outputs={recordingOutput}
+                  outputs={activeRecordingOutput}
                   tool={canvasTool}
                   zoomPercent={zoomPercent}
                 />
@@ -593,28 +723,7 @@ export function NativeRecordingPreview({
               copyState={copyState}
               durationMs={totalDurationMs}
               isPlaying={player.isPlaying}
-              onCopyCurrentFrame={() => {
-                setCopyState("copying");
-                setCopyError(null);
-                void copyRecordingPreviewFrameToClipboard({
-                  artifactId,
-                  cursorEffects,
-                  positionMs: player.getPositionMs(),
-                  recordingOutput: effectiveRecordingOutput,
-                })
-                  .then(() => {
-                    setCopyState("done");
-                    window.setTimeout(() => {
-                      setCopyState("idle");
-                    }, 1_500);
-                  })
-                  .catch((cause: unknown) => {
-                    setCopyState("idle");
-                    setCopyError(
-                      cause instanceof Error ? cause.message : String(cause),
-                    );
-                  });
-              }}
+              onCopyCurrentFrame={copyCurrentFrame}
               onPause={player.pause}
               onPlay={player.play}
               playhead={playhead}
@@ -641,21 +750,15 @@ export function NativeRecordingPreview({
             enabledTracks={enabledTracks}
             enabledVideoTracks={selectedVideoTracks}
             layout={layout}
-            onEnabledTracksChange={(tracks) => {
-              onEnabledTracksChange?.([...tracks]);
-            }}
-            onEnabledVideoTracksChange={(tracks) => {
-              onEnabledVideoTracksChange?.([...tracks]);
-            }}
+            onEnabledTracksChange={changeEnabledTracks}
+            onEnabledVideoTracksChange={changeEnabledVideoTracks}
             onSeek={seek}
-            onSelectedTrackChange={(streamIndex) => {
-              onSelectedTrackChange?.(streamIndex);
-            }}
+            onSelectedTrackChange={changeSelectedTrack}
             onVideoTrackOrderChange={onVideoTrackOrderChange}
             playhead={playhead}
             selectedTrack={selectedTrack}
             thumbnails={timelineThumbnails}
-            videoTrackOrder={[...videoTrackOrder]}
+            videoTrackOrder={videoTrackOrderList}
             volumes={audioVolumeByStream}
           />
         )

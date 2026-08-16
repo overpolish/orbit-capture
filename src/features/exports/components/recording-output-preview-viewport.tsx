@@ -28,6 +28,8 @@ function RecordingOutputPane({
   controlsVisible,
   entry,
   isActive,
+  onBoundsChange,
+  onCanvasResizeDraft,
   onChange,
   onMediaResizeEnd,
   onMediaResizeStart,
@@ -41,6 +43,15 @@ function RecordingOutputPane({
   isActive: boolean;
   settings: RecordingOutputSettings[RecordingVideoTrackId];
   tool: RecordingCanvasTool;
+  onBoundsChange?: (bounds: {
+    height: number;
+    originX: number;
+    originY: number;
+    width: number;
+  }) => void;
+  onCanvasResizeDraft?: (
+    settings: RecordingOutputSettings[RecordingVideoTrackId] | null,
+  ) => void;
   onChange?: (settings: RecordingOutputSettings[RecordingVideoTrackId]) => void;
   onMediaResizeEnd?: () => void;
   onMediaResizeStart?: () => void;
@@ -92,12 +103,17 @@ function RecordingOutputPane({
         <ScreenshotCanvasControl
           items={[{ ...source, id: 0 }]}
           mediaRef={outputRef}
+          onBoundsChange={onBoundsChange}
+          // Every pointer move commits only to the local resize draft: the
+          // export window's global state re-renders the whole editor, which
+          // starves the native pane's layout loop mid-drag.
           onChange={(next) => {
-            onChange?.(screenshotWorkspaceItemOutput(next, 0));
+            onCanvasResizeDraft?.(screenshotWorkspaceItemOutput(next, 0));
           }}
           onResizeEnd={(next) => {
             onMediaResizeEnd?.();
             onChange?.(screenshotWorkspaceItemOutput(next, 0));
+            onCanvasResizeDraft?.(null);
           }}
           onResizeStart={() => {
             onSelect?.();
@@ -119,6 +135,7 @@ export function RecordingOutputPreviewViewport({
   activeTrack,
   controlsVisible,
   entries,
+  onCanvasResizeDraft,
   onChange,
   onNeedFullResolution,
   onSelectTrack,
@@ -133,6 +150,10 @@ export function RecordingOutputPreviewViewport({
   entries: Entry[];
   outputs: RecordingOutputSettings;
   tool: RecordingCanvasTool;
+  onCanvasResizeDraft?: (
+    trackId: RecordingVideoTrackId,
+    settings: RecordingOutputSettings[RecordingVideoTrackId] | null,
+  ) => void;
   onChange?: (
     trackId: RecordingVideoTrackId,
     settings: RecordingOutputSettings[RecordingVideoTrackId],
@@ -146,6 +167,17 @@ export function RecordingOutputPreviewViewport({
   onZoomChange?: (zoomPercent: number) => void;
   zoomPercent?: number;
 }) {
+  // Canvas-resize bounds arrive in pane coordinates, cumulative from the
+  // gesture start, but the viewport compensates in media-box coordinates -
+  // and this component re-renders with the committed settings on every move,
+  // so the conversion context must be frozen when the gesture begins.
+  const resizeBaselineRef = useRef<{
+    boxHeight: number;
+    boxWidth: number;
+    otherMaxHeight: number;
+    paneHeight: number;
+    paneWidth: number;
+  } | null>(null);
   const dimensions = entries.map(({ trackId }) =>
     screenshotOutputDimensions(outputs[trackId]),
   );
@@ -164,7 +196,13 @@ export function RecordingOutputPreviewViewport({
       mediaSizeKey={`${width.toString()}x${height.toString()}`}
       onNeedFullResolution={onNeedFullResolution}
       onZoomChange={onZoomChange}
-      renderMedia={({ onMediaResizeEnd, onMediaResizeStart, ref, style }) => {
+      renderMedia={({
+        onMediaResize,
+        onMediaResizeEnd,
+        onMediaResizeStart,
+        ref,
+        style,
+      }) => {
         let x = 0;
         return (
           <div
@@ -191,11 +229,51 @@ export function RecordingOutputPreviewViewport({
                     controlsVisible={controlsVisible}
                     entry={entry}
                     isActive={activeTrack === entry.trackId}
+                    onBoundsChange={(bounds) => {
+                      const base = resizeBaselineRef.current;
+                      if (!base) return;
+                      // The pane's horizontal origin in the box is the sum of
+                      // the preceding pane widths, which this resize does not
+                      // touch, so the horizontal shift carries over directly.
+                      // Vertically the pane is centered in the box, so the
+                      // origin also absorbs the centering delta.
+                      const boxHeight = Math.max(
+                        bounds.height,
+                        base.otherMaxHeight,
+                      );
+                      onMediaResize({
+                        height: boxHeight,
+                        originX: bounds.originX,
+                        originY:
+                          bounds.originY +
+                          (base.boxHeight - base.paneHeight) / 2 -
+                          (boxHeight - bounds.height) / 2,
+                        width: base.boxWidth + bounds.width - base.paneWidth,
+                      });
+                    }}
+                    onCanvasResizeDraft={(settings) => {
+                      onCanvasResizeDraft?.(entry.trackId, settings);
+                    }}
                     onChange={(settings) => {
                       onChange?.(entry.trackId, settings);
                     }}
                     onMediaResizeEnd={onMediaResizeEnd}
-                    onMediaResizeStart={onMediaResizeStart}
+                    onMediaResizeStart={() => {
+                      resizeBaselineRef.current = {
+                        boxHeight: height,
+                        boxWidth: width,
+                        otherMaxHeight: dimensions.reduce(
+                          (maximum, dimension, other) =>
+                            other === index
+                              ? maximum
+                              : Math.max(maximum, dimension.height),
+                          0,
+                        ),
+                        paneHeight: size.height,
+                        paneWidth: size.width,
+                      };
+                      onMediaResizeStart();
+                    }}
                     onSelect={() => {
                       onSelectTrack?.(entry.trackId);
                     }}

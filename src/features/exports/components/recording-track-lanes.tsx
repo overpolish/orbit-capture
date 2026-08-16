@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { Camera, Monitor } from "lucide-react";
-import { PointerEvent as ReactPointerEvent, useRef, useState } from "react";
+import {
+  memo,
+  PointerEvent as ReactPointerEvent,
+  useRef,
+  useState,
+} from "react";
 
 import { Checkbox } from "../../../components/base/checkbox/checkbox";
 import {
@@ -26,7 +31,12 @@ import { SeekHandler, TimelineRuler, TimelineScrubber } from "./scrub-timeline";
 import { TimelineAudioMeter } from "./timeline-audio-meter";
 import { VideoThumbnailStrip } from "./video-thumbnail-strip";
 
-export function RecordingTrackLanes({
+/**
+ * Memoized: the lanes own the ruler, both thumbnail strips, the audio rows and
+ * the meter - by far the widest subtree in the editor - and none of it depends
+ * on the output settings a canvas-resize gesture rewrites at pointer rate.
+ */
+export const RecordingTrackLanes = memo(function RecordingTrackLanes({
   audioTracks,
   durationMs,
   enabledTracks,
@@ -310,4 +320,4 @@ export function RecordingTrackLanes({
       ) : null}
     </section>
   );
-}
+});

@@ -89,7 +89,12 @@ export function useRecordingPreviewSettings({
     // eslint-disable-next-line @eslint-react/exhaustive-deps
   }, [cursor, isEnabled]);
   useEffect(() => {
-    if (!isEnabled || !startedRef.current) return;
+    // The native surface receives the composition inside every layout invoke,
+    // atomically with the pane rects it belongs to and ordered by requestId.
+    // Sending it here as well creates a second, unordered channel: a redraw
+    // for this composition can land after a newer layout and stretch the
+    // previous canvas into the new rect for a frame.
+    if (!isEnabled || !startedRef.current || nativeSurface) return;
     // Inspector and OSC changes can arrive faster than the display. Forward
     // only the newest composition once per display tick so pointer input never
     // creates an IPC/render backlog behind the visible controls.

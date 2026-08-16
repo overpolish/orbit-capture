@@ -14,11 +14,13 @@ import { CropShade } from "../../../components/shared/canvas-tools/crop-shade";
 import { TransformControls } from "../../../components/shared/canvas-tools/transform-controls";
 import {
   cameraOverlayGeometry,
+  fitCanvasToCameraOverlay,
   RADIUS_HANDLE_INSET,
   RADIUS_HANDLE_TRAVEL,
   resizeCameraOverlayCanvas,
 } from "../camera-overlay-geometry";
 import {
+  resizeScreenshotCanvas,
   ScreenshotOutputSettings,
   screenshotOutputDimensions,
   screenshotWorkspaceItemOutput,
@@ -43,6 +45,7 @@ export function BakedCameraPreviewViewport({
   controlsVisible = true,
   interactionEnabled = true,
   isBusy,
+  onCanvasResizeDraft,
   onInteractionEnd,
   onInteractionStart,
   onNeedFullResolution,
@@ -70,6 +73,7 @@ export function BakedCameraPreviewViewport({
   tool: RecordingCanvasTool;
   controlsVisible?: boolean;
   interactionEnabled?: boolean;
+  onCanvasResizeDraft?: (settings: ScreenshotOutputSettings | null) => void;
   onInteractionEnd?: () => void;
   onInteractionStart?: () => void;
   onNeedFullResolution?: () => void;
@@ -90,6 +94,23 @@ export function BakedCameraPreviewViewport({
   const outputResizeRef = useRef<{
     output: { height: number; width: number };
     settings: CameraOverlaySettings;
+  } | null>(null);
+  // The viewport hands its resize anchoring to `renderMedia`, while the camera
+  // gesture lives out here; the latest handlers are kept for it to reach.
+  const mediaResizeRef = useRef<{
+    onMediaResize: (bounds: {
+      height: number;
+      originX: number;
+      originY: number;
+      width: number;
+    }) => void;
+    onMediaResizeEnd: () => void;
+    onMediaResizeStart: () => void;
+  } | null>(null);
+  const autoFitRef = useRef<{
+    output: { height: number; width: number };
+    settings: ScreenshotOutputSettings;
+    used: boolean;
   } | null>(null);
   const [activeEdges, setActiveEdges] = useState<
     ("bottom" | "left" | "right" | "top")[] | null
@@ -113,14 +134,61 @@ export function BakedCameraPreviewViewport({
     width: output.width,
   };
   const geometry = cameraOverlayGeometry(outputPane, cameraPane, settings);
+  const endAutoFit = () => {
+    if (autoFitRef.current?.used) mediaResizeRef.current?.onMediaResizeEnd();
+    autoFitRef.current = null;
+  };
   const { begin, interaction, naturalPoint } = useCameraOverlayInteraction({
     cameraPane,
     mediaRef,
+    // Alt grows the output canvas around the camera as it leaves the frame,
+    // exactly as it grows the screenshot canvas around a moved layer.
+    onAutoFitCanvas: (change) => {
+      if (change.autoFitStarted)
+        autoFitRef.current = {
+          output: change.output,
+          settings: outputSettings,
+          used: false,
+        };
+      const gesture = autoFitRef.current;
+      if (!change.autoFitCanvas || !gesture) {
+        endAutoFit();
+        return change.settings;
+      }
+      const bounds = fitCanvasToCameraOverlay(
+        {
+          ...outputPane,
+          height: gesture.output.height,
+          sourceHeight: gesture.output.height,
+          sourceWidth: gesture.output.width,
+          width: gesture.output.width,
+        },
+        cameraPane,
+        change.settings,
+      );
+      if (!gesture.used) {
+        gesture.used = true;
+        mediaResizeRef.current?.onMediaResizeStart();
+      }
+      mediaResizeRef.current?.onMediaResize(bounds);
+      onOutputChange?.(
+        resizeScreenshotCanvas(
+          { height: screenPane.sourceHeight, width: screenPane.sourceWidth },
+          gesture.settings,
+          bounds,
+        ),
+      );
+      return resizeCameraOverlayCanvas(change.settings, gesture.output, bounds);
+    },
     onInteractionEnd: () => {
+      endAutoFit();
       onInteractionEnd?.();
       editGesture.endGesture();
     },
     onInteractionStart: () => {
+      // Alt can already be down when the press lands, so the gesture carries
+      // its own starting canvas from the outset.
+      autoFitRef.current = { output, settings: outputSettings, used: false };
       editGesture.beginGesture();
       onInteractionStart?.();
     },
@@ -177,6 +245,11 @@ export function BakedCameraPreviewViewport({
           }}
           ref={(element) => {
             outputRef.current = element;
+            mediaResizeRef.current = {
+              onMediaResize,
+              onMediaResizeEnd,
+              onMediaResizeStart,
+            };
             ref(element);
           }}
           style={{
@@ -238,14 +311,18 @@ export function BakedCameraPreviewViewport({
                     ),
                   );
               }}
+              // Every pointer move commits only to the local resize draft: the
+              // export window's global state re-renders the whole editor, which
+              // starves the native pane's layout loop mid-drag.
               onChange={(next) => {
-                onOutputChange?.(screenshotWorkspaceItemOutput(next, 0));
+                onCanvasResizeDraft?.(screenshotWorkspaceItemOutput(next, 0));
               }}
               onResizeEnd={(next) => {
                 onMediaResizeEnd();
                 outputResizeRef.current = null;
                 onInteractionEnd?.();
                 onOutputChange?.(screenshotWorkspaceItemOutput(next, 0));
+                onCanvasResizeDraft?.(null);
               }}
               onResizeStart={() => {
                 onSelectTrack?.("primary");
@@ -294,16 +371,17 @@ export function BakedCameraPreviewViewport({
                 onTrackContextMenu?.("camera", event);
               }}
               onPointerDown={(event) => {
-                if (tool === "select" && activeTrack !== "camera") {
+                // Selecting is part of the drag gesture, like the screen layer:
+                // one press both picks the camera up and starts moving it.
+                if (
+                  (tool === "select" || tool === "crop") &&
+                  activeTrack !== "camera"
+                ) {
                   if (event.button !== 0) return;
-                  event.preventDefault();
-                  event.stopPropagation();
                   onSelectTrack?.("camera");
-                  return;
                 }
-                if (tool === "crop" && activeTrack !== "camera")
-                  onSelectTrack?.("camera");
-                if (!controlsVisible && tool !== "crop") return;
+                if (!controlsVisible && tool !== "crop" && tool !== "select")
+                  return;
                 const point = naturalPoint(event);
                 if (!point) return;
                 begin(event, {

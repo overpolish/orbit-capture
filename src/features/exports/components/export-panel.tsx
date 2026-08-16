@@ -315,7 +315,7 @@ export function ExportPanel({
           selectedTrack={selectedTrack}
         />
       ) : artifact ? (
-        <section className="grid min-h-0 grow grid-cols-[clamp(320px,28vw,400px)_minmax(0,1fr)]">
+        <section className="grid min-h-0 grow grid-cols-[clamp(350px,28vw,400px)_minmax(0,1fr)]">
           {screenshotOutput ? (
             <ScreenshotInspector
               isSaving={isSaving}

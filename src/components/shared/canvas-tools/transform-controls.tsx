@@ -32,10 +32,13 @@ function ControlHandle({
   pointerHandlers: PointerHandlers;
   top: string;
 }) {
+  // Handles outrank every other layer's body (`z-10`): a layer stacked above
+  // the selected one may claim the inside of its selection box, never the
+  // handles sitting on the box edge.
   return (
     <svg
       aria-label={ariaLabel}
-      className="pointer-events-auto absolute overflow-visible outline-none"
+      className="pointer-events-auto absolute z-10 overflow-visible outline-none"
       height="16"
       onPointerDown={onPointerDown}
       role="button"
@@ -151,7 +154,7 @@ export function TransformControls({
       ) : null}
       {scaleRing ? (
         <svg
-          className="pointer-events-none absolute overflow-visible"
+          className="pointer-events-none absolute z-10 overflow-visible"
           style={{
             height: scaleRing.extent * 2,
             left: "50%",

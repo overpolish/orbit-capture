@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { Check, ClipboardCopy, Pause, Play } from "lucide-react";
+import { memo } from "react";
 
 import { Button } from "../../../components/base/button/button";
 import { ToggleButton } from "../../../components/base/button/toggle-button";
@@ -20,7 +21,11 @@ type RecordingPlaybackControlsProps = {
   onCopyCurrentFrame?: () => void;
 };
 
-export function RecordingPlaybackControls({
+/**
+ * Memoized: the playhead publishes its own time through a subscription, so
+ * nothing here changes while an output draft updates at pointer rate.
+ */
+export const RecordingPlaybackControls = memo(function RecordingPlaybackControls({
   copyState = "idle",
   durationMs,
   isPlaying,
@@ -75,4 +80,4 @@ export function RecordingPlaybackControls({
       ) : null}
     </div>
   );
-}
+});

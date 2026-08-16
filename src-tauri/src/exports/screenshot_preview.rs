@@ -151,8 +151,11 @@ pub fn start_screenshot_preview(
   Ok(())
 }
 
+// Async so Tauri dispatches it off the main thread: this command blocks on a
+// DirectComposition commit, and the main thread pumps the Win32 messages that
+// deliver the webview's pointer input.
 #[tauri::command]
-pub fn layout_screenshot_preview_surface(
+pub async fn layout_screenshot_preview_surface(
   state: tauri::State<'_, ScreenshotPreviewState>,
   backdrop: Option<[f64; 4]>,
   output: ScreenshotWorkspaceOutputSettings,
@@ -195,16 +198,21 @@ pub fn layout_screenshot_preview_surface(
   // fitted into the old rect meanwhile. A layout that will not present (a
   // pure pan) applies its frames at once, or they would never land.
   let will_present = !manager.has_layout || output_changed || size_changed;
+  surface.set_scale(scale);
   surface.begin_layout();
   surface.set_viewport(viewport, backdrop.unwrap_or([0.09, 0.09, 0.10, 1.0]));
   for pane in panes {
     surface.layout(pane.index, pane.rect, will_present);
   }
+  // Open the batch before `finish_layout` so the hides, the deferred pane
+  // frames and the fresh layer presents all land in one commit - on Windows
+  // that is also the invoke's single compositor wait.
+  let batch = will_present.then(|| surface.present_batch());
   surface.finish_layout();
   if will_present {
-    let _batch = surface.present_batch();
     manager.present()?;
   }
+  drop(batch);
   manager.has_layout = true;
   Ok(())
 }

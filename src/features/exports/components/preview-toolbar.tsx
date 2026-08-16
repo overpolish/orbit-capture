@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { Camera, Image as ImageIcon, Monitor, ZoomIn } from "lucide-react";
-import { ReactNode } from "react";
+import { memo, ReactNode } from "react";
 
 import { Badge } from "../../../components/base/badge/badge";
 import { NumberField } from "../../../components/base/input-fields/number-field";
@@ -21,7 +21,12 @@ const iconFor = (kind: PreviewBadge["kind"]) => {
   return <ImageIcon aria-hidden="true" size={12} />;
 };
 
-export function PreviewToolbar({
+/**
+ * Memoized: the zoom field and the tool buttons are react-aria trees that cost
+ * more to re-render than the whole native preview pane, and none of their props
+ * change while a canvas-resize gesture updates the output draft at pointer rate.
+ */
+export const PreviewToolbar = memo(function PreviewToolbar({
   badges,
   center,
   onZoomChange,
@@ -74,4 +79,4 @@ export function PreviewToolbar({
       />
     </div>
   );
-}
+});

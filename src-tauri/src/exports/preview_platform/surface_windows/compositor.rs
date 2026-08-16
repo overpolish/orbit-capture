@@ -60,7 +60,7 @@ cbuffer Canvas : register(b0) {
   float4 camera_effects; // radius, enabled, shadow sigma, camera on top
   float4 native_cursor_hotspots[8]; // normalized atlas hotspot x/y
   uint4 options; // seed, mesh enabled, point count, shadow enabled
-  uint4 cursor_options; // artwork, enabled, clip to video, reserved
+  uint4 cursor_options; // artwork, enabled, clip to video, foreground only
 };
 Texture2D source_image : register(t0);
 Texture2DArray native_cursor_images : register(t1);
@@ -232,7 +232,13 @@ float4 ps_main(float4 position : SV_Position) : SV_Target {
   result.rgb = lerp(result.rgb, cursor.rgb, cursor.a);
   result.a = cursor.a + result.a * (1.0 - cursor.a);
   if (camera_effects.w != 0.0) result = camera_layer(result, pixel);
-  result.rgb = saturate(result.rgb + hash(pixel, 0x9e3779b9) / 255.0);
+  // Dither belongs to the completed stack, applied once by the base layer. A
+  // foreground layer must keep its uncovered pixels at exactly zero or the
+  // lifted colour turns invalid premultiplied alpha and brightens the layers
+  // beneath it.
+  if (cursor_options.w == 0) {
+    result.rgb = saturate(result.rgb + hash(pixel, 0x9e3779b9) / 255.0);
+  }
   // DirectComposition consumes premultiplied alpha. Clip every composed layer
   // to the rounded canvas and premultiply only once at the final boundary.
   result *= background_alpha;
@@ -922,7 +928,7 @@ impl Compositor {
         Some(&[
           Some(source.view.clone()),
           Some(self.cursor_view.clone()),
-          camera.map(|(camera, _, _)| camera.view.clone()),
+          camera.map(|(camera, _, _, _)| camera.view.clone()),
         ]),
       );
       context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
