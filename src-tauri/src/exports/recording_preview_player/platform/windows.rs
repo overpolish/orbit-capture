@@ -259,6 +259,8 @@ pub(crate) fn generate_thumbnails(sources: PlayerSources, count: u32, channel: C
   thumbnails::generate(sources, count, channel);
 }
 
+// Backend-parity shim; the Windows player does not call it yet.
+#[allow(dead_code)]
 pub(crate) fn source_frame_jpeg(
   path: &std::path::Path,
   position_ms: u64,

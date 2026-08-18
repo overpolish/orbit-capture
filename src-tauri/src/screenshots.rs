@@ -33,7 +33,7 @@ pub use encoding::rounded_corners;
 pub(crate) use mesh::validate_mesh;
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) use mesh::MeshGradientPoint;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub use output::compose_screenshot;
 #[cfg(target_os = "windows")]
 pub(crate) use output::output_dimensions;

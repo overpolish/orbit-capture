@@ -221,9 +221,6 @@ export const layoutRecordingPreviewSurface = ({
     },
   });
 
-export const requestRecordingPreviewFullResolution = (sessionId: number) =>
-  invoke<null>("request_recording_preview_full_resolution", { sessionId });
-
 export const seekRecordingPreview = ({
   positionMs,
   requestId,

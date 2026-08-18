@@ -83,7 +83,7 @@ mod surface;
 #[cfg(target_os = "windows")]
 pub(crate) use surface::ComposedFrame;
 pub(crate) use surface::RecordingPreviewSurface;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 pub(crate) use surface::{NativeWorkspacePlacement, RecordingWorkspaceLayer};
 
 pub(crate) type TransformCallback = Box<dyn FnMut(f64) + Send + 'static>;

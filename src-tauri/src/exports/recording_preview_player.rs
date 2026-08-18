@@ -132,7 +132,6 @@ struct PreviewPlayerManager {
   audio_volumes: Vec<AudioTrackVolume>,
   event_channel: Option<Channel<RecordingPreviewPlayerEvent>>,
   frame_channel: Option<Channel>,
-  full_resolution: bool,
   is_playing: bool,
   latest_session_id: u64,
   latest_layout_request: u64,
@@ -247,8 +246,14 @@ impl PreviewPlayerManager {
     Ok(())
   }
 
+  /// Recomposes the paused stills from the cached full-resolution sources
+  /// against whatever composition is current, the way macOS recomposes its
+  /// retained workspace. `Ok(false)` means a source is not cached yet and the
+  /// decoder has to supply the frame - `redraw_still` still flushes its
+  /// present batch on that path, so geometry a deferred layout parked reaches
+  /// the compositor instead of stranding the pane at its previous box.
   #[cfg(target_os = "windows")]
-  fn refresh_selection_preview(&self, _layer_id: u32) -> Result<(), String> {
+  fn redraw_still_now(&self) -> Result<bool, String> {
     let sources = self
       .sources
       .as_ref()
@@ -271,8 +276,12 @@ impl PreviewPlayerManager {
       composition.camera_overlay,
       composition.recording_output.camera.drop_shadow,
       composition.recording_output.camera_on_top,
-    )?;
-    Ok(())
+    )
+  }
+
+  #[cfg(target_os = "windows")]
+  fn refresh_selection_preview(&self, _layer_id: u32) -> Result<(), String> {
+    self.redraw_still_now().map(|_| ())
   }
 
   #[cfg(target_os = "macos")]
@@ -614,7 +623,6 @@ impl PreviewPlayerManager {
     self.artifact_id = None;
     self.event_channel = None;
     self.frame_channel = None;
-    self.full_resolution = false;
     self.is_playing = false;
     self.pane_target_sizes.clear();
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -630,42 +638,6 @@ impl PreviewPlayerManager {
     (self.session_id == Some(session_id))
       .then_some(())
       .ok_or_else(|| "That recording preview player session is no longer active".to_owned())
-  }
-
-  fn enable_full_resolution(&mut self) -> Result<(), String> {
-    if self.full_resolution {
-      return Ok(());
-    }
-    let sources = self
-      .sources
-      .as_ref()
-      .ok_or_else(|| "The recording preview player is not open".to_owned())?;
-    let composition = sources
-      .composition_settings
-      .as_ref()
-      .ok_or_else(|| "The recording preview composition is unavailable".to_owned())?
-      .read()
-      .map_err(|_| "The recording preview composition is unavailable".to_owned())?;
-    let pane_count = sources.layout.panes.len();
-    let previous_targets = self.pane_target_sizes.clone();
-    self.pane_target_sizes = (0..pane_count)
-      .map(|index| {
-        if previous_targets
-          .get(index)
-          .is_none_or(|target| *target == (0, 0))
-        {
-          return (0, 0);
-        }
-        let output = if index == 0 {
-          &composition.recording_output.primary
-        } else {
-          &composition.recording_output.camera
-        };
-        (output.width, output.height)
-      })
-      .collect();
-    self.full_resolution = true;
-    Ok(())
   }
 }
 

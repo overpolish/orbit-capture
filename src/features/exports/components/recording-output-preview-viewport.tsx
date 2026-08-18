@@ -137,7 +137,6 @@ export function RecordingOutputPreviewViewport({
   entries,
   onCanvasResizeDraft,
   onChange,
-  onNeedFullResolution,
   onSelectTrack,
   onTrackContextMenu,
   onZoomChange,
@@ -158,7 +157,6 @@ export function RecordingOutputPreviewViewport({
     trackId: RecordingVideoTrackId,
     settings: RecordingOutputSettings[RecordingVideoTrackId],
   ) => void;
-  onNeedFullResolution?: () => void;
   onSelectTrack?: (trackId: RecordingVideoTrackId) => void;
   onTrackContextMenu?: (
     trackId: RecordingVideoTrackId,
@@ -225,7 +223,6 @@ export function RecordingOutputPreviewViewport({
     <InteractivePreviewViewport<HTMLDivElement>
       getMediaSize={() => ({ height, width })}
       mediaSizeKey={`${width.toString()}x${height.toString()}`}
-      onNeedFullResolution={onNeedFullResolution}
       onZoomChange={onZoomChange}
       renderMedia={({
         onMediaResize,

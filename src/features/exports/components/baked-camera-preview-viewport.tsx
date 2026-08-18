@@ -50,7 +50,6 @@ export function BakedCameraPreviewViewport({
   onCanvasResizeDraft,
   onInteractionEnd,
   onInteractionStart,
-  onNeedFullResolution,
   onOutputChange,
   onSelectTrack,
   onSettingsChange,
@@ -79,7 +78,6 @@ export function BakedCameraPreviewViewport({
   onCanvasResizeDraft?: (settings: ScreenshotOutputSettings | null) => void;
   onInteractionEnd?: () => void;
   onInteractionStart?: () => void;
-  onNeedFullResolution?: () => void;
   onOutputChange?: (settings: ScreenshotOutputSettings) => void;
   onSelectTrack?: (trackId: "camera" | "primary") => void;
   onSettingsChange?: (settings: CameraOverlaySettings) => void;
@@ -256,7 +254,6 @@ export function BakedCameraPreviewViewport({
         width: output.width,
       })}
       mediaSizeKey={`${output.width.toString()}x${output.height.toString()}`}
-      onNeedFullResolution={onNeedFullResolution}
       onZoomChange={onZoomChange}
       renderMedia={({
         onMediaResize,

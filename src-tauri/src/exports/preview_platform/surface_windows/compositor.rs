@@ -764,13 +764,13 @@ impl Compositor {
       BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
       ..Default::default()
     };
-    let initial_data = D3D11_SUBRESOURCE_DATA {
-      pSysMem: source.rgba.as_ptr().cast(),
+    let data = D3D11_SUBRESOURCE_DATA {
+      pSysMem: source.rgba.as_ptr().cast::<c_void>(),
       SysMemPitch: source.width * 4,
-      ..Default::default()
+      SysMemSlicePitch: 0,
     };
     let mut texture = None;
-    unsafe { device.CreateTexture2D(&description, Some(&initial_data), Some(&mut texture)) }
+    unsafe { device.CreateTexture2D(&description, Some(&data), Some(&mut texture)) }
       .map_err(|error| error.to_string())?;
     let texture =
       texture.ok_or_else(|| "D3D11 created no screenshot preview texture".to_owned())?;
@@ -778,10 +778,11 @@ impl Compositor {
     let mut view = None;
     unsafe { device.CreateShaderResourceView(&resource, None, Some(&mut view)) }
       .map_err(|error| error.to_string())?;
+    let view = view.ok_or_else(|| "D3D11 created no screenshot preview view".to_owned())?;
     Ok(SourceTexture {
       size: (source.width, source.height),
       texture,
-      view: view.ok_or_else(|| "D3D11 created no screenshot preview view".to_owned())?,
+      view,
     })
   }
 
@@ -1016,7 +1017,9 @@ impl Compositor {
       .cast()
       .map_err(|error| error.to_string())?;
     let source: ID3D11Resource = source.cast().map_err(|error| error.to_string())?;
-    unsafe { context.CopySubresourceRegion(&destination, 0, 0, 0, 0, &source, subresource, None) };
+    unsafe {
+      context.CopySubresourceRegion(&destination, 0, 0, 0, 0, &source, subresource, None);
+    }
     Ok(())
   }
 }

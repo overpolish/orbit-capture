@@ -1213,7 +1213,6 @@ export function NativeRecordingPreview({
                   }}
                   onInteractionEnd={cameraHistory.endGesture}
                   onInteractionStart={cameraHistory.beginGesture}
-                  onNeedFullResolution={player.requestFullResolution}
                   onOutputChange={(settings) =>
                     onRecordingOutputChange?.("primary", settings)
                   }
@@ -1281,7 +1280,6 @@ export function NativeRecordingPreview({
                     );
                   }}
                   onChange={onRecordingOutputChange}
-                  onNeedFullResolution={player.requestFullResolution}
                   onSelectTrack={(trackId) => {
                     onSelectedTrackChange?.(trackId);
                   }}
@@ -1301,7 +1299,6 @@ export function NativeRecordingPreview({
                     (player.isPreparing || isPreparingPreview)
                   }
                   layout={visibleLayout}
-                  onNeedFullResolution={player.requestFullResolution}
                   onZoomChange={setZoomPercent}
                   zoomPercent={zoomPercent}
                 />

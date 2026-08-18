@@ -8,7 +8,6 @@ import {
   pauseRecordingPreview,
   playRecordingPreview,
   RecordingPreviewPlayerEvent,
-  requestRecordingPreviewFullResolution,
   seekRecordingPreview,
   selectRecordingPreviewAudio,
   setRecordingPreviewAudioVolumes,
@@ -368,14 +367,6 @@ export function useRecordingPreviewPlayer({
       setError(String(cause));
     });
   }, [isEnabled]);
-  const requestFullResolution = useCallback(() => {
-    if (!isEnabled || isPlayingRef.current) return;
-    void requestRecordingPreviewFullResolution(sessionIdRef.current).catch(
-      (cause: unknown) => {
-        setError(String(cause));
-      },
-    );
-  }, [isEnabled]);
   const seek = (positionMs: number, phase: ScrubPhase) => {
     if (!isEnabled) return;
     const normalized = Math.max(0, Math.round(positionMs));
@@ -457,7 +448,6 @@ export function useRecordingPreviewPlayer({
     layout: frames.layout,
     pause,
     play,
-    requestFullResolution,
     seek,
   };
 }

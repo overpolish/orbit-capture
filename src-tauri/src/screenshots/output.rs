@@ -176,6 +176,8 @@ pub fn compose_screenshot(
 }
 
 #[cfg(not(target_os = "macos"))]
+// Windows composes screenshots on the GPU surface instead of this CPU path.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub fn compose_screenshot(
   image: &CapturedImage,
   settings: &ScreenshotOutputSettings,

@@ -84,7 +84,6 @@ pub fn run() {
       exports::recording_preview_player::surface_commands::center_recording_preview_workspace,
       exports::recording_preview_player::surface_commands::set_recording_preview_zoom,
       exports::recording_preview_player::commands::play_recording_preview,
-      exports::recording_preview_player::commands::request_recording_preview_full_resolution,
       exports::recording_preview_player::commands::seek_recording_preview,
       exports::recording_preview_player::commands::select_recording_preview_audio,
       exports::recording_preview_player::commands::set_recording_preview_audio_volumes,

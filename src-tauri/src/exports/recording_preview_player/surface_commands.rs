@@ -183,18 +183,13 @@ pub async fn layout_recording_preview_surface(
       manager.pane_target_sizes.resize(index + 1, (0, 0));
       sizes_changed = true;
     }
-    let next = if manager.full_resolution {
+    let next = {
       let output = if index == 0 {
         &recording_output.primary
       } else {
         &recording_output.camera
       };
       (output.width, output.height)
-    } else {
-      (
-        (pane.rect.width * scale).round().max(2.0) as u32,
-        (pane.rect.height * scale).round().max(2.0) as u32,
-      )
     };
     if manager.pane_target_sizes[index] != next {
       manager.pane_target_sizes[index] = next;
@@ -354,23 +349,10 @@ pub async fn layout_recording_preview_surface(
     surface.redraw_recording_workspace();
   }
   surface.finish_layout();
+  // Same composition this invoke just wrote into `composition_settings`, so
+  // the shared helper draws exactly what the explicit arguments used to.
   #[cfg(target_os = "windows")]
-  let has_camera = manager
-    .sources
-    .as_ref()
-    .is_some_and(|sources| sources.camera_path.is_some());
-  #[cfg(target_os = "windows")]
-  let redraw_failed = redraw_still
-    && !surface
-      .redraw_still(
-        bake_camera && has_camera,
-        &recording_output.primary,
-        &recording_output.camera,
-        camera_overlay,
-        recording_output.camera.drop_shadow,
-        recording_output.camera_on_top,
-      )
-      .unwrap_or(false);
+  let redraw_failed = redraw_still && !manager.redraw_still_now().unwrap_or(false);
   #[cfg(target_os = "windows")]
   drop(layout_batch);
   #[cfg(not(target_os = "windows"))]
@@ -393,7 +375,7 @@ mod tests {
   use super::clear_inactive_pane_targets;
 
   #[test]
-  fn reenabled_panes_require_a_fresh_present_even_at_full_resolution() {
+  fn reenabled_panes_require_a_fresh_present() {
     let mut targets = [(3_840, 2_160), (1_920, 1_080)];
     clear_inactive_pane_targets(&mut targets, &[0]);
     assert_eq!(targets, [(3_840, 2_160), (0, 0)]);

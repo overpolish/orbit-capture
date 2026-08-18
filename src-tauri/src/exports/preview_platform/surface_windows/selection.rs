@@ -23,6 +23,8 @@ use windows::{
   },
 };
 
+// Extracted by build.rs at compile time; never read from Rust.
+#[allow(dead_code)]
 const SHADER: &str = r#"
 cbuffer Selection : register(b0) {
   float4 frame;       // viewport-local x/y/width/height in physical pixels
@@ -47,7 +49,9 @@ float circle_coverage(float2 pixel, float2 center, float radius) {
 }
 
 float line_coverage(float value, float edge, float half_width) {
-  return 1.0 - smoothstep(half_width - 0.75, half_width + 0.75, abs(value - edge));
+  // Hard-edged like the Metal quads: full coverage inside the half width, a
+  // one-pixel falloff outside, so a 1px core lands on exactly one pixel row.
+  return 1.0 - smoothstep(half_width - 0.5, half_width + 0.5, abs(value - edge));
 }
 
 float rounded_distance(float2 pixel, float4 rect, float radius) {
@@ -62,7 +66,11 @@ float4 ps_main(VertexOut input) : SV_Target {
   if (magnifier_box.z > 0.0 &&
       rounded_distance(p, magnifier_box, max(magnifier_box.z / 24.0, 1.0)) <= 0.0)
     return 0;
-  float left = frame.x, top = frame.y, right = frame.x + frame.z, bottom = frame.y + frame.w;
+  // Frame edges arrive on integer pixel boundaries while SV_Position samples
+  // pixel centres; snap the lines onto the inner pixel row so the core is a
+  // solid line rather than two half-covered grey ones.
+  float left = frame.x + 0.5, top = frame.y + 0.5;
+  float right = frame.x + frame.z - 0.5, bottom = frame.y + frame.w - 0.5;
   float within_x = step(left - 3.0, p.x) * step(p.x, right + 3.0);
   float within_y = step(top - 3.0, p.y) * step(p.y, bottom + 3.0);
   float border = max(max(line_coverage(p.x, left, 1.5), line_coverage(p.x, right, 1.5)) * within_y,
@@ -99,12 +107,8 @@ float4 ps_main(VertexOut input) : SV_Target {
   float3 contrast = lerp(1.0, float3(0.09, 0.09, 0.10), dark_theme);
   float contrast_alpha = saturate(max(border, handle_outline));
   float primary_alpha = saturate(max(core, handle_fill));
-  float3 color = contrast * contrast_alpha;
-  color = lerp(color, primary, primary_alpha);
-  float alpha = max(contrast_alpha, primary_alpha);
-  float guide_x = guides.x >= 0.0 ? line_coverage(p.x, guides.x, 0.5) : 0.0;
-  float guide_y = guides.y >= 0.0 ? line_coverage(p.y, guides.y, 0.5) : 0.0;
-  float guide_alpha = max(guide_x, guide_y);
+  // The crop shade is the bottom layer, as on macOS, so the border, handles
+  // and guides composite over it at full strength instead of being dimmed.
   float crop_shade = 0.0;
   if (crop_image.z >= 0.0) {
     float image_inside = step(crop_image.x, p.x) * step(p.x, crop_image.x + crop_image.z) *
@@ -113,15 +117,22 @@ float4 ps_main(VertexOut input) : SV_Target {
                         step(frame.y, p.y) * step(p.y, frame.y + frame.w);
     crop_shade = image_inside * (1.0 - crop_inside);
   }
+  float shade_alpha = crop_shade * 0.4;
+  float3 color = float3(0.0, 0.0, 0.0);
+  float alpha = shade_alpha;
+  color = lerp(color, contrast, contrast_alpha);
+  alpha = max(alpha, contrast_alpha);
+  color = lerp(color, primary, primary_alpha);
+  alpha = max(alpha, primary_alpha);
+  float guide_x = guides.x >= 0.0 ? line_coverage(p.x, guides.x, 0.5) : 0.0;
+  float guide_y = guides.y >= 0.0 ? line_coverage(p.y, guides.y, 0.5) : 0.0;
+  float guide_alpha = max(guide_x, guide_y);
   float3 canvas_guide = dark_theme > 0.5 ? float3(0.98, 0.75, 0.12) : float3(0.78, 0.46, 0.02);
   float3 object_guide = dark_theme > 0.5 ? float3(0.18, 0.70, 0.95) : float3(0.00, 0.42, 0.70);
   float3 guide_color = guide_x > 0.0 ? (guides.z > 0.5 ? object_guide : canvas_guide)
                                     : (guides.w > 0.5 ? object_guide : canvas_guide);
   color = lerp(color, guide_color, guide_alpha);
   alpha = max(alpha, guide_alpha);
-  float3 shade_color = dark_theme > 0.5 ? float3(0.0, 0.0, 0.0) : float3(1.0, 1.0, 1.0);
-  color = lerp(color, shade_color, crop_shade * 0.22);
-  alpha = max(alpha, crop_shade * 0.22);
   return float4(color * alpha, alpha);
 }
 "#;
@@ -147,7 +158,9 @@ pub(super) struct SelectionOverlay {
   pixel_shader: ID3D11PixelShader,
   swap_chain: IDXGISwapChain3,
   vertex_shader: ID3D11VertexShader,
-  pub(super) visual: IDCompositionVisual,
+  /// Held only to keep the composition visual alive: the swap chain is
+  /// attached once and no property is mutated after construction.
+  _visual: IDCompositionVisual,
 }
 
 impl SelectionOverlay {
@@ -217,7 +230,7 @@ impl SelectionOverlay {
       swap_chain,
       vertex_shader: vertex_shader
         .ok_or_else(|| "D3D11 created no selection vertex shader".to_owned())?,
-      visual,
+      _visual: visual,
     })
   }
 
@@ -225,7 +238,6 @@ impl SelectionOverlay {
     &mut self,
     device: &ID3D11Device,
     context: &ID3D11DeviceContext,
-    viewport_origin: (i32, i32),
     viewport_size: (u32, u32),
     frame: Option<[f32; 4]>,
     radius_point: Option<[f32; 2]>,
@@ -248,13 +260,6 @@ impl SelectionOverlay {
       .map_err(|error| format!("The Windows selection overlay could not resize: {error}"))?;
       self.buffer_size = size;
     }
-    unsafe {
-      self
-        .visual
-        .SetOffsetX2(viewport_origin.0 as f32)
-        .and_then(|_| self.visual.SetOffsetY2(viewport_origin.1 as f32))
-    }
-    .map_err(|error| error.to_string())?;
     let values = Constants {
       frame: frame.unwrap_or_default(),
       viewport: [

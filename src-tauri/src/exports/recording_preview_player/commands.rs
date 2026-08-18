@@ -68,8 +68,32 @@ pub async fn start_recording_preview_player(
       move |phase, pane_index, operation, edges, scale, delta_x, delta_y| {
         let manager = event_app.state::<RecordingPreviewPlayerState>();
         let composition = if let Ok(mut manager) = manager.0.try_lock() {
-          let _ = manager
-            .handle_selection_gesture(phase, pane_index, operation, edges, scale, delta_x, delta_y);
+          let updated = manager
+            .handle_selection_gesture(phase, pane_index, operation, edges, scale, delta_x, delta_y)
+            .is_ok();
+          // A canvas resize moves the pane box on every pointer move, so the
+          // composition has to follow it in the same input. macOS recomposes
+          // its retained workspace natively; Windows redraws the paused still
+          // from its cached sources here, which also publishes the geometry
+          // the drag deferred. Without this the pane would show the previous
+          // canvas letterboxed into the new box until mouse-up.
+          #[cfg(target_os = "windows")]
+          if updated
+            && operation == super::super::preview_platform::SelectionGestureOperation::FrameResize
+            && !matches!(
+              phase,
+              super::super::preview_platform::SelectionGesturePhase::Begin
+            )
+          {
+            // The surface state lock is not held here (`handle_editor_input`
+            // emits its gestures after that scope ends), and nothing under
+            // this call re-enters the manager, so the manager lock is only
+            // ever taken before the surface lock - the same order every
+            // command uses.
+            let _ = manager.redraw_still_now();
+          }
+          #[cfg(not(target_os = "windows"))]
+          let _ = updated;
           manager.selection_composition()
         } else {
           None
@@ -293,61 +317,6 @@ mod tests {
     assert_eq!(decodable_position(4_000, 8_000), 4_000);
     assert_eq!(decodable_position(0, 0), 0);
   }
-}
-
-#[tauri::command]
-pub fn request_recording_preview_full_resolution(
-  state: tauri::State<'_, RecordingPreviewPlayerState>,
-  session_id: u64,
-) -> Result<(), String> {
-  let mut manager = state
-    .0
-    .lock()
-    .map_err(|_| "The recording preview player is unavailable".to_owned())?;
-  manager.require_session(session_id)?;
-  manager.enable_full_resolution()?;
-  if manager.is_playing {
-    return Ok(());
-  }
-  manager.cancel_worker();
-  if let Some(decoder) = &manager.still_decoder {
-    return decoder.seek(
-      manager.position_ms,
-      manager.latest_seek_request,
-      false,
-      manager.pane_target_sizes.clone(),
-    );
-  }
-  let mut sources = manager
-    .sources
-    .clone()
-    .ok_or_else(|| "The recording preview player is not open".to_owned())?;
-  sources.playback_layout.clone_from(&sources.layout);
-  let frame_channel = manager
-    .frame_channel
-    .clone()
-    .ok_or_else(|| "The recording preview frame channel is unavailable".to_owned())?;
-  let event_channel = manager
-    .event_channel
-    .clone()
-    .ok_or_else(|| "The recording preview event channel is unavailable".to_owned())?;
-  let pane_count = sources.playback_layout.panes.len();
-  manager.worker = Some(PreviewPlayerWorker::spawn(
-    sources,
-    super::worker::WorkerLaunch {
-      audio: PreviewAudioSettings {
-        audio_track_volumes: manager.audio_volumes.clone(),
-        enabled_stream_indices: manager.audio_indices.clone(),
-      },
-      mode: PlaybackMode::Still,
-      playback_factors: vec![1.0; pane_count],
-      request_id: manager.latest_seek_request,
-      start_ms: manager.position_ms,
-    },
-    frame_channel,
-    event_channel,
-  )?);
-  Ok(())
 }
 
 #[tauri::command]

@@ -13,13 +13,15 @@ use windows::{
     System::LibraryLoader::GetModuleHandleW,
     UI::Input::KeyboardAndMouse::{GetKeyState, ReleaseCapture, SetCapture, VK_MENU},
     UI::WindowsAndMessaging::{
-      CreateWindowExW, DefWindowProcW, DestroyWindow, LoadCursorW, RegisterClassW, SetCursor,
-      SetWindowPos, ShowWindow, CS_DBLCLKS, CW_USEDEFAULT, HMENU, HTCLIENT, IDC_ARROW, IDC_SIZEALL,
-      IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, MA_NOACTIVATE, SWP_NOACTIVATE,
-      SWP_NOOWNERZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WM_CANCELMODE,
-      WM_CAPTURECHANGED, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
-      WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_SETCURSOR, WNDCLASSW,
-      WS_CHILD, WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
+      CreateWindowExW, DefWindowProcW, DestroyWindow, GetAncestor, GetForegroundWindow,
+      LoadCursorW, RegisterClassW, SetCursor, SetForegroundWindow, SetWindowPos, ShowWindowAsync,
+      CS_DBLCLKS, CW_USEDEFAULT, GA_ROOT, HMENU, HTCLIENT, HWND_TOP, IDC_ARROW, IDC_SIZEALL,
+      IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, MA_NOACTIVATE, SWP_ASYNCWINDOWPOS,
+      SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
+      SW_SHOWNOACTIVATE, WM_CANCELMODE, WM_CAPTURECHANGED, WM_DESTROY, WM_LBUTTONDBLCLK,
+      WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST,
+      WM_SETCURSOR, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_NOACTIVATE,
+      WS_EX_NOREDIRECTIONBITMAP,
     },
   },
 };
@@ -35,6 +37,8 @@ pub(super) enum CursorKind {
 }
 
 #[derive(Clone, Copy)]
+// Payloads mirror the Win32 messages; not every field is consumed yet.
+#[allow(dead_code)]
 pub(super) enum Input {
   DoubleClick {
     x: f64,
@@ -105,17 +109,44 @@ impl EditorWindow {
       )
     }
     .map_err(|error| format!("The Windows preview editor could not be created: {error}"))?;
+    // A freshly created child lands at the bottom of the sibling z-order, so
+    // raise it above WebView2 before the first `set_frame` arrives.
+    raise(hwnd);
     Ok(Self { hwnd })
   }
 
-  pub(super) fn set_active(&self, active: bool) {
-    let _ = unsafe { ShowWindow(self.hwnd, if active { SW_SHOWNOACTIVATE } else { SW_HIDE }) };
+  pub(super) fn hwnd(&self) -> HWND {
+    self.hwnd
   }
 
+  /// `ShowWindowAsync` posts rather than sends, so callers off the event-loop
+  /// thread never block inside the main thread while holding surface state.
+  pub(super) fn set_active(&self, active: bool) {
+    let _ = unsafe { ShowWindowAsync(self.hwnd, if active { SW_SHOWNOACTIVATE } else { SW_HIDE }) };
+    if active {
+      raise(self.hwnd);
+    }
+  }
+
+  /// `SWP_ASYNCWINDOWPOS` likewise posts the request when it arrives from a
+  /// non-owning thread. The z-order is deliberately re-asserted to `HWND_TOP`
+  /// on every move: the editor must stay above the sibling WebView2 child.
   pub(super) fn set_frame(&self, x: i32, y: i32, width: i32, height: i32, active: bool) {
-    let flags =
-      SWP_NOACTIVATE | SWP_NOOWNERZORDER | active.then_some(SWP_SHOWWINDOW).unwrap_or_default();
-    let _ = unsafe { SetWindowPos(self.hwnd, None, x, y, width.max(1), height.max(1), flags) };
+    let flags = SWP_ASYNCWINDOWPOS
+      | SWP_NOACTIVATE
+      | SWP_NOOWNERZORDER
+      | active.then_some(SWP_SHOWWINDOW).unwrap_or_default();
+    let _ = unsafe {
+      SetWindowPos(
+        self.hwnd,
+        Some(HWND_TOP),
+        x,
+        y,
+        width.max(1),
+        height.max(1),
+        flags,
+      )
+    };
   }
 
   pub(super) fn set_cursor(kind: CursorKind) {
@@ -134,9 +165,27 @@ impl EditorWindow {
 }
 
 impl Drop for EditorWindow {
+  // `DestroyWindow` only works on the creating thread; the surface lives in a
+  // static `OnceLock` and is never dropped in practice.
   fn drop(&mut self) {
     let _ = unsafe { DestroyWindow(self.hwnd) };
   }
+}
+
+/// Re-asserts the editor above its WebView2 sibling without moving, sizing,
+/// or activating it.
+fn raise(hwnd: HWND) {
+  let _ = unsafe {
+    SetWindowPos(
+      hwnd,
+      Some(HWND_TOP),
+      0,
+      0,
+      0,
+      0,
+      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+    )
+  };
 }
 
 static CLASS: OnceLock<u16> = OnceLock::new();
@@ -161,11 +210,20 @@ unsafe extern "system" fn window_proc(
   match message {
     WM_DESTROY => LRESULT(0),
     WM_NCHITTEST => LRESULT(HTCLIENT as isize),
-    WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+    WM_MOUSEACTIVATE => {
+      // The editor itself never takes activation or focus (keyboard input
+      // stays with the webview), but a click on the workspace still has to
+      // raise the export window like a click anywhere else in it would.
+      let root = GetAncestor(hwnd, GA_ROOT);
+      if !root.is_invalid() && GetForegroundWindow() != root {
+        let _ = SetForegroundWindow(root);
+      }
+      LRESULT(MA_NOACTIVATE as isize)
+    }
     WM_LBUTTONDOWN => {
       SetCapture(hwnd);
       let (x, y) = point(lparam);
-      super::handle_editor_input(Input::Down {
+      dispatch(Input::Down {
         centered: option_pressed(),
         x,
         y,
@@ -175,12 +233,12 @@ unsafe extern "system" fn window_proc(
     }
     WM_LBUTTONDBLCLK => {
       let (x, y) = point(lparam);
-      super::handle_editor_input(Input::DoubleClick { x, y });
+      dispatch(Input::DoubleClick { x, y });
       LRESULT(0)
     }
     WM_MOUSEMOVE => {
       let (x, y) = point(lparam);
-      super::handle_editor_input(Input::Move {
+      dispatch(Input::Move {
         centered: option_pressed(),
         x,
         y,
@@ -191,12 +249,12 @@ unsafe extern "system" fn window_proc(
     }
     WM_LBUTTONUP => {
       let (x, y) = point(lparam);
-      super::handle_editor_input(Input::Up { x, y });
+      dispatch(Input::Up { x, y });
       let _ = ReleaseCapture();
       LRESULT(0)
     }
     WM_CANCELMODE | WM_CAPTURECHANGED => {
-      super::handle_editor_input(Input::Cancel);
+      dispatch(Input::Cancel);
       LRESULT(0)
     }
     WM_MOUSEWHEEL => {
@@ -207,7 +265,7 @@ unsafe extern "system" fn window_proc(
       };
       let _ = ScreenToClient(hwnd, &mut local);
       let delta = ((wparam.0 >> 16) as u16 as i16) as f64 / 120.0;
-      super::handle_editor_input(Input::Wheel {
+      dispatch(Input::Wheel {
         x: f64::from(local.x),
         y: f64::from(local.y),
         delta,
@@ -215,9 +273,22 @@ unsafe extern "system" fn window_proc(
       LRESULT(0)
     }
     WM_SETCURSOR => {
-      super::refresh_editor_cursor();
+      guard(super::refresh_editor_cursor);
       LRESULT(1)
     }
     _ => DefWindowProcW(hwnd, message, wparam, lparam),
   }
+}
+
+/// `window_proc` is an `extern "system"` callback: a panic that reaches it
+/// cannot unwind and aborts the whole process. Contain gesture bugs to a
+/// logged, dropped input instead.
+fn guard(work: impl FnOnce()) {
+  if std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).is_err() {
+    eprintln!("The Windows preview editor dropped an input after a panic");
+  }
+}
+
+fn dispatch(input: Input) {
+  guard(|| super::handle_editor_input(input));
 }

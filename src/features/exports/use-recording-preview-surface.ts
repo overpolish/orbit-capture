@@ -6,7 +6,6 @@ import { RefObject, useEffect, useRef } from "react";
 
 import {
   layoutRecordingPreviewSurface,
-  requestRecordingPreviewFullResolution,
   setRecordingPreviewZoom,
 } from "./api";
 import { RecordingOutputSettings } from "./screenshot-output";
@@ -262,7 +261,6 @@ export function useRecordingPreviewSurface({
   const onSelectionGestureRef = useRef(onSelectionGesture);
   onSelectionGestureRef.current = onSelectionGesture;
   const selectionGestureActiveRef = useRef(false);
-  const fullResolutionSessionRef = useRef<number | null>(null);
   const layoutRequestIdRef = useRef(0);
   const measureRef = useRef<() => void>(() => undefined);
   const nativeZoomEchoRef = useRef<number | undefined>(undefined);
@@ -285,17 +283,6 @@ export function useRecordingPreviewSurface({
           const roundedZoom = Math.round(event.payload.zoomPercent);
           nativeZoomEchoRef.current =
             roundedZoom === zoomPercentRef.current ? undefined : roundedZoom;
-          if (
-            event.payload.zoomPercent > 100 &&
-            fullResolutionSessionRef.current !== event.payload.sessionId
-          ) {
-            fullResolutionSessionRef.current = event.payload.sessionId;
-            void requestRecordingPreviewFullResolution(
-              event.payload.sessionId,
-            ).catch((cause: unknown) => {
-              if (!disposed) onError(String(cause));
-            });
-          }
           onZoomChange?.(roundedZoom);
         }
       },
@@ -307,7 +294,7 @@ export function useRecordingPreviewSurface({
       disposed = true;
       unlisten?.();
     };
-  }, [isEnabled, nativeEditorOwnsLayout, onError, onZoomChange, sessionIdRef]);
+  }, [isEnabled, nativeEditorOwnsLayout, onZoomChange, sessionIdRef]);
 
   useEffect(() => {
     if (

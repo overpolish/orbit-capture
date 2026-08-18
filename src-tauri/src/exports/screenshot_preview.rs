@@ -23,8 +23,6 @@ use super::preview_platform::{
 use super::{ExportArtifact, ExportState, ScreenshotWorkspaceOutputSettings};
 use crate::screenshots::{CapturedImage, ScreenshotOutputSettings};
 
-/// Decode width used before the webview has reported the on-screen pane size.
-const FALLBACK_TARGET_WIDTH: u32 = 1_600;
 const AUTO_FIT_MOVE_EDGE: u32 = 1 << 17;
 const AUTO_FIT_COMMIT_EDGE: u32 = 1 << 18;
 const MINIMUM_CANVAS_SIZE: f64 = 64.0;
@@ -123,51 +121,17 @@ impl PreviewManager {
     self.workspace_scene = None;
   }
 
-  /// Mirrors the recording preview: composition happens at the on-screen pane
-  /// size (never above the output size, never below the validation floor).
-  fn scaled_output(
-    pane_target_size: Option<(u32, u32)>,
-    settings: &ScreenshotOutputSettings,
-  ) -> ScreenshotOutputSettings {
-    let (target_width, target_height) = pane_target_size
-      .filter(|size| size.0 >= 16 && size.1 >= 16)
-      .unwrap_or((
-        FALLBACK_TARGET_WIDTH,
-        ((f64::from(FALLBACK_TARGET_WIDTH) * f64::from(settings.height)
-          / f64::from(settings.width.max(1)))
-        .round()
-        .max(1.0)) as u32,
-      ));
-    let factor = (f64::from(target_width) / f64::from(settings.width.max(1))).min(1.0);
-    let height_factor = (f64::from(target_height) / f64::from(settings.height.max(1))).min(1.0);
-    if factor >= 1.0 && height_factor >= 1.0 {
-      return settings.clone();
-    }
-    let minimum = (64.0 / f64::from(settings.width.max(1)))
-      .max(64.0 / f64::from(settings.height.max(1)))
-      .min(1.0);
-    let factor = factor.max(minimum);
-    let height_factor = height_factor.max(minimum);
-    let mut scaled = settings.clone();
-    scaled.width = ((f64::from(settings.width) * factor).round().max(64.0)) as u32;
-    scaled.height = ((f64::from(settings.height) * height_factor)
-      .round()
-      .max(64.0)) as u32;
-    scaled
-  }
-
   fn present(&self) -> Result<(), String> {
     let (Some(surface), Some(output)) = (self.surface.as_ref(), self.output.as_ref()) else {
       return Ok(());
     };
-    Self::present_snapshot(surface, output, &self.sources, self.pane_target_size)
+    Self::present_snapshot(surface, output, &self.sources)
   }
 
   fn present_snapshot(
     surface: &RecordingPreviewSurface,
     output: &ScreenshotWorkspaceOutputSettings,
     sources: &[(u64, Arc<CapturedImage>)],
-    pane_target_size: Option<(u32, u32)>,
   ) -> Result<(), String> {
     if output.canvas.width < 64 || output.canvas.height < 64 {
       return Ok(());
@@ -182,7 +146,7 @@ impl PreviewManager {
           Some((
             item_output.id,
             source.as_ref(),
-            Self::scaled_output(pane_target_size, &output.output_for_id(item_output.id)),
+            output.output_for_id(item_output.id),
           ))
         })
         .collect::<Vec<_>>();
@@ -196,8 +160,14 @@ impl PreviewManager {
       let Some((_, source)) = sources.iter().find(|(id, _)| *id == item_output.id) else {
         continue;
       };
-      let scaled = Self::scaled_output(pane_target_size, &output.output_for_id(item_output.id));
-      surface.present_screenshot_layer(index as u32, item_output.id, source, &scaled, index > 0)?;
+      let item_settings = output.output_for_id(item_output.id);
+      surface.present_screenshot_layer(
+        index as u32,
+        item_output.id,
+        source,
+        &item_settings,
+        index > 0,
+      )?;
     }
     Ok(())
   }
@@ -670,13 +640,12 @@ pub async fn refresh_screenshot_preview_sources(
         manager.surface.clone(),
         manager.output.clone(),
         manager.sources.clone(),
-        manager.pane_target_size,
       )
     })
   };
-  if let Some((Some(surface), Some(output), sources, pane_target_size)) = presentation {
+  if let Some((Some(surface), Some(output), sources)) = presentation {
     let batch = surface.present_batch();
-    PreviewManager::present_snapshot(&surface, &output, &sources, pane_target_size)?;
+    PreviewManager::present_snapshot(&surface, &output, &sources)?;
     drop(batch);
   }
   Ok(())
@@ -759,6 +728,10 @@ pub async fn layout_screenshot_preview_surface(
     manager.has_layout = true;
     (surface, will_present, natural_size)
   };
+  // The natural canvas size only drives the retained macOS workspace layout;
+  // the Windows path lays panes out from their own rects.
+  #[cfg(not(target_os = "macos"))]
+  let _ = natural_size;
   surface.set_selection(selection.map(|overlay| PreviewSelection {
     crop_mode: u32::from(overlay.crop_mode),
     image_height: overlay.image.map_or(0.0, |image| image.height),
@@ -834,14 +807,10 @@ pub async fn layout_screenshot_preview_surface(
         .lock()
         .map_err(|_| "The screenshot preview is unavailable".to_owned())?;
       manager.require_session(session_id)?;
-      (
-        manager.output.clone(),
-        manager.sources.clone(),
-        manager.pane_target_size,
-      )
+      (manager.output.clone(), manager.sources.clone())
     };
-    if let (Some(output), sources, pane_target_size) = presentation {
-      PreviewManager::present_snapshot(&surface, &output, &sources, pane_target_size)?;
+    if let (Some(output), sources) = presentation {
+      PreviewManager::present_snapshot(&surface, &output, &sources)?;
     }
   }
   drop(batch);

@@ -15,14 +15,12 @@ export function RecordingPreviewViewport({
   canvasRefs,
   isBusy,
   layout,
-  onNeedFullResolution,
   onZoomChange,
   zoomPercent,
 }: {
   canvasRefs: RefObject<HTMLCanvasElement | null>[];
   isBusy: boolean;
   layout: RecordingPreviewLayout;
-  onNeedFullResolution?: () => void;
   onZoomChange?: (zoomPercent: number) => void;
   zoomPercent?: number;
 }) {
@@ -52,7 +50,6 @@ export function RecordingPreviewViewport({
   return (
     <InteractivePreviewViewport<HTMLDivElement>
       getMediaSize={() => ({ height: layout.height, width: layout.width })}
-      onNeedFullResolution={onNeedFullResolution}
       onZoomChange={onZoomChange}
       renderMedia={({ ref, style }) => (
         <div

@@ -40,12 +40,6 @@ fn main() {
 
 #[cfg(windows)]
 fn compile_windows_preview_shaders() {
-  use std::{ffi::CString, path::PathBuf};
-  use windows::{
-    core::PCSTR,
-    Win32::Graphics::Direct3D::{Fxc::D3DCompile, ID3DBlob},
-  };
-
   compile_shader(
     "src/exports/preview_platform/surface_windows/compositor.rs",
     "recording_preview",
