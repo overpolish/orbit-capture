@@ -5,13 +5,19 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use windows::core::{Interface, PCWSTR};
+use windows::core::{Interface, GUID, PCWSTR, PWSTR};
 use windows::Win32::Graphics::Direct3D11::{
   ID3D11Device, ID3D11Resource, ID3D11Texture2D, D3D11_BIND_RENDER_TARGET,
   D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
 use windows::Win32::Media::MediaFoundation::*;
-use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+use windows::Win32::System::Com::{
+  CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_MULTITHREADED,
+};
+use windows::Win32::Foundation::PROPERTYKEY;
+use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
+use windows::Win32::System::Variant::VT_UI4;
+use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PSCreateMemoryPropertyStore};
 
 use crate::capture_geometry::CaptureRect;
 use crate::recording::encoding::{bitrate_bps, FailureReport, FinalizeInfo, Timeline};
@@ -172,7 +178,7 @@ impl Sink {
     unsafe { manager.ResetDevice(&config.device, reset_token) }
       .map_err(|error| error.to_string())?;
 
-    let attributes = attributes(4)?;
+    let attributes = attributes(5)?;
     win(unsafe {
       attributes.SetGUID(
         &MF_TRANSCODE_CONTAINERTYPE,
@@ -211,6 +217,16 @@ impl Sink {
     // Half-second fragments align with the working encoder's half-second GOP,
     // bounding crash loss while keeping seeks cheap in the export scrubber.
     win(unsafe { sink_attributes.SetUINT64(&MF_MPEG4SINK_MIN_FRAGMENT_DURATION, 5_000_000) })?;
+    // MF_MT_MAX_KEYFRAME_SPACING above is advisory and the Microsoft AVC DX12
+    // Encoder HMFT (Windows 11 D3D12 shim) ignores it, as it does ICodecAPI
+    // calls made after SetInputMediaType and per-sample IDR requests. Codec
+    // API values handed over as MF_SINK_WRITER_ENCODER_CONFIG reach the
+    // encoder before its media types are negotiated and are honoured, giving
+    // working recordings the half-second GOP the export scrubber relies on.
+    match encoder_config((config.fps / 2).max(1)) {
+      Ok(store) => win(unsafe { attributes.SetUnknown(&MF_SINK_WRITER_ENCODER_CONFIG, &store) })?,
+      Err(message) => eprintln!("windows recorder: encoder config not applied: {message}"),
+    }
     let sink = win(unsafe { MFCreateSinkWriterFromMediaSink(&media_sink, &attributes) })?;
     // MFCreateFMPEG4MediaSink has already created the fixed video stream. The
     // Sink Writer must feed that stream so its encoder can update the sink's
@@ -224,6 +240,9 @@ impl Sink {
       config.fps,
     )?;
     win(unsafe { sink.SetInputMediaType(stream, &input, None) })?;
+    if let Some(description) = encoder_description(&sink, stream) {
+      eprintln!("windows recorder: H.264 encoder = {description}");
+    }
     win(unsafe { sink.BeginWriting() })?;
 
     Ok(Self {
@@ -258,7 +277,19 @@ impl Sink {
       .sink
       .as_ref()
       .ok_or_else(|| "The recording has already been finalized".to_owned())?;
-    win(unsafe { sink.WriteSample(self.stream, &sample) })?;
+    unsafe { sink.WriteSample(self.stream, &sample) }.map_err(|error| {
+      let mut description = D3D11_TEXTURE2D_DESC::default();
+      unsafe { frame.texture.GetDesc(&mut description) };
+      format!(
+        "{error} (sample time {pts_100ns} / duration {duration_100ns} x100ns; texture {}x{} format {:?} bind 0x{:x} misc 0x{:x} usage {:?})",
+        description.Width,
+        description.Height,
+        description.Format,
+        description.BindFlags,
+        description.MiscFlags,
+        description.Usage,
+      )
+    })?;
     Ok(())
   }
 
@@ -284,6 +315,44 @@ fn attributes(capacity: u32) -> Result<IMFAttributes, String> {
   let mut value = None;
   unsafe { MFCreateAttributes(&mut value, capacity) }.map_err(|error| error.to_string())?;
   value.ok_or_else(|| "Media Foundation created no attributes".to_owned())
+}
+
+fn encoder_config(gop_frames: u32) -> Result<IPropertyStore, String> {
+  let mut raw = std::ptr::null_mut();
+  win(unsafe { PSCreateMemoryPropertyStore(&IPropertyStore::IID, &mut raw) })?;
+  let store = unsafe { IPropertyStore::from_raw(raw) };
+  let mut value = PROPVARIANT::default();
+  unsafe {
+    (*value.Anonymous.Anonymous).vt = VT_UI4;
+    (*value.Anonymous.Anonymous).Anonymous.ulVal = gop_frames;
+  }
+  let key = PROPERTYKEY {
+    fmtid: CODECAPI_AVEncMPVGOPSize,
+    pid: 0,
+  };
+  win(unsafe { store.SetValue(&key, &value) })?;
+  Ok(store)
+}
+
+/// Best-effort identification of the H.264 transform the sink writer chose,
+/// so GOP behaviour can be tied to a vendor when a recording misbehaves.
+fn encoder_description(sink: &IMFSinkWriter, stream: u32) -> Option<String> {
+  let mut raw = std::ptr::null_mut();
+  unsafe { sink.GetServiceForStream(stream, &GUID::zeroed(), &IMFTransform::IID, &mut raw) }.ok()?;
+  let transform = unsafe { IMFTransform::from_raw(raw) };
+  let attributes = unsafe { transform.GetAttributes() }.ok()?;
+  let mut url = PWSTR::null();
+  let mut length = 0;
+  let hardware = unsafe {
+    attributes.GetAllocatedString(&MFT_ENUM_HARDWARE_URL_Attribute, &mut url, &mut length)
+  }
+  .ok()
+  .and_then(|()| {
+    let text = unsafe { url.to_string() }.ok();
+    unsafe { CoTaskMemFree(Some(url.as_ptr().cast())) };
+    text
+  });
+  Some(hardware.unwrap_or_else(|| "software or unnamed transform".to_owned()))
 }
 
 fn video_type(

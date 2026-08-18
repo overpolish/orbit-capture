@@ -23,7 +23,15 @@ const HUNDRED_NS_PER_MS: i64 = 10_000;
 // compositor's previous frame visible. Rewind beyond the encoder's observed
 // one-second GOP and decode forward to the requested presentation timestamp,
 // matching macOS's preroll strategy while keeping every frame on the GPU.
-const SEEK_PREROLL_MS: u64 = 1_500;
+const SETTLED_SEEK_PREROLL_MS: u64 = 1_500;
+// Mid-drag seeks only have to look right, not be authoritative, and every
+// prerolled millisecond is decode work standing between the pointer and the
+// picture. Media Foundation already positions at the keyframe at or before
+// the request, so decoding forward from there is the minimum possible work;
+// any preroll only drags in the previous GOP as well. In the fragmented-MP4
+// case where it lands on the keyframe after the request, a rough step simply
+// shows a frame slightly ahead until the settled seek corrects it.
+const ROUGH_SEEK_PREROLL_MS: u64 = 0;
 const VIDEO_STREAM: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
 
 fn win<T>(result: windows::core::Result<T>) -> Result<T, String> {
@@ -126,7 +134,7 @@ impl GpuVideoReader {
       _device_manager: device_manager,
       _runtime: runtime,
     };
-    value.seek(start_ms)?;
+    value.seek(start_ms, false)?;
     Ok(value)
   }
 
@@ -135,9 +143,9 @@ impl GpuVideoReader {
     (self.width, self.height)
   }
 
-  pub(super) fn seek(&mut self, position_ms: u64) -> Result<(), String> {
+  pub(super) fn seek(&mut self, position_ms: u64, rough: bool) -> Result<(), String> {
     win(unsafe { self.reader.Flush(VIDEO_STREAM) })?;
-    let seek_ms = position_ms.saturating_sub(SEEK_PREROLL_MS);
+    let seek_ms = position_ms.saturating_sub(seek_preroll_ms(rough));
     let position = PROPVARIANT::from(
       i64::try_from(seek_ms)
         .unwrap_or(i64::MAX / HUNDRED_NS_PER_MS)
@@ -198,6 +206,16 @@ impl GpuVideoReader {
 
   pub(super) const fn last_timestamp_ms(&self) -> u64 {
     self.last_timestamp_ms
+  }
+}
+
+/// Milliseconds of rewind a seek pays for before decoding forward. Settled
+/// seeks buy accuracy near EOF; rough ones buy responsiveness.
+pub(super) const fn seek_preroll_ms(rough: bool) -> u64 {
+  if rough {
+    ROUGH_SEEK_PREROLL_MS
+  } else {
+    SETTLED_SEEK_PREROLL_MS
   }
 }
 

@@ -124,7 +124,7 @@ fn run(
         }
       } else if let Some(reader) = reader.as_mut() {
         if should_seek(reader.last_timestamp_ms(), position_ms, rough) {
-          if let Err(message) = reader.seek(position_ms) {
+          if let Err(message) = reader.seek(position_ms, rough) {
             let _ = event_channel.send(RecordingPreviewPlayerEvent::Error { message });
             presented = false;
             break;
@@ -146,7 +146,24 @@ fn run(
       let needs_reopen = decoded
         .as_ref()
         .is_none_or(|frame| frame_is_stale(frame.timestamp_ms, position_ms));
-      let frame = if needs_reopen {
+      let frame = if needs_reopen && rough {
+        // Reopening a Media Foundation reader costs far more than the drag has
+        // to spare. Retry the seek on the warm reader instead and, if it still
+        // has nothing at this position, show the pane's previous frame for one
+        // more step; the settled seek that ends the drag is authoritative.
+        let recovered = reader.as_mut().and_then(|reader| {
+          reader
+            .seek(position_ms, true)
+            .and_then(|()| reader.frame_at(position_ms))
+            .ok()
+            .flatten()
+        });
+        let Some(recovered) = recovered else {
+          presented = false;
+          break;
+        };
+        recovered
+      } else if needs_reopen {
         match GpuVideoReader::open(path, position_ms, surface.clone()).and_then(|mut opened| {
           let frame = opened.frame_at(position_ms)?;
           *reader = Some(opened);
@@ -179,9 +196,11 @@ fn run(
 
 // Small forward moves are cheaper to satisfy from the decoder's current GPU
 // stream. Larger jumps seek directly so rapid timeline scrubs cannot leave a
-// growing queue of intermediate frames to decode. The final (non-rough) seek
-// always resets to the exact requested position.
-const MAX_SEQUENTIAL_SCRUB_MS: u64 = 250;
+// growing queue of intermediate frames to decode. The break-even point is one
+// group of pictures: our writer keys every half second, so anything inside
+// 500 ms costs less decoded forward than a seek's own preroll would. The final
+// (non-rough) seek always resets to the exact requested position.
+const MAX_SEQUENTIAL_SCRUB_MS: u64 = 500;
 const MAX_STILL_LAG_MS: u64 = 100;
 
 fn frame_is_stale(frame_ms: u64, position_ms: u64) -> bool {
@@ -196,13 +215,20 @@ fn should_seek(current_ms: u64, position_ms: u64, rough: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
-  use super::{frame_is_stale, should_seek};
+  use super::{super::gpu_decoder::seek_preroll_ms, frame_is_stale, should_seek};
 
   #[test]
   fn rough_scrubs_only_decode_short_forward_steps_sequentially() {
     assert!(!should_seek(4_000, 4_200, true));
-    assert!(should_seek(4_000, 4_251, true));
+    assert!(!should_seek(4_000, 4_500, true));
+    assert!(should_seek(4_000, 4_501, true));
     assert!(should_seek(4_000, 3_999, true));
+  }
+
+  #[test]
+  fn rough_seeks_do_not_preroll() {
+    assert_eq!(seek_preroll_ms(true), 0);
+    assert_eq!(seek_preroll_ms(false), 1_500);
   }
 
   #[test]

@@ -26,8 +26,8 @@ use nokhwa::{
 use rayon::prelude::*;
 use windows::Win32::Graphics::{
   Direct3D11::{
-    ID3D11Device, ID3D11Texture2D, D3D11_BIND_SHADER_RESOURCE, D3D11_SUBRESOURCE_DATA,
-    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+    ID3D11Device, ID3D11Texture2D, D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE,
+    D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
   },
   Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC},
 };
@@ -305,7 +305,10 @@ fn texture(
       Quality: 0,
     },
     Usage: D3D11_USAGE_DEFAULT,
-    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+    // Matches the screen-capture textures the sink writer already accepts. A
+    // shader-resource-only texture is rejected by the Media Foundation video
+    // pipeline with E_INVALIDARG when the sample reaches the encoder.
+    BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE).0 as u32,
     ..Default::default()
   };
   let initial = D3D11_SUBRESOURCE_DATA {

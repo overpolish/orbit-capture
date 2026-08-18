@@ -42,7 +42,7 @@ fn decoded_preview_frame_stays_on_the_gpu() {
   let multithread: ID3D10Multithread = device.cast().unwrap();
   let _ = unsafe { multithread.SetMultithreadProtected(true) };
   let mut reader = GpuVideoReader::open_with_device(&path, 0, device.clone()).unwrap();
-  reader.seek(4_000).unwrap();
+  reader.seek(4_000, false).unwrap();
   let frame = reader.frame_at(4_000).unwrap().unwrap();
   let mut description = D3D11_TEXTURE2D_DESC::default();
   unsafe { frame.texture.GetDesc(&mut description) };
@@ -85,7 +85,7 @@ fn decoded_preview_frame_stays_on_the_gpu() {
   );
 
   for target_ms in [5_000, 8_000, 12_000, 16_000, 18_000, 20_000, 22_000] {
-    reader.seek(target_ms).unwrap();
+    reader.seek(target_ms, false).unwrap();
     let frame = reader.frame_at(target_ms).unwrap().unwrap();
     println!(
       "requested {target_ms} ms, decoded {} ms",
