@@ -383,7 +383,13 @@ export function useRecordingPreviewPlayer({
       scrubFinishedRef.current = false;
     }
     positionRef.current = normalized;
-    updatePlaying(false);
+    // A seek that will resume playback keeps the UI in its playing state:
+    // flipping the button to "play" and revealing the paused chrome for the
+    // split second between click, still, and resumed playback reads as a
+    // stutter. Internally the backend still pauses and resumes; only the
+    // presented state holds steady. A seek from a genuine pause (or a resume
+    // that fails - its catch below drops the state) behaves as before.
+    if (!resumeAfterSeekRef.current) updatePlaying(false);
     const send = (nextPosition: number, nextPhase: ScrubPhase) => {
       // Start/end also carry native OSC visibility, so only movement samples
       // at the same playhead position are redundant.
