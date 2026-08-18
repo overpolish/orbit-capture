@@ -34,6 +34,14 @@ type PreviewViewportProps = {
   naturalWidth: number;
   isEditing?: boolean;
   isResizingCanvas?: boolean;
+  /**
+   * A running save covers the viewport with the progress overlay, whose Cancel
+   * button is a DOM control - and the native interaction view is inserted
+   * above the webview, so it would swallow that click and pan the workspace
+   * instead. Suspending the native editor for the duration of the save hands
+   * input back to the webview without giving up the native composition.
+   */
+  isSaving?: boolean;
   isSelecting?: boolean;
   onBackgroundRadiusChange?: (radiusPercent: number) => void;
   onBackgroundRadiusChangeEnd?: () => void;
@@ -66,6 +74,7 @@ export function PreviewViewport({
   artifactId,
   isEditing = false,
   isResizingCanvas = false,
+  isSaving = false,
   isSelecting = false,
   items,
   naturalHeight,
@@ -502,6 +511,7 @@ export function PreviewViewport({
     artifactId,
     canvasRef: nativeFrameRef,
     interactionOutput: workspaceOutput,
+    isEditorSuspended: isSaving,
     isEnabled: nativePane === true && workspaceOutput !== undefined,
     onSelectionChange: (paneIndex) => {
       if (paneIndex === null) return;

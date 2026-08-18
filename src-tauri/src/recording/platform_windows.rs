@@ -286,6 +286,7 @@ pub fn begin_blocking(config: CaptureStartupConfig) -> Result<CaptureStart, Stri
     path,
     primary,
     system_audio,
+    system_audio_skipped: _,
   } = config;
   let primary = match primary {
     PrimaryCaptureSource::Audio => {
@@ -696,6 +697,7 @@ mod tests {
       }),
       camera_path: None,
       include_own_windows: true,
+      system_audio_skipped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
       microphone_id: None,
       monitor: Arc::new(RecordingMonitor::default()),
       on_failure: Arc::new(|error| eprintln!("camera recording failure: {error}")),
@@ -767,6 +769,7 @@ mod tests {
       }),
       camera_path: Some(camera_path.clone()),
       include_own_windows: true,
+      system_audio_skipped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
       microphone_id: None,
       monitor: Arc::new(RecordingMonitor::default()),
       on_failure: Arc::new(|error| eprintln!("screen/camera recording failure: {error}")),
@@ -819,6 +822,7 @@ mod tests {
       camera: None,
       camera_path: None,
       include_own_windows: true,
+      system_audio_skipped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
       microphone_id: None,
       monitor: Arc::new(RecordingMonitor::default()),
       on_failure: Arc::new(|error| eprintln!("recording failure: {error}")),

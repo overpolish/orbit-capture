@@ -44,6 +44,14 @@ import { useRecordingInputAvailability } from "../use-recording-input-availabili
 import { RecordingBar } from "./recording-bar";
 
 const RECORDING_ERROR_EVENT = "recording://error";
+/** A recording started without selected inputs whose devices had vanished. */
+const RECORDING_INPUTS_SKIPPED_EVENT = "recording://inputs-skipped";
+
+const SKIPPED_INPUT_LABELS: Record<string, string> = {
+  camera: "camera",
+  microphone: "microphone",
+  systemAudio: "system audio",
+};
 const SHORTCUT_ACTION_EVENT = "global-shortcut://action";
 /** How long the screenshot button holds its outcome before going back to idle. */
 const SCREENSHOT_FEEDBACK_MS = 2000;
@@ -299,9 +307,31 @@ export function RecordingBarWindow() {
       }
     });
 
+    let unlistenSkipped: (() => void) | undefined;
+    // The dock already reflects the sanitized inputs (their meters are gone);
+    // this names what was dropped and why the recording still started.
+    void listen<{ inputs: string[] }>(
+      RECORDING_INPUTS_SKIPPED_EVENT,
+      ({ payload }) => {
+        const labels = payload.inputs
+          .map((input) => SKIPPED_INPUT_LABELS[input] ?? input)
+          .join(", ");
+        console.warn(
+          `Recording started without ${labels}: the selected device is no longer available.`,
+        );
+      },
+    ).then((listener) => {
+      if (disposed) {
+        listener();
+      } else {
+        unlistenSkipped = listener;
+      }
+    });
+
     return () => {
       disposed = true;
       unlisten?.();
+      unlistenSkipped?.();
     };
   }, []);
 

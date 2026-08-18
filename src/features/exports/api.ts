@@ -341,6 +341,7 @@ export const startScreenshotPreview = (artifactId: number, sessionId: number) =>
 export const layoutScreenshotPreviewSurface = ({
   backdrop,
   interactionOutput,
+  nativeEditor,
   output,
   panes,
   scale,
@@ -351,6 +352,7 @@ export const layoutScreenshotPreviewSurface = ({
 }: {
   backdrop: [number, number, number, number];
   interactionOutput: ScreenshotWorkspaceOutputSettings;
+  nativeEditor: boolean;
   output: ScreenshotWorkspaceOutputSettings;
   panes: {
     index: number;
@@ -381,6 +383,7 @@ export const layoutScreenshotPreviewSurface = ({
   invoke<null>("layout_screenshot_preview_surface", {
     backdrop,
     interactionOutput: normalizedScreenshotWorkspaceOutput(interactionOutput),
+    nativeEditor,
     output: normalizedScreenshotWorkspaceOutput(output),
     panes,
     scale,

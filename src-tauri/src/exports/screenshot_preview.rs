@@ -659,6 +659,11 @@ pub async fn layout_screenshot_preview_surface(
   state: tauri::State<'_, ScreenshotPreviewState>,
   backdrop: Option<[f64; 4]>,
   interaction_output: ScreenshotWorkspaceOutputSettings,
+  // The native interaction view sits above the webview, so it swallows clicks
+  // on DOM controls painted over the viewport (the save overlay's Cancel
+  // button). React turns the editor off for the duration of a save and back on
+  // afterwards; every other layout leaves it on, which is the old behaviour.
+  native_editor: Option<bool>,
   output: ScreenshotWorkspaceOutputSettings,
   panes: Vec<ScreenshotSurfacePane>,
   scale: f64,
@@ -774,6 +779,11 @@ pub async fn layout_screenshot_preview_surface(
       .collect::<Vec<_>>()
   });
   surface.set_selection_targets(selection_targets.as_deref());
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
+  surface.set_editor_active(native_editor.unwrap_or(true));
+  // No interaction view exists off the two native preview backends.
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  let _ = native_editor;
   // Lay out first with the pane frames held back, then present: the batch
   // applies the deferred frames in the same Core Animation transaction as the
   // freshly composed drawables. Presenting before layout does not achieve

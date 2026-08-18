@@ -53,6 +53,7 @@ import { ScrubPreview } from "./scrub-preview";
  */
 export function ScreenshotSection({
   artifact,
+  isSaving = false,
   onBackgroundRadiusChange,
   onBackgroundRadiusChangeEnd,
   onCanvasResize,
@@ -66,6 +67,7 @@ export function ScreenshotSection({
   selectedItemId = null,
 }: {
   artifact: Extract<ExportArtifact, { kind: "screenshot" }>;
+  isSaving?: boolean;
   onBackgroundRadiusChange?: (radiusPercent: number) => void;
   onBackgroundRadiusChangeEnd?: () => void;
   onCanvasResize?: (settings: ScreenshotWorkspaceOutputSettings) => void;
@@ -286,6 +288,7 @@ export function ScreenshotSection({
         artifactId={artifact.id}
         isEditing={tool === "crop"}
         isResizingCanvas={tool === "canvas"}
+        isSaving={isSaving}
         isSelecting={tool === "select"}
         items={artifact.items}
         naturalHeight={artifact.height}
@@ -362,6 +365,7 @@ export function RecordingSection({
   inspector,
   isPreparingRecordingAudio,
   isPreparingRecordingPreview,
+  isSaving,
   onCameraOverlayChange,
   onEnabledTracksChange,
   onEnabledVideoTracksChange,
@@ -387,6 +391,7 @@ export function RecordingSection({
   inspector?: ReactNode;
   isPreparingRecordingAudio?: boolean;
   isPreparingRecordingPreview?: boolean;
+  isSaving?: boolean;
   onCameraOverlayChange?: (settings: CameraOverlaySettings) => void;
   onEnabledTracksChange?: (streamIndices: number[]) => void;
   onEnabledVideoTracksChange?: (tracks: RecordingVideoTrackId[]) => void;
@@ -443,6 +448,7 @@ export function RecordingSection({
         inspector={inspector}
         isPreparingAudio={isPreparingRecordingAudio}
         isPreparingPreview={isPreparingRecordingPreview}
+        isSaving={isSaving}
         key={artifact.id}
         onCameraOverlayChange={onCameraOverlayChange}
         onEnabledTracksChange={onEnabledTracksChange}

@@ -29,6 +29,41 @@ typedef struct {
   uint32_t foreground_only;
 } ScreenwideCanvas;
 
+/// One output frame's cursor, evaluated from the recorded event timeline.
+/// Positions and sizes are canvas pixels; the compositor's shader owns every
+/// pixel of the drawn cursor, including its motion blur and click animation.
+typedef struct {
+  float blur_delta_x;
+  float blur_delta_y;
+  float height;
+  float hotspot_x;
+  float hotspot_y;
+  float rotation_radians;
+  float scale;
+  float width;
+  float x;
+  float y;
+  uint32_t style;
+  uint32_t clip_at_video_edge;
+  uint32_t visible;
+} ScreenwideGpuCursor;
+
+/// One cursor style's artwork. `pixels` is tightly packed RGBA owned by the
+/// caller and is only read while the compositor uploads its textures.
+/// System artwork stretches over the recorded cursor box (`use_design` is
+/// zero); vector fallback artwork keeps its design aspect inside that box.
+typedef struct {
+  const uint8_t *pixels;
+  uint32_t width;
+  uint32_t height;
+  float design_width;
+  float design_height;
+  float origin_x;
+  float origin_y;
+  uint32_t use_design;
+  uint32_t clip_local_box;
+} ScreenwideCursorArtwork;
+
 typedef struct {
   int32_t cursor_x;
   int32_t cursor_y;

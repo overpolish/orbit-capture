@@ -300,6 +300,7 @@ export function ExportPanel({
           inspector={inspector}
           isPreparingRecordingAudio={isPreparingRecordingAudio}
           isPreparingRecordingPreview={isPreparingRecordingPreview}
+          isSaving={isSaving}
           key={artifact.id}
           onCameraOverlayChange={onCameraOverlayChange}
           onEnabledTracksChange={onEnabledTracksChange}
@@ -340,6 +341,7 @@ export function ExportPanel({
           ) : null}
           <ScreenshotSection
             artifact={artifact}
+            isSaving={isSaving}
             onBackgroundRadiusChange={onScreenshotBackgroundRadiusChange}
             onBackgroundRadiusChangeEnd={onScreenshotBackgroundRadiusChangeEnd}
             onCanvasResize={onCanvasResize}

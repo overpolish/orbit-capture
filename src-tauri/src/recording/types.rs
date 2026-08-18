@@ -3,7 +3,10 @@
 
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+  path::PathBuf,
+  sync::{atomic::AtomicBool, Arc},
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::{LogicalPosition, LogicalSize};
@@ -135,6 +138,11 @@ pub(crate) struct CaptureStartupConfig {
   pub path: PathBuf,
   pub primary: PrimaryCaptureSource,
   pub system_audio: SystemAudioSelection,
+  /// Set by startup when it drops a selected input rather than failing the
+  /// start (currently: system audio whose selected applications have all
+  /// quit). The caller reads it afterwards to tell the user the recording
+  /// began without that input.
+  pub system_audio_skipped: Arc<AtomicBool>,
 }
 
 /// A source snapshot taken when Record is pressed. Bundle identifiers resolve

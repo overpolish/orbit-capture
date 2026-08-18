@@ -111,7 +111,7 @@ fn exports_composited_cursor_pixels_into_a_real_movie() {
     .unwrap();
   assert!(status.success());
 
-  let records = [
+  let mut records = vec![
     CursorRecord::Header {
       coordinate_space: "global-logical-points".to_owned(),
       platform: "macos".to_owned(),
@@ -136,17 +136,14 @@ fn exports_composited_cursor_pixels_into_a_real_movie() {
       timestamp_us: 0,
       width: 16.0,
     },
-    CursorRecord::Position {
-      timestamp_us: 0,
-      x: 80.0,
-      y: 80.0,
-    },
-    CursorRecord::Position {
-      timestamp_us: 1_000_000,
-      x: 240.0,
-      y: 80.0,
-    },
   ];
+  // One continuous 160 point sweep across the screen: the exported cursor has
+  // to travel with it, and its motion blur has to stay a local smear.
+  records.extend((0..=50).map(|step| CursorRecord::Position {
+    timestamp_us: step * 20_000,
+    x: 80.0 + f64::from(step as u32) * 160.0 / 50.0,
+    y: 80.0,
+  }));
   let json = records
     .iter()
     .map(|record| serde_json::to_string(record).unwrap())
@@ -192,7 +189,7 @@ fn exports_composited_cursor_pixels_into_a_real_movie() {
     "the delivered cursor-baked recording must use compatible H.264 video"
   );
 
-  for timestamp in ["0", "0.5"] {
+  for (timestamp, expected_x) in [("0", 80), ("0.5", 160)] {
     let frame = Command::new(media_preview::ffmpeg_path())
       .args(["-hide_banner", "-loglevel", "error", "-ss", timestamp, "-i"])
       .arg(&destination)
@@ -209,11 +206,191 @@ fn exports_composited_cursor_pixels_into_a_real_movie() {
       .unwrap();
     assert!(frame.status.success());
     assert_eq!(frame.stdout.len(), 320 * 180 * 3);
+    let lit = frame
+      .stdout
+      .chunks_exact(3)
+      .enumerate()
+      .filter(|(_, pixel)| pixel.iter().any(|channel| *channel > 200))
+      .map(|(index, _)| (index % 320, index / 320))
+      .collect::<Vec<_>>();
     assert!(
-      frame.stdout.iter().any(|channel| *channel > 200),
+      !lit.is_empty(),
       "the frame at {timestamp}s should contain the cursor"
     );
+    let left = lit.iter().map(|(x, _)| *x).min().unwrap();
+    let right = lit.iter().map(|(x, _)| *x).max().unwrap();
+    let top = lit.iter().map(|(_, y)| *y).min().unwrap();
+    // The recorded hotspot sits at the cursor's drawn tip, and the sidecar is
+    // sampled two frames early to match the captured screen.
+    assert!(
+      left.abs_diff(expected_x) <= 12,
+      "the cursor at {timestamp}s starts at x={left}, expected about {expected_x}"
+    );
+    assert!(
+      top.abs_diff(80) <= 12,
+      "the cursor at {timestamp}s starts at y={top}, expected about 80"
+    );
+    assert!(
+      right - left <= 48,
+      "the cursor at {timestamp}s smeared from x={left} to x={right}"
+    );
   }
+  let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A custom cursor's box is whatever shape the application asked for, and the
+/// sidecar carries none of its pixels. Stretching the arrow over a square box
+/// squashed it, so the GPU has to fit the arrow inside that box at the arrow's
+/// own aspect, anchored by the arrow's own hotspot. This process never loads
+/// system artwork (`NSCursor` is unavailable outside a GUI session), so what
+/// runs here is the baked vector arrow, whose 28:40 design frame matches the
+/// system arrow's 28x40 points; `custom_cursors_index_the_system_arrow_fitted_
+/// to_their_box` pins the routing and `custom_cursors_fit_the_system_arrow_by_
+/// its_own_hotspot` the geometry (cursor_effects/raster.rs).
+#[test]
+fn exports_a_custom_cursor_at_the_fallback_arrows_aspect() {
+  let directory = std::env::temp_dir().join(format!(
+    "screenwide-custom-cursor-export-test-{}",
+    std::process::id()
+  ));
+  let _ = std::fs::remove_dir_all(&directory);
+  std::fs::create_dir_all(&directory).unwrap();
+  let source = directory.join("source.mov");
+  let cursor_path = directory.join("source.cursor.jsonl");
+  let destination = directory.join("output.mp4");
+  let status = Command::new(media_preview::ffmpeg_path())
+    .args([
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=black:s=320x180:r=30:d=1",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+    ])
+    .arg(&source)
+    .status()
+    .unwrap();
+  assert!(status.success());
+
+  // The recorded appearance of the real 32x32 custom cursor that exposed the
+  // squash, scaled up so the drawn extents survive H.264 chroma subsampling.
+  let records = [
+    CursorRecord::Header {
+      coordinate_space: "global-logical-points".to_owned(),
+      platform: "macos".to_owned(),
+      source: CursorSource {
+        height: 180.0,
+        kind: CursorSourceKind::Screen,
+        platform_id: "test".to_owned(),
+        video_height: 180,
+        video_width: 320,
+        width: 320.0,
+        x: 0.0,
+        y: 0.0,
+      },
+      timebase: "recording-microseconds".to_owned(),
+      version: FORMAT_VERSION,
+    },
+    CursorRecord::Appearance {
+      height: 48.0,
+      hotspot_x: 11.0,
+      hotspot_y: 8.0,
+      style: CursorStyle::Custom,
+      timestamp_us: 0,
+      width: 48.0,
+    },
+    CursorRecord::Position {
+      timestamp_us: 0,
+      x: 120.0,
+      y: 50.0,
+    },
+    CursorRecord::Position {
+      timestamp_us: 1_000_000,
+      x: 120.0,
+      y: 50.0,
+    },
+  ];
+  let json = records
+    .iter()
+    .map(|record| serde_json::to_string(record).unwrap())
+    .collect::<Vec<_>>()
+    .join("\n");
+  std::fs::write(&cursor_path, format!("{json}\n")).unwrap();
+
+  let cancelled = AtomicBool::new(false);
+  let result = export(CursorExportRequest {
+    audio_layout: AudioLayout::SeparateTracks,
+    audio_source: None,
+    camera: None,
+    camera_on_top: true,
+    cancelled: &cancelled,
+    cursor: Some(&cursor_path),
+    cursor_effects: CursorEffectSettings::default(),
+    destination: &destination,
+    duration_ms: 1_000,
+    height: 180,
+    on_progress: &mut |_| {},
+    output: &output(320, 180),
+    screen: &source,
+    selection: &TrackSelection::default(),
+    video: VideoExportOptions {
+      compression: 1,
+      resolution_scale_percent: 100,
+      source_scale_percent: 100,
+    },
+    width: 320,
+  })
+  .unwrap();
+  assert_eq!(result, ExportRunResult::Completed);
+
+  let frame = Command::new(media_preview::ffmpeg_path())
+    .args(["-hide_banner", "-loglevel", "error", "-ss", "0.5", "-i"])
+    .arg(&destination)
+    .args([
+      "-frames:v",
+      "1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgb24",
+      "pipe:1",
+    ])
+    .output()
+    .unwrap();
+  assert!(frame.status.success());
+  assert_eq!(frame.stdout.len(), 320 * 180 * 3);
+  let lit = frame
+    .stdout
+    .chunks_exact(3)
+    .enumerate()
+    .filter(|(_, pixel)| pixel.iter().all(|channel| *channel > 200))
+    .map(|(index, _)| (index % 320, index / 320))
+    .collect::<Vec<_>>();
+  assert!(!lit.is_empty(), "the custom cursor was not drawn");
+  let left = lit.iter().map(|(x, _)| *x).min().unwrap();
+  let right = lit.iter().map(|(x, _)| *x).max().unwrap();
+  let top = lit.iter().map(|(_, y)| *y).min().unwrap();
+  let bottom = lit.iter().map(|(_, y)| *y).max().unwrap();
+  let width = (right - left + 1) as f64;
+  let height = (bottom - top + 1) as f64;
+  // The 28x40 arrow inside a 48x48 box draws about 24x39 of visible fill; the
+  // stretched arrow that squashed the export drew about 34x39.
+  assert!(
+    height / width > 1.35,
+    "the custom cursor drew {width}x{height}, which is not the fallback arrow's aspect"
+  );
+  // The recorded hotspot belongs to artwork that is not drawn, so the arrow's
+  // own tip has to sit at the recorded position.
+  assert!(
+    left.abs_diff(120) <= 6 && top.abs_diff(50) <= 6,
+    "the custom cursor's tip drew at ({left}, {top}) instead of (120, 50)"
+  );
   let _ = std::fs::remove_dir_all(directory);
 }
 

@@ -39,14 +39,15 @@ fn motion_blur_samples_never_leave_visible_gaps() {
   }
 }
 
-#[cfg(target_os = "windows")]
 #[test]
-fn custom_windows_cursor_uses_the_fallback_arrows_tip() {
+fn custom_cursor_drops_its_recorded_hotspot() {
   let custom = Appearance {
     hotspot_x: 13.0,
     hotspot_y: 13.0,
     ..appearance(0, CursorStyle::Custom)
   };
+  // The stand-in arrow carries its own hotspot as its design origin, so the
+  // recorded one must not displace it (`custom_gpu_artwork`, raster.rs).
   assert_eq!(output_hotspot(custom), (0.0, 0.0));
 }
 

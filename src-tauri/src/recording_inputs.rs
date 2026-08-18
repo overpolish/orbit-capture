@@ -72,6 +72,16 @@ fn enumerate_microphones() -> Result<Vec<InputDeviceDetails>, String> {
   Ok(result)
 }
 
+/// Whether the camera the user selected earlier still enumerates. Used at
+/// recording start to drop a vanished overlay camera instead of failing the
+/// whole recording; enumeration errors count as unavailable so the recording
+/// still starts without it.
+pub(crate) fn camera_is_available(device_id: &str) -> bool {
+  query(ApiBackend::Auto)
+    .map(|cameras| cameras.iter().any(|camera| camera_id(camera) == device_id))
+    .unwrap_or(false)
+}
+
 pub(crate) fn resolve_microphone(
   device_id: Option<&str>,
 ) -> Result<(Device, StreamConfig, SampleFormat), String> {

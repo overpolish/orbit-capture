@@ -92,26 +92,24 @@ struct OutputCursor {
 }
 
 fn output_hotspot(appearance: Appearance) -> (f64, f64) {
-  #[cfg(target_os = "windows")]
-  {
-    if appearance.style == CursorStyle::Custom {
-      // The sidecar does not carry custom cursor pixels yet, so custom
-      // artwork falls back to the native arrow and must use its visible tip.
-      (0.0, 0.0)
-    } else {
-      (appearance.hotspot_x, appearance.hotspot_y)
-    }
+  if appearance.style == CursorStyle::Custom {
+    // The sidecar does not carry custom cursor pixels yet, so a custom cursor
+    // stands in the system arrow: the recorded hotspot addresses artwork that
+    // is not being drawn and is dropped here. The stand-in is anchored by its
+    // own hotspot instead, which travels with the artwork rather than the
+    // cursor frame (`custom_gpu_artwork`'s `origin`, cursor_effects/raster.rs),
+    // exactly as the Windows compositor anchors its atlas entries by
+    // `native_cursor_hotspots` (preview_platform/surface_windows
+    // /compositor.rs:118). A zero here puts that origin at the recorded
+    // position.
+    return (0.0, 0.0);
   }
-  #[cfg(not(target_os = "windows"))]
-  {
-    (appearance.hotspot_x, appearance.hotspot_y)
-  }
+  (appearance.hotspot_x, appearance.hotspot_y)
 }
 
 /// Small, frame-local cursor description consumed by native GPU compositors.
 /// Evaluating the event timeline is CPU work over a few numbers; cursor pixels,
 /// animation, blur and blending remain entirely in the graphics shader.
-#[cfg(target_os = "windows")]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GpuCursor {
   pub blur_delta_x: f32,
@@ -477,7 +475,9 @@ impl CursorCompositor {
     })
   }
 
-  #[cfg(target_os = "windows")]
+  /// Evaluates the event timeline for one output frame. The result carries no
+  /// pixels: the native compositor scales, rotates, blurs and blends the
+  /// style's artwork from these few numbers.
   pub(in crate::exports) fn gpu_cursor(
     &self,
     position_ms: u64,
@@ -490,6 +490,9 @@ impl CursorCompositor {
       source_size.1 as usize,
       settings,
     )?;
+    // Windows composites from an eight-slice atlas of the standard system
+    // cursors; every other platform indexes the shared artwork order.
+    #[cfg(target_os = "windows")]
     let artwork = match output.cursor.appearance.style {
       CursorStyle::IBeam => 1,
       CursorStyle::VerticalIBeam => 2,
@@ -500,6 +503,8 @@ impl CursorCompositor {
       CursorStyle::NotAllowed => 7,
       _ => 0,
     };
+    #[cfg(not(target_os = "windows"))]
+    let artwork = raster::artwork_index(output.cursor.appearance.style);
     Some(GpuCursor {
       blur_delta_x: if settings.motion_blur {
         output.delta_x as f32
@@ -673,4 +678,13 @@ impl CursorCompositor {
 
 pub(crate) fn initialize_artwork() {
   raster::initialize_system_artwork();
+}
+
+#[cfg(target_os = "macos")]
+pub(in crate::exports) use raster::GpuArtwork;
+
+/// The style-indexed artwork the native compositor uploads once per export.
+#[cfg(target_os = "macos")]
+pub(in crate::exports) fn gpu_artworks() -> Vec<GpuArtwork> {
+  raster::gpu_artworks()
 }

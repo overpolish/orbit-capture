@@ -9,8 +9,7 @@ use std::{
 
 use super::*;
 
-const LAYER_PROGRESS_PERCENT: u64 = 10;
-const GPU_PROGRESS_PERCENT: u64 = 85;
+const GPU_PROGRESS_PERCENT: u64 = 95;
 static GPU_EXPORT_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 
 #[repr(C)]
@@ -69,17 +68,51 @@ unsafe extern "C" fn gpu_should_cancel(context: *mut c_void) -> bool {
 unsafe extern "C" fn gpu_progress(context: *mut c_void, position_ms: u64) {
   let callbacks = unsafe { &mut *(context.cast::<GpuCallbacks<'_>>()) };
   let position_ms = position_ms.min(callbacks.duration_ms);
-  (callbacks.on_progress)(
-    callbacks.duration_ms.saturating_mul(LAYER_PROGRESS_PERCENT) / 100
-      + position_ms.saturating_mul(GPU_PROGRESS_PERCENT) / 100,
-  );
+  (callbacks.on_progress)(position_ms.saturating_mul(GPU_PROGRESS_PERCENT) / 100);
+}
+
+/// Repr(C) mirror of [`GpuCursor`] for one output frame. Positions are canvas
+/// pixels; the shader turns these numbers into the drawn cursor.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct GpuCursorFrame {
+  blur_delta_x: f32,
+  blur_delta_y: f32,
+  height: f32,
+  hotspot_x: f32,
+  hotspot_y: f32,
+  rotation_radians: f32,
+  scale: f32,
+  width: f32,
+  x: f32,
+  y: f32,
+  style: u32,
+  clip_at_video_edge: u32,
+  visible: u32,
+}
+
+/// One style's artwork bitmap. The pointer stays owned by the caller and is
+/// only read while `screenwide_gpu_composite_cursor` uploads its textures.
+#[repr(C)]
+struct GpuCursorArtwork {
+  pixels: *const u8,
+  width: u32,
+  height: u32,
+  design_width: f32,
+  design_height: f32,
+  origin_x: f32,
+  origin_y: f32,
+  use_design: u32,
+  clip_local_box: u32,
 }
 
 unsafe extern "C" {
   fn screenwide_gpu_composite_cursor(
     screen_path: *const c_char,
-    cursor_path: *const c_char,
-    commands_path: *const c_char,
+    cursors: *const GpuCursorFrame,
+    cursor_count: u32,
+    artworks: *const GpuCursorArtwork,
+    artwork_count: u32,
     camera_path: *const c_char,
     camera_overlay: *const GpuCameraOverlay,
     canvas: *const GpuCanvas,
@@ -111,15 +144,71 @@ fn gpu_video_path() -> PathBuf {
   ))
 }
 
+/// Flattens the evaluated timeline into the frame array the compositor
+/// indexes. The vertical fallback artwork carries its quarter turn in the
+/// rotation, exactly as `CursorRaster::new` applies it (raster.rs:57-65).
+fn cursor_frames(timeline: &native_macos::CursorTimeline) -> Vec<GpuCursorFrame> {
+  timeline
+    .frames
+    .iter()
+    .map(|cursor| {
+      cursor.map_or_else(GpuCursorFrame::default, |cursor| {
+        let vertical = timeline
+          .artworks
+          .get(cursor.style as usize)
+          .is_some_and(|artwork| artwork.vertical);
+        GpuCursorFrame {
+          blur_delta_x: cursor.blur_delta_x,
+          blur_delta_y: cursor.blur_delta_y,
+          height: cursor.height,
+          hotspot_x: cursor.hotspot_x,
+          hotspot_y: cursor.hotspot_y,
+          rotation_radians: cursor.rotation_radians
+            + if vertical {
+              std::f32::consts::FRAC_PI_2
+            } else {
+              0.0
+            },
+          scale: cursor.scale,
+          width: cursor.width,
+          x: cursor.x,
+          y: cursor.y,
+          style: cursor.style,
+          clip_at_video_edge: u32::from(cursor.clip_at_video_edge),
+          visible: 1,
+        }
+      })
+    })
+    .collect()
+}
+
+fn cursor_artworks(timeline: &native_macos::CursorTimeline) -> Vec<GpuCursorArtwork> {
+  timeline
+    .artworks
+    .iter()
+    .map(|artwork| GpuCursorArtwork {
+      pixels: artwork.pixels.as_ptr(),
+      width: artwork.width,
+      height: artwork.height,
+      design_width: artwork.design_width,
+      design_height: artwork.design_height,
+      origin_x: artwork.origin_x,
+      origin_y: artwork.origin_y,
+      use_design: u32::from(artwork.use_design),
+      clip_local_box: u32::from(artwork.clip_local_box),
+    })
+    .collect()
+}
+
 fn render_gpu_video(
   request: &mut CursorExportRequest<'_>,
-  layer: Option<&native_macos::CursorLayer>,
+  timeline: Option<&native_macos::CursorTimeline>,
   path: &Path,
 ) -> Result<ExportRunResult, String> {
   crate::screenshots::validate_output_settings(request.width, request.height, request.output)?;
   let screen = c_path(request.screen)?;
-  let cursor = layer.map(|layer| c_path(&layer.movie)).transpose()?;
-  let commands = layer.map(|layer| c_path(&layer.commands)).transpose()?;
+  let cursors = timeline.map(cursor_frames).unwrap_or_default();
+  let artworks = timeline.map(cursor_artworks).unwrap_or_default();
   let camera = request.camera.map(|(path, _)| c_path(path)).transpose()?;
   let camera_overlay = request
     .camera
@@ -216,12 +305,10 @@ fn render_gpu_video(
   let result = unsafe {
     screenwide_gpu_composite_cursor(
       screen.as_ptr(),
-      cursor
-        .as_ref()
-        .map_or(std::ptr::null(), |path| path.as_ptr()),
-      commands
-        .as_ref()
-        .map_or(std::ptr::null(), |path| path.as_ptr()),
+      cursors.as_ptr(),
+      cursors.len() as u32,
+      artworks.as_ptr(),
+      artworks.len() as u32,
       camera
         .as_ref()
         .map_or(std::ptr::null(), |path| path.as_ptr()),
@@ -312,13 +399,10 @@ fn mux_gpu_video_args(
 }
 
 fn export_gpu(mut request: CursorExportRequest<'_>) -> Result<ExportRunResult, String> {
-  let (layer_result, layer) = native_macos::render(&mut request)?;
-  if !matches!(layer_result, ExportRunResult::Completed) {
-    return Ok(layer_result);
-  }
+  let timeline = native_macos::evaluate(&request)?;
   let result = (|| {
     let video = gpu_video_path();
-    let video_result = render_gpu_video(&mut request, layer.as_ref(), &video)?;
+    let video_result = render_gpu_video(&mut request, timeline.as_ref(), &video)?;
     if !matches!(video_result, ExportRunResult::Completed) {
       let _ = std::fs::remove_file(&video);
       return Ok(video_result);
@@ -328,10 +412,9 @@ fn export_gpu(mut request: CursorExportRequest<'_>) -> Result<ExportRunResult, S
     let duration_ms = request.duration_ms;
     let on_progress = &mut request.on_progress;
     let mut final_progress = |processed_ms: u64| {
-      let remaining = 100 - LAYER_PROGRESS_PERCENT - GPU_PROGRESS_PERCENT;
       on_progress(
-        duration_ms.saturating_mul(LAYER_PROGRESS_PERCENT + GPU_PROGRESS_PERCENT) / 100
-          + processed_ms.saturating_mul(remaining) / 100,
+        duration_ms.saturating_mul(GPU_PROGRESS_PERCENT) / 100
+          + processed_ms.saturating_mul(100 - GPU_PROGRESS_PERCENT) / 100,
       );
     };
     let result = media_preview::run_export(
@@ -344,9 +427,6 @@ fn export_gpu(mut request: CursorExportRequest<'_>) -> Result<ExportRunResult, S
     let _ = std::fs::remove_file(&video);
     result
   })();
-  if let Some(layer) = layer {
-    layer.remove();
-  }
   if request.cancelled.load(Ordering::Acquire) {
     return Ok(ExportRunResult::Cancelled);
   }

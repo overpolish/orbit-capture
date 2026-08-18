@@ -50,6 +50,7 @@ export function useScreenshotPreviewSurface({
   artifactId,
   canvasRef,
   interactionOutput,
+  isEditorSuspended = false,
   isEnabled,
   onSelectionChange,
   onSelectionGesture,
@@ -65,6 +66,15 @@ export function useScreenshotPreviewSurface({
   canvasRef: RefObject<HTMLElement | null>;
   isEnabled: boolean;
   interactionOutput?: ScreenshotWorkspaceOutputSettings;
+  /**
+   * Temporarily hands input back to the webview without giving up the native
+   * composition: the interaction view sits above the webview, so while it is
+   * showing, DOM controls painted over the viewport (the save overlay's Cancel
+   * button) never see the click. The next layout turns the native editor off,
+   * and the one after the suspension clears turns it back on - along with the
+   * workspace zoom, which the native side resets while the editor is inactive.
+   */
+  isEditorSuspended?: boolean;
   onSelectionChange?: (paneIndex: number | null) => void;
   onSelectionGesture?: (event: ScreenshotSelectionGestureEvent) => void;
   onZoomChange?: (zoomPercent: number) => void;
@@ -108,6 +118,8 @@ export function useScreenshotPreviewSurface({
   selectionRef.current = selection;
   const selectionTargetsRef = useRef(selectionTargets);
   selectionTargetsRef.current = selectionTargets;
+  const editorSuspendedRef = useRef(isEditorSuspended);
+  const pendingZoomRestoreRef = useRef(false);
   const measureRef = useRef<() => void>(() => undefined);
   const outputKey = JSON.stringify(output);
 
@@ -246,6 +258,7 @@ export function useScreenshotPreviewSurface({
   useEffect(() => {
     if (
       !isEnabled ||
+      isEditorSuspended ||
       !startedRef.current ||
       zoomPercent === undefined ||
       sessionIdRef.current === 0
@@ -262,13 +275,22 @@ export function useScreenshotPreviewSurface({
     void setScreenshotPreviewZoom(sessionIdRef.current, zoomPercent).catch(
       () => undefined,
     );
-  }, [isEnabled, zoomPercent]);
+  }, [isEditorSuspended, isEnabled, zoomPercent]);
 
   useEffect(() => {
     if (!isEnabled) return;
     let disposed = false;
     let inFlight = false;
     let lastLayout = "";
+    const nativeEditorActive = !isEditorSuspended;
+    // The native editor keeps no transform while it is inactive, so the zoom
+    // React still shows has to be pushed again once this layout has turned the
+    // editor back on. Riding the layout's completion rather than a second
+    // effect keeps the two in order: the zoom command is dropped outright if
+    // it reaches the surface first.
+    if (nativeEditorActive && editorSuspendedRef.current && startedRef.current)
+      pendingZoomRestoreRef.current = true;
+    editorSuspendedRef.current = isEditorSuspended;
     let pendingLayout:
       Parameters<typeof layoutScreenshotPreviewSurface>[0] | null = null;
     const flush = () => {
@@ -279,6 +301,15 @@ export function useScreenshotPreviewSurface({
       void layoutScreenshotPreviewSurface(next)
         .catch(() => undefined)
         .finally(() => {
+          if (!disposed && nativeEditorActive && pendingZoomRestoreRef.current) {
+            pendingZoomRestoreRef.current = false;
+            const zoom = zoomPercentRef.current;
+            if (zoom !== undefined) {
+              void setScreenshotPreviewZoom(sessionIdRef.current, zoom).catch(
+                () => undefined,
+              );
+            }
+          }
           inFlight = false;
           flush();
         });
@@ -344,6 +375,7 @@ export function useScreenshotPreviewSurface({
           const nextLayout = JSON.stringify({
             backdrop,
             interactionOutput: interactionOutputRef.current,
+            nativeEditor: nativeEditorActive,
             output: currentOutput,
             pane,
             scale,
@@ -356,6 +388,7 @@ export function useScreenshotPreviewSurface({
             pendingLayout = {
               backdrop,
               interactionOutput: interactionOutputRef.current ?? currentOutput,
+              nativeEditor: nativeEditorActive,
               output: currentOutput,
               panes: Array.from(
                 { length: paneCountRef.current },
@@ -385,7 +418,7 @@ export function useScreenshotPreviewSurface({
       observer.disconnect();
       measureRef.current = () => undefined;
     };
-  }, [canvasRef, isEnabled]);
+  }, [canvasRef, isEditorSuspended, isEnabled]);
 
   useEffect(() => {
     measureRef.current();

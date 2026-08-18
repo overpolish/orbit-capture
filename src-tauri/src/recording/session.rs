@@ -18,6 +18,10 @@ use super::{
 };
 
 const RECORDING_ERROR_EVENT: &str = "recording://error";
+/// Emitted when a recording starts without one or more selected inputs whose
+/// devices were no longer available; the bar tells the user instead of the
+/// start failing outright.
+const RECORDING_INPUTS_SKIPPED_EVENT: &str = "recording://inputs-skipped";
 /// The folder working files are written to, under the app's data directory.
 const RECORDINGS_DIRECTORY: &str = "Recordings";
 /// How long a start may go without producing a frame before it is called a
@@ -53,6 +57,45 @@ pub(super) fn emit_error(app: &AppHandle, phase: &'static str, message: &str) {
       message: message.to_owned(),
     },
   );
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordingInputsSkippedPayload {
+  inputs: Vec<&'static str>,
+}
+
+/// Drops selected secondary inputs whose devices no longer exist, so a stale
+/// selection degrades the recording instead of failing the start. The primary
+/// source is never dropped: a camera recording without its camera must still
+/// fail loudly, and an audio recording keeps its sole input so the resolve
+/// error names what actually went wrong.
+pub(super) fn drop_unavailable_inputs(
+  options: &mut StartRecordingOptions,
+) -> Vec<&'static str> {
+  let mut skipped = Vec::new();
+  if let Some(microphone_id) = options.microphone_id.clone() {
+    let sole_audio_source = options.mode == RecordingMode::Audio && !options.system_audio;
+    if !sole_audio_source
+      && crate::recording_inputs::resolve_microphone(Some(&microphone_id)).is_err()
+    {
+      options.microphone_id = None;
+      skipped.push("microphone");
+    }
+  }
+  if options.mode != RecordingMode::Camera {
+    if let Some(camera_id) = options.camera_id.clone() {
+      if !crate::recording_inputs::camera_is_available(&camera_id) {
+        options.camera_id = None;
+        options.camera_width = None;
+        options.camera_height = None;
+        options.camera_fps = None;
+        options.camera_flipped = false;
+        skipped.push("camera");
+      }
+    }
+  }
+  skipped
 }
 
 pub(super) fn require_status(
@@ -156,6 +199,13 @@ pub(super) fn begin_capture(
   app: &AppHandle,
   options: &StartRecordingOptions,
 ) -> Result<(CaptureHandles, Receiver<Result<(), String>>), String> {
+  // A device that vanished since it was selected must not sink the whole
+  // start: drop it, record what was dropped, and tell the user below once the
+  // capture is actually running.
+  let mut options = options.clone();
+  let mut skipped_inputs = drop_unavailable_inputs(&mut options);
+  let system_audio_skipped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+  let options = &options;
   let camera_primary = options.mode == RecordingMode::Camera;
   let camera = options
     .camera_id
@@ -240,6 +290,7 @@ pub(super) fn begin_capture(
       enabled: options.system_audio,
       process_ids: options.system_audio_process_ids.clone(),
     },
+    system_audio_skipped: Arc::clone(&system_audio_skipped),
   })
   .inspect_err(|_| {
     // A start that never got going leaves an empty container behind.
@@ -271,6 +322,27 @@ pub(super) fn begin_capture(
       return Err("The capture source has no cursor coordinate space".to_owned());
     }
   };
+
+  if system_audio_skipped.load(std::sync::atomic::Ordering::Acquire) {
+    skipped_inputs.push("systemAudio");
+    // The dock was configured before startup discovered the drop; align its
+    // layout with what is actually being recorded.
+    state(app).monitor.configure(
+      false,
+      options.microphone_id.is_some(),
+      options.camera_id.is_some(),
+    );
+  }
+  if !skipped_inputs.is_empty() {
+    // The capture is up; the dock layout already reflects the sanitized
+    // inputs via `monitor.configure` above. This tells the user why.
+    let _ = app.emit(
+      RECORDING_INPUTS_SKIPPED_EVENT,
+      RecordingInputsSkippedPayload {
+        inputs: skipped_inputs,
+      },
+    );
+  }
 
   Ok((
     CaptureHandles {

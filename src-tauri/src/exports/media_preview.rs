@@ -37,8 +37,6 @@ pub use audio::prepare;
 pub(in crate::exports) use bake::bake_geometry;
 #[cfg(target_os = "windows")]
 pub(in crate::exports) use bake::BakeGeometry;
-#[cfg(target_os = "macos")]
-pub(in crate::exports) use encode::remux_error;
 pub use encode::{
   camera_recording_exporter, remuxer, selected_audio_exporter, selected_recording_exporter, Remux,
   SelectedRecordingExport,

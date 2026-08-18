@@ -197,6 +197,7 @@ export function useRecordingPreviewSurface({
   bakeCamera,
   cameraCanvasRef,
   cameraOverlay,
+  isEditorSuspended = false,
   isEnabled,
   isPlaying = false,
   nativeEditorOwnsLayout = false,
@@ -225,6 +226,16 @@ export function useRecordingPreviewSurface({
   screenCanvasRef: RefObject<HTMLCanvasElement | null>;
   sessionIdRef: RefObject<number>;
   startedRef: RefObject<boolean>;
+  /**
+   * Temporarily hands input back to the webview without giving up ownership
+   * of the layout: the native interaction view sits above the webview, so
+   * while it is showing, DOM controls painted over the viewport (the save
+   * overlay's Cancel button) never see the click. The next layout turns the
+   * native editor off, and the one after the suspension clears turns it back
+   * on - along with the workspace zoom, which the native side resets while
+   * the editor is inactive.
+   */
+  isEditorSuspended?: boolean;
   isPlaying?: boolean;
   nativeEditorOwnsLayout?: boolean;
   onSelectionChange?: (paneIndex: number | null) => void;
@@ -261,6 +272,8 @@ export function useRecordingPreviewSurface({
   const onSelectionGestureRef = useRef(onSelectionGesture);
   onSelectionGestureRef.current = onSelectionGesture;
   const selectionGestureActiveRef = useRef(false);
+  const editorSuspendedRef = useRef(isEditorSuspended);
+  const pendingZoomRestoreRef = useRef(false);
   const layoutRequestIdRef = useRef(0);
   const measureRef = useRef<() => void>(() => undefined);
   const nativeZoomEchoRef = useRef<number | undefined>(undefined);
@@ -300,6 +313,7 @@ export function useRecordingPreviewSurface({
     if (
       !isEnabled ||
       !nativeEditorOwnsLayout ||
+      isEditorSuspended ||
       zoomPercent === undefined ||
       !startedRef.current
     )
@@ -315,6 +329,7 @@ export function useRecordingPreviewSurface({
       },
     );
   }, [
+    isEditorSuspended,
     isEnabled,
     nativeEditorOwnsLayout,
     onError,
@@ -421,6 +436,15 @@ export function useRecordingPreviewSurface({
     let disposed = false;
     let inFlight = false;
     let lastLayout = "";
+    const nativeEditorActive = nativeEditorOwnsLayout && !isEditorSuspended;
+    // The native editor keeps no transform while it is inactive, so the zoom
+    // React still shows has to be pushed again once this layout has turned the
+    // editor back on. Riding the layout's completion rather than a second
+    // effect keeps the two in order: the zoom command is dropped outright if
+    // it reaches the surface first.
+    if (nativeEditorActive && editorSuspendedRef.current && startedRef.current)
+      pendingZoomRestoreRef.current = true;
+    editorSuspendedRef.current = isEditorSuspended;
     let pendingLayout: {
       acknowledgeTransform: boolean;
       value: Parameters<typeof layoutRecordingPreviewSurface>[0];
@@ -470,6 +494,17 @@ export function useRecordingPreviewSurface({
               new Event("screenwide-preview-transform-committed"),
             );
           }
+          if (!disposed && nativeEditorActive && pendingZoomRestoreRef.current) {
+            pendingZoomRestoreRef.current = false;
+            const zoom = zoomPercentRef.current;
+            if (zoom !== undefined) {
+              void setRecordingPreviewZoom(sessionIdRef.current, zoom).catch(
+                (cause: unknown) => {
+                  if (!disposed) onError(String(cause));
+                },
+              );
+            }
+          }
           inFlight = false;
           flush();
         });
@@ -495,7 +530,7 @@ export function useRecordingPreviewSurface({
             {
               backdrop: effectiveBackdrop(),
               ...compositionRef.current,
-              nativeEditor: nativeEditorOwnsLayout,
+              nativeEditor: nativeEditorActive,
               panes: [],
               requestId: 0,
               scale: window.devicePixelRatio || 1,
@@ -575,7 +610,7 @@ export function useRecordingPreviewSurface({
             {
               backdrop: effectiveBackdrop(),
               ...compositionRef.current,
-              nativeEditor: nativeEditorOwnsLayout,
+              nativeEditor: nativeEditorActive,
               panes,
               requestId: 0,
               scale,
@@ -693,6 +728,7 @@ export function useRecordingPreviewSurface({
     };
   }, [
     cameraCanvasRef,
+    isEditorSuspended,
     isEnabled,
     nativeEditorOwnsLayout,
     nativeLayoutHasPanes,

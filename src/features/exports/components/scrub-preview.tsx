@@ -34,6 +34,7 @@ export type ScrubPreviewProps = {
   inspector?: ReactNode;
   isPreparingAudio?: boolean;
   isPreparingPreview?: boolean;
+  isSaving?: boolean;
   onCameraOverlayChange?: (settings: CameraOverlaySettings) => void;
   onEnabledTracksChange?: (streamIndices: number[]) => void;
   onEnabledVideoTracksChange?: (tracks: RecordingVideoTrackId[]) => void;

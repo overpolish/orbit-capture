@@ -12,11 +12,18 @@
 typedef bool (*ScreenwideShouldCancel)(void *context);
 typedef void (*ScreenwideProgress)(void *context, uint64_t position_ms);
 
+/// The artwork description the shader needs, without the caller's bitmap
+/// pointer. Slice `style` of the artwork texture array holds the pixels.
 typedef struct {
-  uint64_t frame;
-  int x;
-  int y;
-} ScreenwideCursorPosition;
+  uint32_t width;
+  uint32_t height;
+  float design_width;
+  float design_height;
+  float origin_x;
+  float origin_y;
+  uint32_t use_design;
+  uint32_t clip_local_box;
+} ScreenwideCursorArtworkUniforms;
 
 typedef struct {
   int32_t x;
@@ -31,6 +38,8 @@ typedef struct {
   uint32_t crop_height;
   uint32_t crop_radius;
   uint32_t clip_at_video_edge;
+  ScreenwideGpuCursor cursor;
+  ScreenwideCursorArtworkUniforms artwork;
 } ScreenwideOverlayUniforms;
 
 typedef struct {
@@ -66,6 +75,33 @@ static NSString *const shader_source = @R"METAL(
 #include <metal_stdlib>
 using namespace metal;
 
+struct GpuCursor {
+  float blur_delta_x;
+  float blur_delta_y;
+  float height;
+  float hotspot_x;
+  float hotspot_y;
+  float rotation_radians;
+  float scale;
+  float width;
+  float x;
+  float y;
+  uint style;
+  uint clip_at_video_edge;
+  uint visible;
+};
+
+struct CursorArtwork {
+  uint width;
+  uint height;
+  float design_width;
+  float design_height;
+  float origin_x;
+  float origin_y;
+  uint use_design;
+  uint clip_local_box;
+};
+
 struct OverlayUniforms {
   int x;
   int y;
@@ -79,6 +115,8 @@ struct OverlayUniforms {
   uint crop_height;
   uint crop_radius;
   uint clip_at_video_edge;
+  struct GpuCursor cursor;
+  struct CursorArtwork artwork;
 };
 
 struct CameraUniforms {
@@ -1041,7 +1079,134 @@ kernel void overlay_camera_chroma(
   chroma.write(float4(mix(existing, camera_uv, alpha), 0.0, 1.0), gid);
 }
 
-kernel void overlay_luma(texture2d<float, access::read> cursor [[texture(0)]],
+/// Premultiplied bilinear artwork lookup. Ports `sample_image`
+/// (cursor_effects/raster.rs:152-188), which addresses texel `i` at
+/// coordinate `i` and interpolates colour weighted by alpha so transparent
+/// texels never bleed their colour into the edge.
+static float4 artwork_texel(texture2d_array<float, access::read> images,
+                            uint slice, uint bitmap_width, uint bitmap_height,
+                            float x, float y) {
+  float last_x = float(max(bitmap_width, 1u) - 1u);
+  float last_y = float(max(bitmap_height, 1u) - 1u);
+  x = clamp(x, 0.0, last_x);
+  y = clamp(y, 0.0, last_y);
+  uint x0 = uint(floor(x));
+  uint y0 = uint(floor(y));
+  uint x1 = min(x0 + 1u, uint(last_x));
+  uint y1 = min(y0 + 1u, uint(last_y));
+  float fraction_x = x - float(x0);
+  float fraction_y = y - float(y0);
+  float4 samples[4] = {
+      images.read(uint2(x0, y0), slice), images.read(uint2(x1, y0), slice),
+      images.read(uint2(x0, y1), slice), images.read(uint2(x1, y1), slice)};
+  float weights[4] = {
+      (1.0 - fraction_x) * (1.0 - fraction_y), fraction_x * (1.0 - fraction_y),
+      (1.0 - fraction_x) * fraction_y, fraction_x * fraction_y};
+  float alpha = 0.0;
+  float3 colour = 0.0;
+  for (uint index = 0; index < 4; ++index) {
+    alpha += samples[index].a * weights[index];
+    colour += samples[index].rgb * samples[index].a * weights[index];
+  }
+  if (alpha <= 0.0) return 0.0;
+  return float4(colour / alpha, alpha);
+}
+
+/// One artwork sample in cursor space. Ports `CursorRaster::sample`
+/// (cursor_effects/raster.rs:80-118): the output point is rotated and scaled
+/// into the recorded cursor box, then mapped onto the artwork. Vector
+/// fallback artwork keeps its design aspect inside that box instead.
+static float4 cursor_artwork_sample(
+    texture2d_array<float, access::read> images, constant OverlayUniforms &u,
+    float2 point, float2 anchor) {
+  float2 delta = point - anchor;
+  float cosine = cos(u.cursor.rotation_radians);
+  float sine = sin(u.cursor.rotation_radians);
+  float2 local =
+      float2(cosine * delta.x + sine * delta.y,
+             -sine * delta.x + cosine * delta.y) / max(u.cursor.scale, 0.0001) +
+      float2(u.cursor.hotspot_x, u.cursor.hotspot_y);
+  float2 box = float2(u.cursor.width, u.cursor.height);
+  if (u.artwork.clip_local_box != 0 &&
+      (any(local < 0.0) || any(local >= box)))
+    return 0.0;
+  float2 bitmap = float2(u.artwork.width, u.artwork.height);
+  if (u.artwork.use_design == 0)
+    return artwork_texel(images, u.cursor.style, u.artwork.width,
+                         u.artwork.height, local.x / max(box.x, 0.0001) * bitmap.x,
+                         local.y / max(box.y, 0.0001) * bitmap.y);
+  float2 design_size = float2(u.artwork.design_width, u.artwork.design_height);
+  float artwork_scale =
+      max(min(box.x / design_size.x, box.y / design_size.y), 0.01);
+  float2 design = local / artwork_scale +
+                  float2(u.artwork.origin_x, u.artwork.origin_y);
+  if (any(design < 0.0) || any(design >= design_size)) return 0.0;
+  return artwork_texel(images, u.cursor.style, u.artwork.width, u.artwork.height,
+                       design.x / design_size.x * bitmap.x,
+                       design.y / design_size.y * bitmap.y);
+}
+
+/// Ports `CursorRaster::sample_for_draw` (cursor_effects/raster.rs:120-145):
+/// system artwork already carries an antialiased alpha edge, so only the
+/// hard-edged vector fallback is supersampled over the pixel's 4x4 box.
+static float4 cursor_draw_sample(texture2d_array<float, access::read> images,
+                                 constant OverlayUniforms &u, float2 point,
+                                 float2 anchor) {
+  if (u.artwork.use_design == 0)
+    return cursor_artwork_sample(images, u, point, anchor);
+  const float offsets[4] = {-0.375, -0.125, 0.125, 0.375};
+  float alpha = 0.0;
+  float3 colour = 0.0;
+  for (uint y = 0; y < 4; ++y) {
+    for (uint x = 0; x < 4; ++x) {
+      float4 sample = cursor_artwork_sample(
+          images, u, point + float2(offsets[x], offsets[y]), anchor);
+      alpha += sample.a;
+      colour += sample.rgb * sample.a;
+    }
+  }
+  if (alpha <= 0.0) return 0.0;
+  return float4(colour / alpha, alpha / 16.0);
+}
+
+/// The drawn cursor at one output pixel. Ports `CursorCompositor::draw_output`
+/// (cursor_effects.rs:602-643) and `draw_blurred`
+/// (cursor_effects/raster.rs:239-292): exposure taps are Gaussian weighted
+/// along the frame's travel, spaced no more than two output pixels apart.
+static float4 cursor_pixel(texture2d_array<float, access::read> images,
+                           constant OverlayUniforms &u, float2 point) {
+  if (u.cursor.visible == 0 || u.artwork.width == 0 || u.artwork.height == 0)
+    return 0.0;
+  float2 anchor = float2(u.cursor.x, u.cursor.y);
+  float2 delta = float2(u.cursor.blur_delta_x, u.cursor.blur_delta_y);
+  float travel = length(delta);
+  // MAX_BLUR_DISTANCE (cursor_effects.rs:36). The settings gate lives on the
+  // CPU: a disabled motion blur arrives here as a zero delta.
+  float distance = min(travel, 80.0);
+  if (!(distance > 1.25 && travel > 0.0))
+    return cursor_draw_sample(images, u, point, anchor);
+  float2 direction = delta / travel;
+  // motion_blur_sample_count (cursor_effects.rs:323-325).
+  uint count = uint(clamp(ceil(distance / 2.0) + 1.0, 8.0, 48.0));
+  float total_weight = 0.0;
+  float alpha = 0.0;
+  float3 colour = 0.0;
+  for (uint index = 0; index < count; ++index) {
+    float progress = float(index) / float(count - 1);
+    float centered = (progress - 0.5) / 0.34;
+    float weight = exp(-0.5 * centered * centered);
+    float4 sample = cursor_artwork_sample(
+        images, u, point, anchor + direction * ((progress - 0.8) * distance));
+    alpha += sample.a * weight;
+    colour += sample.rgb * sample.a * weight;
+    total_weight += weight;
+  }
+  alpha /= total_weight;
+  if (alpha <= 0.0) return 0.0;
+  return float4(colour / (total_weight * alpha), alpha);
+}
+
+kernel void overlay_luma(texture2d_array<float, access::read> cursor [[texture(0)]],
                          texture2d<float, access::read_write> luma [[texture(1)]],
                          constant OverlayUniforms &u [[buffer(0)]],
                          uint2 gid [[thread_position_in_grid]]) {
@@ -1055,7 +1220,7 @@ kernel void overlay_luma(texture2d<float, access::read> cursor [[texture(0)]],
     if (any(crop_point < 0.0) || any(crop_point >= crop_size) ||
         !rounded_pixel_visible(crop_point, crop_size, float(u.crop_radius))) return;
   }
-  float4 rgba = cursor.read(gid);
+  float4 rgba = cursor_pixel(cursor, u, float2(output) + 0.5);
   if (rgba.a <= 0.0001) return;
   float3 rgb = rgba.rgb;
   float cursor_y = 16.0 / 255.0 + dot(rgb, float3(0.182586, 0.614231, 0.062007));
@@ -1063,7 +1228,7 @@ kernel void overlay_luma(texture2d<float, access::read> cursor [[texture(0)]],
   luma.write(mix(existing, cursor_y, rgba.a), uint2(output));
 }
 
-kernel void overlay_chroma(texture2d<float, access::read> cursor [[texture(0)]],
+kernel void overlay_chroma(texture2d_array<float, access::read> cursor [[texture(0)]],
                            texture2d<float, access::read_write> chroma [[texture(1)]],
                            constant OverlayUniforms &u [[buffer(0)]],
                            uint2 gid [[thread_position_in_grid]]) {
@@ -1079,13 +1244,14 @@ kernel void overlay_chroma(texture2d<float, access::read> cursor [[texture(0)]],
     if (any(crop_point < 0.0) || any(crop_point >= crop_size) ||
         !rounded_pixel_visible(crop_point, crop_size, float(u.crop_radius))) return;
   }
+  // The chroma plane is half resolution, so one thread averages the four
+  // luma-resolution cursor pixels it covers.
   float3 rgb_sum = 0.0;
   float alpha_sum = 0.0;
   for (uint y = 0; y < 2; ++y) {
     for (uint x = 0; x < 2; ++x) {
-      uint2 point = min(cursor_origin + uint2(x, y),
-                        uint2(u.cursor_width - 1, u.cursor_height - 1));
-      float4 rgba = cursor.read(point);
+      float4 rgba =
+          cursor_pixel(cursor, u, float2(output_pixel + int2(x, y)) + 0.5);
       rgb_sum += rgba.rgb * rgba.a;
       alpha_sum += rgba.a;
     }
@@ -1127,45 +1293,146 @@ static NSArray<AVAssetTrack *> *video_tracks(AVURLAsset *asset,
   return tracks;
 }
 
-static NSArray<NSValue *> *read_positions(NSString *path, NSError **error) {
-  NSString *contents = [NSString stringWithContentsOfFile:path
-                                                 encoding:NSUTF8StringEncoding
-                                                    error:error];
-  if (contents == nil)
+/// Uploads one RGBA slice per cursor style. Every slice shares the largest
+/// artwork's dimensions; each style only ever samples its own recorded size.
+static id<MTLTexture> cursor_artwork_texture(
+    id<MTLDevice> device, const ScreenwideCursorArtwork *artworks,
+    uint32_t count) {
+  if (artworks == NULL || count == 0)
     return nil;
-  NSMutableArray<NSValue *> *positions = [NSMutableArray array];
-  [contents enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) {
-    (void)stop;
-    double seconds = 0.0;
-    ScreenwideCursorPosition position = {0, -100000, -100000};
-    if (sscanf(line.UTF8String, "%lf overlay@cursor x %d, overlay@cursor y %d;",
-               &seconds, &position.x, &position.y) == 3) {
-      position.frame = (uint64_t)llround(seconds * 60.0);
-      [positions
-          addObject:[NSValue valueWithBytes:&position
-                                   objCType:@encode(ScreenwideCursorPosition)]];
-    }
-  }];
-  return positions;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  for (uint32_t index = 0; index < count; ++index) {
+    if (artworks[index].pixels == NULL)
+      continue;
+    width = MAX(width, artworks[index].width);
+    height = MAX(height, artworks[index].height);
+  }
+  if (width == 0 || height == 0)
+    return nil;
+  MTLTextureDescriptor *description = [[MTLTextureDescriptor alloc] init];
+  description.textureType = MTLTextureType2DArray;
+  description.pixelFormat = MTLPixelFormatRGBA8Unorm;
+  description.width = width;
+  description.height = height;
+  description.arrayLength = count;
+  description.usage = MTLTextureUsageShaderRead;
+  id<MTLTexture> texture = [device newTextureWithDescriptor:description];
+  if (texture == nil)
+    return nil;
+  for (uint32_t index = 0; index < count; ++index) {
+    const ScreenwideCursorArtwork *artwork = &artworks[index];
+    if (artwork->pixels == NULL || artwork->width == 0 || artwork->height == 0)
+      continue;
+    [texture replaceRegion:MTLRegionMake2D(0, 0, artwork->width, artwork->height)
+               mipmapLevel:0
+                     slice:index
+                 withBytes:artwork->pixels
+               bytesPerRow:(NSUInteger)artwork->width * 4
+             bytesPerImage:(NSUInteger)artwork->width * artwork->height * 4];
+  }
+  return texture;
 }
 
-static ScreenwideCursorPosition position_at(NSArray<NSValue *> *positions,
-                                       NSUInteger *index, uint64_t frame) {
-  while (*index + 1 < positions.count) {
-    ScreenwideCursorPosition next;
-    [positions[*index + 1] getValue:&next size:sizeof(next)];
-    if (next.frame > frame)
-      break;
-    ++*index;
-  }
-  ScreenwideCursorPosition position = {0, -100000, -100000};
-  if (positions.count > 0) {
-    ScreenwideCursorPosition candidate;
-    [positions[*index] getValue:&candidate size:sizeof(candidate)];
-    if (candidate.frame <= frame)
-      position = candidate;
-  }
-  return position;
+/// The cursor for one output frame. Frame `n` of the 60 Hz cursor grid becomes
+/// current the moment its own timestamp is reached, which is exactly how the
+/// retired positions sidecar was indexed against the cursor movie.
+static const ScreenwideGpuCursor *cursor_at(const ScreenwideGpuCursor *cursors,
+                                            uint32_t count, CMTime pts) {
+  if (cursors == NULL || count == 0)
+    return NULL;
+  double seconds = CMTimeGetSeconds(pts);
+  if (!isfinite(seconds) || seconds < 0.0)
+    seconds = 0.0;
+  // Frame timestamps are exact sixtieths, so a presentation time landing on
+  // one must select it rather than its predecessor.
+  int64_t index = (int64_t)floor(seconds * 60.0 + 1e-6);
+  if (index > (int64_t)count - 1)
+    index = (int64_t)count - 1;
+  return &cursors[index];
+}
+
+/// Draws the cursor into the composed frame's planes. The shader owns the
+/// pixels; this only sizes the dispatch to the cursor's bounds
+/// (`raster::bounds`, cursor_effects/raster.rs:294-307).
+static void encode_cursor_overlay(
+    id<MTLCommandBuffer> command, id<MTLComputePipelineState> luma_pipeline,
+    id<MTLComputePipelineState> chroma_pipeline, id<MTLTexture> destination_y,
+    id<MTLTexture> destination_uv, id<MTLTexture> artwork_texture,
+    const ScreenwideGpuCursor *cursor, const ScreenwideCursorArtwork *artworks,
+    uint32_t artwork_count, const ScreenwideCanvas *canvas,
+    uint32_t output_width, uint32_t output_height) {
+  if (cursor == NULL || cursor->visible == 0 || artwork_texture == nil ||
+      cursor->style >= artwork_count)
+    return;
+  const ScreenwideCursorArtwork *artwork = &artworks[cursor->style];
+  if (artwork->pixels == NULL || artwork->width == 0 || artwork->height == 0)
+    return;
+  double travel = hypot(cursor->blur_delta_x, cursor->blur_delta_y);
+  double distance = MIN(travel, 80.0);
+  double blur = distance > 1.25 ? distance : 0.0;
+  double radius = hypot(cursor->width, cursor->height) * cursor->scale;
+  double left = floor(cursor->x - radius - blur);
+  double top = floor(cursor->y - radius - blur);
+  double right = ceil(cursor->x + radius + blur);
+  double bottom = ceil(cursor->y + radius + blur);
+  left = MAX(left, 0.0);
+  top = MAX(top, 0.0);
+  right = MIN(right, (double)output_width);
+  bottom = MIN(bottom, (double)output_height);
+  // A chroma thread owns the four output pixels of one chroma sample, so an
+  // even origin keeps two threads from writing the same chroma pixel.
+  int32_t x = (int32_t)left & ~1;
+  int32_t y = (int32_t)top & ~1;
+  if (right <= (double)x || bottom <= (double)y)
+    return;
+  uint32_t box_width = (uint32_t)(right - (double)x);
+  uint32_t box_height = (uint32_t)(bottom - (double)y);
+  ScreenwideOverlayUniforms uniforms = {
+      x,
+      y,
+      box_width,
+      box_height,
+      output_width,
+      output_height,
+      canvas->crop_x,
+      canvas->crop_y,
+      canvas->crop_width,
+      canvas->crop_height,
+      canvas->radius,
+      // The frame carries the same setting the canvas does; taking it from the
+      // cursor keeps one owner of the effect for the drawn cursor.
+      cursor->clip_at_video_edge,
+      *cursor,
+      {
+          artwork->width,
+          artwork->height,
+          artwork->design_width,
+          artwork->design_height,
+          artwork->origin_x,
+          artwork->origin_y,
+          artwork->use_design,
+          artwork->clip_local_box,
+      },
+  };
+  MTLSize group = MTLSizeMake(16, 16, 1);
+  id<MTLComputeCommandEncoder> compute = [command computeCommandEncoder];
+  [compute setComputePipelineState:luma_pipeline];
+  [compute setTexture:artwork_texture atIndex:0];
+  [compute setTexture:destination_y atIndex:1];
+  [compute setBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+  [compute dispatchThreads:MTLSizeMake(box_width, box_height, 1)
+      threadsPerThreadgroup:group];
+  [compute endEncoding];
+  compute = [command computeCommandEncoder];
+  [compute setComputePipelineState:chroma_pipeline];
+  [compute setTexture:artwork_texture atIndex:0];
+  [compute setTexture:destination_uv atIndex:1];
+  [compute setBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+  [compute dispatchThreads:MTLSizeMake((box_width + 1) / 2,
+                                       (box_height + 1) / 2, 1)
+      threadsPerThreadgroup:group];
+  [compute endEncoding];
 }
 
 static AVAssetReaderTrackOutput *
@@ -1211,8 +1478,133 @@ static id<MTLTexture> texture(CVMetalTextureCacheRef cache,
   return CVMetalTextureGetTexture(*reference);
 }
 
-int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_path,
-                               const char *commands_path,
+/// How many composited frames may sit on the GPU while the loop keeps
+/// decoding. A four second sample of the old fully serial loop (decode ->
+/// composite -> block on the GPU -> poll the encoder -> append) spent 63% of
+/// its time sleeping on `readyForMoreMediaData` and 34% inside
+/// `waitUntilCompleted`, which put a 3494x2260 export at 0.4x realtime: every
+/// stage idled while another worked. Keeping three frames in flight lets the
+/// encoder chew on frame K while the GPU composites K+1 and the reader decodes
+/// K+2, so the two waits overlap with real work instead of each other. Three is
+/// enough to cover both stalls (the deepest measured stall was one frame of
+/// encoder backpressure) without holding many 4K frame buffers - the ring costs
+/// this many pool buffers plus the one being encoded, and the reader's own
+/// sample buffers stay retained just as long.
+#define SCREENWIDE_GPU_INFLIGHT_FRAMES 3
+
+/// One frame whose Metal work is committed but not yet handed to the writer.
+/// Everything the command buffer touches lives here until it completes: the
+/// output pixel buffer, the Metal textures wrapping it and the source, and the
+/// sample buffers those source textures read from.
+@interface ScreenwideInflightFrame : NSObject
+@property(nonatomic, strong) id<MTLCommandBuffer> command;
+@property(nonatomic) CMTime presentation;
+@property(nonatomic) CVPixelBufferRef destination;
+@property(nonatomic) CVMetalTextureRef sourceLuma;
+@property(nonatomic) CVMetalTextureRef sourceChroma;
+@property(nonatomic) CVMetalTextureRef destinationLuma;
+@property(nonatomic) CVMetalTextureRef destinationChroma;
+@property(nonatomic) CVMetalTextureRef cameraTexture;
+@property(nonatomic) CMSampleBufferRef screenSample;
+@property(nonatomic) CMSampleBufferRef cameraSample;
+@end
+
+@implementation ScreenwideInflightFrame
+- (void)dealloc {
+  if (_destination != NULL)
+    CVPixelBufferRelease(_destination);
+  if (_sourceLuma != NULL)
+    CFRelease(_sourceLuma);
+  if (_sourceChroma != NULL)
+    CFRelease(_sourceChroma);
+  if (_destinationLuma != NULL)
+    CFRelease(_destinationLuma);
+  if (_destinationChroma != NULL)
+    CFRelease(_destinationChroma);
+  if (_cameraTexture != NULL)
+    CFRelease(_cameraTexture);
+  if (_screenSample != NULL)
+    CFRelease(_screenSample);
+  if (_cameraSample != NULL)
+    CFRelease(_cameraSample);
+}
+@end
+
+typedef enum {
+  ScreenwideDrainAppended,
+  ScreenwideDrainCancelled,
+  ScreenwideDrainFailed,
+} ScreenwideDrainResult;
+
+/// Waits for the oldest in-flight frame and appends it. The ring pops
+/// oldest-first, so source order is structural; by the time this waits the
+/// command buffer is almost always already done and the encoder has had three
+/// frames worth of head start.
+static ScreenwideDrainResult
+drain_inflight_frame(ScreenwideInflightFrame *frame,
+                     AVAssetWriterInputPixelBufferAdaptor *adaptor,
+                     AVAssetWriterInput *input, AVAssetWriter *writer,
+                     void *context, ScreenwideShouldCancel should_cancel,
+                     ScreenwideProgress progress, BOOL *primed,
+                     float source_frame_rate, NSError **error) {
+  [frame.command waitUntilCompleted];
+  if (frame.command.status == MTLCommandBufferStatusError) {
+    *error = frame.command.error
+                 ?: [NSError errorWithDomain:@"ScreenwideGPUCompositor"
+                                        code:3
+                                    userInfo:@{
+                                      NSLocalizedDescriptionKey :
+                                          @"The GPU encoder rejected a video frame"
+                                    }];
+    return ScreenwideDrainFailed;
+  }
+  // The residual encoder wait. It now overlaps with the newer frames whose
+  // decode and GPU work is already in flight, which is the point of the ring.
+  while (!input.isReadyForMoreMediaData) {
+    if (should_cancel != NULL && should_cancel(context))
+      return ScreenwideDrainCancelled;
+    [NSThread sleepForTimeInterval:0.001];
+  }
+  if (!*primed) {
+    *primed = YES;
+    // Hardware rate control ramps up over its first seconds (the first
+    // keyframe of an export measures at half the steady-state size).
+    // Feeding the first frame repeatedly at negative timestamps warms
+    // the encoder on samples the edit list trims away, so the visible
+    // first frame starts at steady-state quality.
+    int32_t warm_fps = (int32_t)MAX(llround(source_frame_rate), 1);
+    for (int32_t warm = 45; warm >= 1; warm--) {
+      while (!input.isReadyForMoreMediaData)
+        [NSThread sleepForTimeInterval:0.001];
+      if (![adaptor appendPixelBuffer:frame.destination
+                 withPresentationTime:CMTimeMake(-warm, warm_fps)])
+        break;
+    }
+    while (!input.isReadyForMoreMediaData)
+      [NSThread sleepForTimeInterval:0.001];
+  }
+  if (![adaptor appendPixelBuffer:frame.destination
+             withPresentationTime:frame.presentation]) {
+    *error = writer.error
+                 ?: [NSError errorWithDomain:@"ScreenwideGPUCompositor"
+                                        code:3
+                                    userInfo:@{
+                                      NSLocalizedDescriptionKey :
+                                          @"The GPU encoder rejected a video frame"
+                                    }];
+    return ScreenwideDrainFailed;
+  }
+  if (progress != NULL)
+    progress(context,
+             (uint64_t)llround(CMTimeGetSeconds(frame.presentation) * 1000.0));
+  return ScreenwideDrainAppended;
+}
+
+int screenwide_gpu_composite_cursor(const char *screen_path,
+                               const ScreenwideGpuCursor *cursors,
+                               uint32_t cursor_count,
+                               const ScreenwideCursorArtwork *artworks,
+                               uint32_t artwork_count,
                                const char *camera_path,
                                const ScreenwideCameraOverlay *camera_overlay,
                                const ScreenwideCanvas *canvas,
@@ -1229,10 +1621,6 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
     AVURLAsset *screen_asset =
         [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:@(screen_path)]
                             options:nil];
-    AVURLAsset *cursor_asset = cursor_path == NULL
-        ? nil
-        : [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:@(cursor_path)]
-                              options:nil];
     AVURLAsset *camera_asset = camera_path == NULL
                                    ? nil
                                    : [AVURLAsset
@@ -1242,24 +1630,15 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
     AVAssetTrack *screen_track = video_tracks(screen_asset, &error).firstObject;
     if (screen_track == nil && error != nil)
       return fail(error_text, error_capacity, error.localizedDescription);
-    AVAssetTrack *cursor_track = cursor_asset == nil
-        ? nil : video_tracks(cursor_asset, &error).firstObject;
     AVAssetTrack *camera_track =
         camera_asset == nil ? nil : video_tracks(camera_asset, &error).firstObject;
     if (screen_track == nil)
       return fail(error_text, error_capacity,
                   @"The GPU compositor could not find the recording track");
-    if (cursor_asset != nil && cursor_track == nil)
-      return fail(error_text, error_capacity,
-                  @"The GPU compositor could not find the cursor track");
     if (camera_asset != nil && camera_track == nil)
       return fail(error_text, error_capacity,
                   error.localizedDescription ?:
                     @"The GPU compositor could not find the camera track");
-    NSArray<NSValue *> *positions = commands_path == NULL
-        ? @[] : read_positions(@(commands_path), &error);
-    if (commands_path != NULL && positions == nil)
-      return fail(error_text, error_capacity, error.localizedDescription);
 
     AVAssetReader *screen_reader =
         [[AVAssetReader alloc] initWithAsset:screen_asset error:&error];
@@ -1268,13 +1647,6 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
                       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
                       nil, nil, &error);
     if (screen_output == nil)
-      return fail(error_text, error_capacity, error.localizedDescription);
-    AVAssetReader *cursor_reader = cursor_asset == nil
-        ? nil : [[AVAssetReader alloc] initWithAsset:cursor_asset error:&error];
-    AVAssetReaderTrackOutput *cursor_output = cursor_reader == nil
-        ? nil : reader_output(cursor_reader, cursor_track,
-                              kCVPixelFormatType_32BGRA, nil, nil, &error);
-    if (cursor_reader != nil && cursor_output == nil)
       return fail(error_text, error_capacity, error.localizedDescription);
     AVAssetReader *camera_reader =
         camera_asset == nil
@@ -1372,6 +1744,8 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
                     [library newFunctionWithName:@"overlay_screen_chroma"]
                                               error:&error];
     id<MTLCommandQueue> queue = [device newCommandQueue];
+    id<MTLTexture> cursor_artwork =
+        cursor_artwork_texture(device, artworks, artwork_count);
     CVMetalTextureCacheRef texture_cache = NULL;
     CVMetalTextureCacheCreate(kCFAllocatorDefault, NULL, device, NULL,
                               &texture_cache);
@@ -1386,28 +1760,23 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
                       ?: @"The Metal cursor shader could not be created");
 
     if (![screen_reader startReading] ||
-        (cursor_reader != nil && ![cursor_reader startReading]) ||
         (camera_reader != nil && ![camera_reader startReading]) ||
         ![writer startWriting]) {
       CFRelease(texture_cache);
       return fail(error_text, error_capacity,
                   screen_reader.error.localizedDescription ?:
-                    (cursor_reader != nil ? cursor_reader.error.localizedDescription : nil) ?:
                     (camera_reader != nil ? camera_reader.error.localizedDescription : nil) ?:
                     writer.error.localizedDescription ?:
                     @"The GPU export could not be started");
     }
     [writer startSessionAtSourceTime:kCMTimeZero];
     BOOL primed = NO;
-    CMSampleBufferRef cursor_sample = NULL;
-    CMSampleBufferRef next_cursor_sample = cursor_output == nil
-        ? NULL : [cursor_output copyNextSampleBuffer];
+    // Frames whose Metal work is committed but not yet appended, oldest first.
+    NSMutableArray<ScreenwideInflightFrame *> *ring =
+        [NSMutableArray arrayWithCapacity:SCREENWIDE_GPU_INFLIGHT_FRAMES + 1];
     CMSampleBufferRef camera_sample = NULL;
     CMSampleBufferRef next_camera_sample = camera_output == nil
         ? NULL : [camera_output copyNextSampleBuffer];
-    uint64_t cursor_frame = 0;
-    uint64_t next_cursor_frame = 0;
-    NSUInteger position_index = 0;
     bool cancelled = false;
     CMSampleBufferRef screen_sample = NULL;
     while ((screen_sample = [screen_output copyNextSampleBuffer]) != NULL) {
@@ -1418,17 +1787,7 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
           break;
         }
         CMTime pts = CMSampleBufferGetPresentationTimeStamp(screen_sample);
-        while (next_cursor_sample != NULL &&
-               CMTimeCompare(
-                   CMSampleBufferGetPresentationTimeStamp(next_cursor_sample),
-                   pts) <= 0) {
-          if (cursor_sample != NULL)
-            CFRelease(cursor_sample);
-          cursor_sample = next_cursor_sample;
-          next_cursor_sample = [cursor_output copyNextSampleBuffer];
-          cursor_frame = next_cursor_frame;
-          ++next_cursor_frame;
-        }
+        const ScreenwideGpuCursor *cursor = cursor_at(cursors, cursor_count, pts);
         while (next_camera_sample != NULL &&
                CMTimeCompare(
                    CMSampleBufferGetPresentationTimeStamp(next_camera_sample),
@@ -1437,17 +1796,6 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
             CFRelease(camera_sample);
           camera_sample = next_camera_sample;
           next_camera_sample = [camera_output copyNextSampleBuffer];
-        }
-        while (!writer_input.readyForMoreMediaData) {
-          if (should_cancel != NULL && should_cancel(context)) {
-            cancelled = true;
-            break;
-          }
-          [NSThread sleepForTimeInterval:0.001];
-        }
-        if (cancelled) {
-          CFRelease(screen_sample);
-          break;
         }
         CVPixelBufferRef destination = NULL;
         if (CVPixelBufferPoolCreatePixelBuffer(
@@ -1511,53 +1859,11 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
         [canvas_compute dispatchThreads:MTLSizeMake(uv_width, uv_height, 1)
                      threadsPerThreadgroup:canvas_group];
         [canvas_compute endEncoding];
-        CVMetalTextureRef cursor_ref = NULL;
-        if (cursor_sample != NULL) {
-          CVPixelBufferRef cursor_pixels =
-              CMSampleBufferGetImageBuffer(cursor_sample);
-          size_t cursor_width = CVPixelBufferGetWidth(cursor_pixels);
-          size_t cursor_height = CVPixelBufferGetHeight(cursor_pixels);
-          id<MTLTexture> cursor_texture =
-              texture(texture_cache, cursor_pixels, MTLPixelFormatBGRA8Unorm,
-                      cursor_width, cursor_height, 0, &cursor_ref);
-          ScreenwideCursorPosition position =
-              position_at(positions, &position_index, cursor_frame);
-          ScreenwideOverlayUniforms uniforms = {
-              position.x,
-              position.y,
-              (uint32_t)cursor_width,
-              (uint32_t)cursor_height,
-              output_width,
-              output_height,
-              canvas->crop_x,
-              canvas->crop_y,
-              canvas->crop_width,
-              canvas->crop_height,
-              canvas->radius,
-              canvas->clip_cursor_at_video_edge,
-          };
-          MTLSize group = MTLSizeMake(16, 16, 1);
-          id<MTLComputeCommandEncoder> compute =
-              [command computeCommandEncoder];
-          [compute setComputePipelineState:luma_pipeline];
-          [compute setTexture:cursor_texture atIndex:0];
-          [compute setTexture:destination_y atIndex:1];
-          [compute setBytes:&uniforms length:sizeof(uniforms) atIndex:0];
-          [compute dispatchThreads:MTLSizeMake(cursor_width, cursor_height, 1)
-              threadsPerThreadgroup:group];
-          [compute endEncoding];
-          compute = [command computeCommandEncoder];
-          [compute setComputePipelineState:chroma_pipeline];
-          [compute setTexture:cursor_texture atIndex:0];
-          [compute setTexture:destination_uv atIndex:1];
-          [compute setBytes:&uniforms length:sizeof(uniforms) atIndex:0];
-          [compute dispatchThreads:MTLSizeMake((cursor_width + 1) / 2,
-                                               (cursor_height + 1) / 2, 1)
-              threadsPerThreadgroup:group];
-          [compute endEncoding];
-        }
+        encode_cursor_overlay(command, luma_pipeline, chroma_pipeline,
+                              destination_y, destination_uv, cursor_artwork,
+                              cursor, artworks, artwork_count, canvas,
+                              output_width, output_height);
         CVMetalTextureRef camera_ref = NULL;
-        CVMetalTextureRef cursor_top_ref = NULL;
         if (camera_sample != NULL && camera_overlay != NULL) {
           CVPixelBufferRef camera_pixels =
               CMSampleBufferGetImageBuffer(camera_sample);
@@ -1630,100 +1936,62 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
 
           // Cursor belongs to the screen layer. Reapply it after the screen
           // when the camera has been sent behind that layer.
-          if (cursor_sample != NULL) {
-            CVPixelBufferRef cursor_pixels =
-                CMSampleBufferGetImageBuffer(cursor_sample);
-            size_t cursor_width = CVPixelBufferGetWidth(cursor_pixels);
-            size_t cursor_height = CVPixelBufferGetHeight(cursor_pixels);
-            id<MTLTexture> cursor_texture =
-                texture(texture_cache, cursor_pixels, MTLPixelFormatBGRA8Unorm,
-                        cursor_width, cursor_height, 0, &cursor_top_ref);
-            ScreenwideCursorPosition position =
-                position_at(positions, &position_index, cursor_frame);
-            ScreenwideOverlayUniforms uniforms = {
-                position.x,
-                position.y,
-                (uint32_t)cursor_width,
-                (uint32_t)cursor_height,
-                output_width,
-                output_height,
-                canvas->crop_x,
-                canvas->crop_y,
-                canvas->crop_width,
-                canvas->crop_height,
-                canvas->radius,
-                canvas->clip_cursor_at_video_edge,
-            };
-            id<MTLComputeCommandEncoder> cursor_compute =
-                [command computeCommandEncoder];
-            [cursor_compute setComputePipelineState:luma_pipeline];
-            [cursor_compute setTexture:cursor_texture atIndex:0];
-            [cursor_compute setTexture:destination_y atIndex:1];
-            [cursor_compute setBytes:&uniforms length:sizeof(uniforms) atIndex:0];
-            [cursor_compute dispatchThreads:MTLSizeMake(cursor_width, cursor_height, 1)
-                         threadsPerThreadgroup:screen_group];
-            [cursor_compute endEncoding];
-            cursor_compute = [command computeCommandEncoder];
-            [cursor_compute setComputePipelineState:chroma_pipeline];
-            [cursor_compute setTexture:cursor_texture atIndex:0];
-            [cursor_compute setTexture:destination_uv atIndex:1];
-            [cursor_compute setBytes:&uniforms length:sizeof(uniforms) atIndex:0];
-            [cursor_compute dispatchThreads:MTLSizeMake((cursor_width + 1) / 2,
-                                                        (cursor_height + 1) / 2, 1)
-                         threadsPerThreadgroup:screen_group];
-            [cursor_compute endEncoding];
-          }
+          encode_cursor_overlay(command, luma_pipeline, chroma_pipeline,
+                                destination_y, destination_uv, cursor_artwork,
+                                cursor, artworks, artwork_count, canvas,
+                                output_width, output_height);
         }
+        // Commit without waiting: the GPU works on this frame while the loop
+        // decodes and composites the next ones. The frame owns every resource
+        // the command buffer reads or writes until it completes.
         [command commit];
-        [command waitUntilCompleted];
-        if (!primed && command.status != MTLCommandBufferStatusError) {
-          primed = YES;
-          // Hardware rate control ramps up over its first seconds (the first
-          // keyframe of an export measures at half the steady-state size).
-          // Feeding the first frame repeatedly at negative timestamps warms
-          // the encoder on samples the edit list trims away, so the visible
-          // first frame starts at steady-state quality.
-          int32_t warm_fps = (int32_t)MAX(llround(source_frame_rate), 1);
-          for (int32_t warm = 45; warm >= 1; warm--) {
-            while (!writer_input.isReadyForMoreMediaData)
-              [NSThread sleepForTimeInterval:0.001];
-            if (![adaptor appendPixelBuffer:destination
-                       withPresentationTime:CMTimeMake(-warm, warm_fps)])
-              break;
-          }
-          while (!writer_input.isReadyForMoreMediaData)
-            [NSThread sleepForTimeInterval:0.001];
+        ScreenwideInflightFrame *frame = [ScreenwideInflightFrame new];
+        frame.command = command;
+        frame.presentation = pts;
+        frame.destination = destination;
+        frame.sourceLuma = source_y_ref;
+        frame.sourceChroma = source_uv_ref;
+        frame.destinationLuma = destination_y_ref;
+        frame.destinationChroma = destination_uv_ref;
+        frame.cameraTexture = camera_ref;
+        frame.screenSample = screen_sample;
+        frame.cameraSample =
+            camera_sample == NULL ? NULL : (CMSampleBufferRef)CFRetain(camera_sample);
+        [ring addObject:frame];
+        if (ring.count > SCREENWIDE_GPU_INFLIGHT_FRAMES) {
+          ScreenwideInflightFrame *oldest = ring.firstObject;
+          [ring removeObjectAtIndex:0];
+          ScreenwideDrainResult drained = drain_inflight_frame(
+              oldest, adaptor, writer_input, writer, context, should_cancel,
+              progress, &primed, source_frame_rate, &error);
+          if (drained == ScreenwideDrainCancelled)
+            cancelled = true;
+          if (drained != ScreenwideDrainAppended)
+            break;
         }
-        if (command.status == MTLCommandBufferStatusError ||
-            ![adaptor appendPixelBuffer:destination withPresentationTime:pts]) {
-          error = command.error ?: writer.error ?:
-              [NSError errorWithDomain:@"ScreenwideGPUCompositor"
-                                  code:3
-                              userInfo:@{NSLocalizedDescriptionKey :
-                                           @"The GPU encoder rejected a video frame"}];
-        }
-        if (cursor_ref != NULL)
-          CFRelease(cursor_ref);
-        if (camera_ref != NULL)
-          CFRelease(camera_ref);
-        if (cursor_top_ref != NULL)
-          CFRelease(cursor_top_ref);
-        CFRelease(source_y_ref);
-        CFRelease(source_uv_ref);
-        CFRelease(destination_y_ref);
-        CFRelease(destination_uv_ref);
-        CVPixelBufferRelease(destination);
-        CFRelease(screen_sample);
-        if (error != nil)
-          break;
-        if (progress != NULL)
-          progress(context, (uint64_t)llround(CMTimeGetSeconds(pts) * 1000.0));
       }
     }
-    if (cursor_sample != NULL)
-      CFRelease(cursor_sample);
-    if (next_cursor_sample != NULL)
-      CFRelease(next_cursor_sample);
+    // Flush whatever is still on the GPU, oldest first, so the tail of the
+    // export keeps its source order.
+    while (!cancelled && error == nil && ring.count > 0) {
+      @autoreleasepool {
+        ScreenwideInflightFrame *oldest = ring.firstObject;
+        [ring removeObjectAtIndex:0];
+        ScreenwideDrainResult drained = drain_inflight_frame(
+            oldest, adaptor, writer_input, writer, context, should_cancel,
+            progress, &primed, source_frame_rate, &error);
+        if (drained == ScreenwideDrainCancelled)
+          cancelled = true;
+        if (drained != ScreenwideDrainAppended)
+          break;
+      }
+    }
+    // A cancel or a writer failure abandons the rest of the ring. The GPU still
+    // owns those textures, so wait for each command buffer before the frames
+    // release their buffers.
+    for (ScreenwideInflightFrame *abandoned in ring)
+      [abandoned.command waitUntilCompleted];
+    [ring removeAllObjects];
     if (camera_sample != NULL)
       CFRelease(camera_sample);
     if (next_camera_sample != NULL)
@@ -1731,21 +1999,18 @@ int screenwide_gpu_composite_cursor(const char *screen_path, const char *cursor_
     CFRelease(texture_cache);
     if (cancelled) {
       [screen_reader cancelReading];
-      if (cursor_reader != nil) [cursor_reader cancelReading];
       if (camera_reader != nil) [camera_reader cancelReading];
       [writer cancelWriting];
       [[NSFileManager defaultManager] removeItemAtURL:output_url error:nil];
       return -1;
     }
     if (error != nil || screen_reader.status == AVAssetReaderStatusFailed ||
-        (cursor_reader != nil && cursor_reader.status == AVAssetReaderStatusFailed) ||
         (camera_reader != nil && camera_reader.status == AVAssetReaderStatusFailed)) {
       [writer cancelWriting];
       [[NSFileManager defaultManager] removeItemAtURL:output_url error:nil];
       return fail(error_text, error_capacity,
                   error.localizedDescription ?:
                     screen_reader.error.localizedDescription ?:
-                    (cursor_reader != nil ? cursor_reader.error.localizedDescription : nil) ?:
                     (camera_reader != nil ? camera_reader.error.localizedDescription : nil) ?:
                     @"The GPU compositor could not read the recording");
     }

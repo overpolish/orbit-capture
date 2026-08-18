@@ -46,6 +46,7 @@ export function useRecordingPreviewPlayer({
   cursorCanvasRef,
   cursorEffects,
   enabledStreamIndices,
+  isEditorSuspended,
   isEnabled,
   nativeEditorOwnsLayout,
   nativeLayoutHasPanes,
@@ -68,6 +69,7 @@ export function useRecordingPreviewPlayer({
   cursorCanvasRef: RefObject<HTMLCanvasElement | null>;
   cursorEffects: CursorEffectSettings;
   enabledStreamIndices: number[];
+  isEditorSuspended: boolean;
   isEnabled: boolean;
   nativeEditorOwnsLayout: boolean;
   nativeLayoutHasPanes: boolean;
@@ -145,6 +147,7 @@ export function useRecordingPreviewPlayer({
     bakeCamera,
     cameraCanvasRef,
     cameraOverlay,
+    isEditorSuspended,
     isEnabled,
     isPlaying,
     nativeEditorOwnsLayout,
@@ -261,7 +264,11 @@ export function useRecordingPreviewPlayer({
         durationRef.current = info.durationMs;
         setDurationMs(info.durationMs);
         startedRef.current = true;
-        if (nativeEditorOwnsLayout && zoomPercent !== undefined) {
+        if (
+          nativeEditorOwnsLayout &&
+          !isEditorSuspended &&
+          zoomPercent !== undefined
+        ) {
           void setRecordingPreviewZoom(sessionId, zoomPercent).catch(
             (cause: unknown) => {
               if (!disposed) setError(String(cause));

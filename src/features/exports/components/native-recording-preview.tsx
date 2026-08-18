@@ -88,6 +88,7 @@ export function NativeRecordingPreview({
   inspector,
   isPreparingAudio = false,
   isPreparingPreview = false,
+  isSaving = false,
   onCameraOverlayChange,
   onEnabledTracksChange,
   onEnabledVideoTracksChange,
@@ -155,6 +156,15 @@ export function NativeRecordingPreview({
     capabilities?.nativeRecordingPreview === true &&
     capabilities.nativeWorkspaceEditor &&
     previewLayout === undefined;
+  // A running save covers the viewport with the progress overlay, whose Cancel
+  // button is a DOM control - and the native interaction view is inserted
+  // above the webview, so it would swallow that click and pan the workspace
+  // instead. Suspending the native editor for the duration of the save (every
+  // path that clears `isSaving`: success, failure and cancel) hands input back
+  // to the webview without changing which side owns the layout, so the panes
+  // keep rendering natively and the selection chrome hides itself while the
+  // editor is inactive.
+  const isEditorSuspended = nativeEditorOwnsLayout && isSaving;
   const activeVideoTrack =
     selectedTrack === "primary" || selectedTrack === "camera"
       ? selectedTrack
@@ -859,6 +869,7 @@ export function NativeRecordingPreview({
     cursorCanvasRef,
     cursorEffects,
     enabledStreamIndices: selectedStreamIndices,
+    isEditorSuspended,
     isEnabled: previewLayout === undefined,
     nativeEditorOwnsLayout,
     nativeLayoutHasPanes: enabledVideoTracks.length > 0,
