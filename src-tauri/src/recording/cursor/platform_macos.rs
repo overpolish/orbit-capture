@@ -17,19 +17,19 @@ use core_graphics::event::{
   CallbackResult, EventField,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-use objc2::rc::Retained;
-use objc2_app_kit::{NSCursor, NSImage};
+use objc2_app_kit::NSCursor;
 
 use super::{
   ButtonState, CursorAppearance, CursorButton, CursorStyle, EventSink, RawCursorEvent,
   RawCursorEventKind,
 };
 
+const CACHE_LIMIT: usize = 256;
 const RUN_LOOP_POLL: Duration = Duration::from_millis(50);
 const START_TIMEOUT: Duration = Duration::from_secs(2);
 const MOVEMENT_INTERVAL: Duration = Duration::from_micros(7_500);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct CursorFingerprint {
   bytes: usize,
   hash: u64,
@@ -46,8 +46,9 @@ fn fingerprint(cursor: &NSCursor) -> CursorFingerprint {
   let data = image.TIFFRepresentation();
   let mut hasher = DefaultHasher::new();
   if let Some(data) = &data {
-    // This fingerprint exists only long enough to map AppKit's cursor to a
-    // semantic label. Cursor image bytes never enter the recording sidecar.
+    // These bytes are hashed and dropped; only the hash is kept, and only long
+    // enough to map AppKit's cursor to a semantic label. Cursor image bytes
+    // never enter the recording sidecar.
     // SAFETY: `data` is immutable and retained for the lifetime of this slice.
     hasher.write(unsafe { data.as_bytes_unchecked() });
   }
@@ -62,7 +63,13 @@ fn fingerprint(cursor: &NSCursor) -> CursorFingerprint {
 }
 
 struct CursorCatalog {
-  cache: RefCell<HashMap<usize, (Retained<NSImage>, CursorAppearance)>>,
+  // Keyed by image content, not by `NSImage` pointer identity: on macOS 26
+  // `currentSystemCursor().image()` hands back a fresh `NSImage` every call, so
+  // a pointer key never hit the cache and every poll retained another copy of
+  // the image's reps (measured ~2.5GB of live CGImage/NSBitmapImageRep over a
+  // seven minute recording). Only the resolved style is cached; the size and
+  // hotspot are cheap to read fresh from the cursor each call.
+  cache: RefCell<HashMap<CursorFingerprint, CursorStyle>>,
   entries: Vec<(CursorStyle, CursorFingerprint)>,
 }
 
@@ -120,30 +127,32 @@ impl CursorCatalog {
       };
     };
     let hotspot = cursor.hotSpot();
-    let image = cursor.image();
-    let size = image.size();
-    let image_key = Retained::as_ptr(&image) as usize;
-    if let Some((_, appearance)) = self.cache.borrow().get(&image_key) {
-      return appearance.clone();
-    }
+    let size = cursor.image().size();
     let current = fingerprint(&cursor);
-    let style = self
-      .entries
-      .iter()
-      .find_map(|(style, candidate)| (*candidate == current).then_some(*style))
-      .unwrap_or(CursorStyle::Custom);
-    let appearance = CursorAppearance {
+    let style = self.cache.borrow().get(&current).copied();
+    let style = style.unwrap_or_else(|| {
+      let style = self
+        .entries
+        .iter()
+        .find_map(|(style, candidate)| (*candidate == current).then_some(*style))
+        .unwrap_or(CursorStyle::Custom);
+      let mut cache = self.cache.borrow_mut();
+      // Apps ship arbitrary custom cursors, so the key space is unbounded; a
+      // hard cap with a full flush beats an LRU here because a real working set
+      // of cursors is tiny and a miss costs one fingerprint comparison pass.
+      if cache.len() >= CACHE_LIMIT {
+        cache.clear();
+      }
+      cache.insert(current, style);
+      style
+    });
+    CursorAppearance {
       height: size.height,
       hotspot_x: hotspot.x,
       hotspot_y: hotspot.y,
       style,
       width: size.width,
-    };
-    self
-      .cache
-      .borrow_mut()
-      .insert(image_key, (image, appearance.clone()));
-    appearance
+    }
   }
 }
 
@@ -252,20 +261,28 @@ fn run(stop: &AtomicBool, sink: &EventSink, ready: mpsc::Sender<Result<(), Strin
       }
       let mut wrote_initial = false;
       while !stop.load(Ordering::Acquire) {
-        if !wrote_initial {
-          wrote_initial =
-            current_event(&catalog, RawCursorEventKind::Snapshot).is_some_and(|event| sink(event));
-        }
-        // SAFETY: Core Foundation owns this process-global constant for the
-        // lifetime of the process.
-        unsafe {
-          CFRunLoop::run_in_mode(kCFRunLoopDefaultMode, RUN_LOOP_POLL, false);
-        }
-        if wrote_initial {
-          if let Some(event) = current_event(&catalog, RawCursorEventKind::Appearance) {
-            sink(event);
+        // This is a plain `std::thread`, so it has no autorelease pool of its
+        // own. Reading the cursor asks AppKit for `currentSystemCursor` and
+        // its image on every poll and on every tap callback, all of which is
+        // autoreleased; without a pool it accumulates for the whole recording
+        // and is only released when the thread exits. One pool per poll keeps
+        // it to the tick that made it.
+        cidre::objc::ar_pool(|| {
+          if !wrote_initial {
+            wrote_initial = current_event(&catalog, RawCursorEventKind::Snapshot)
+              .is_some_and(|event| sink(event));
           }
-        }
+          // SAFETY: Core Foundation owns this process-global constant for the
+          // lifetime of the process.
+          unsafe {
+            CFRunLoop::run_in_mode(kCFRunLoopDefaultMode, RUN_LOOP_POLL, false);
+          }
+          if wrote_initial {
+            if let Some(event) = current_event(&catalog, RawCursorEventKind::Appearance) {
+              sink(event);
+            }
+          }
+        });
       }
     },
   );

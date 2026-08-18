@@ -309,6 +309,22 @@ impl PreviewPlayerWorker {
     Ok(())
   }
 
+  /// Stops the worker's decode processes and gates its frame sends without
+  /// joining anything: the kills are milliseconds, while the joins - the
+  /// ffmpeg audio child, the CoreAudio output stream, the decode threads - are
+  /// slow enough to freeze whichever thread waits on them. Callers signal here
+  /// and join through `cancel` off the main thread.
+  pub(super) fn signal_cancel(&self) {
+    self.cancelled.store(true, Ordering::Release);
+    stop_child(&self.video_child);
+    stop_child(&self.audio_child);
+  }
+
+  /// The last position the worker presented, readable without joining it.
+  pub(super) fn position(&self) -> u64 {
+    self.position_ms.load(Ordering::Acquire)
+  }
+
   pub(super) fn cancel(mut self) -> u64 {
     self.cancelled.store(true, Ordering::Release);
     stop_child(&self.video_child);

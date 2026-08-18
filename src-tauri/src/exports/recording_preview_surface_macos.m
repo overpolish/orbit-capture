@@ -198,6 +198,11 @@ typedef struct {
 @property(nonatomic) NSInteger batchDepth;
 @property(nonatomic, strong) NSMutableArray<id<CAMetalDrawable>> *batchDrawables;
 @property(nonatomic, strong) NSMutableArray<ScreenwidePreviewView *> *batchViews;
+/// Tracks the batch's in-flight command buffers: entered per batched present,
+/// left from that command buffer's completed handler. `end_present` defers its
+/// presenting transaction until the group is empty so the commit never fences
+/// on GPU work (see `screenwide_preview_surface_end_present`).
+@property(nonatomic, strong) dispatch_group_t batchGroup;
 @end
 
 @implementation ScreenwidePreviewSurface
@@ -2279,6 +2284,20 @@ static void on_main(dispatch_block_t block) {
   else dispatch_sync(dispatch_get_main_queue(), block);
 }
 
+/// Runs `block` on the main thread without ever blocking the caller. Every
+/// void setter below uses this instead of `on_main`: the layout command runs
+/// on Tauri's async pool while it holds the preview player mutex, and the
+/// main thread takes that same mutex from the sync seek command. A
+/// `dispatch_sync` there deadlocks the app - main waits for the mutex, the
+/// pool thread waits for the main queue that only main can drain. The main
+/// queue is serial, so the setters still apply in call order; a caller
+/// already on the main thread runs inline and keeps today's exact behaviour
+/// (the layout/present sequences that share one transaction).
+static void on_main_async(dispatch_block_t block) {
+  if ([NSThread isMainThread]) block();
+  else dispatch_async(dispatch_get_main_queue(), block);
+}
+
 /// Runs `body` on the main thread inside an explicit Core Animation
 /// transaction. From a background thread it is dispatched asynchronously: the
 /// decoder thread is joined from the main thread on stop, so it must never
@@ -2316,22 +2335,66 @@ static void commit_frames_and_drawables(ScreenwidePreviewSurface *surface,
 /// Commits `command` and presents `drawable` together with every pending pane
 /// frame in one transaction (or hands it to the open batch, which does the
 /// same for all panes at `end_present`). `presentsWithTransaction` requires
-/// the command buffer to be scheduled before `present`, so that wait happens
-/// here on the calling (compositing) thread.
+/// the command buffer to be scheduled before `present`; unbatched presents (and
+/// batched ones encoded on the main thread, which must present in the acquiring
+/// turn - see below) wait for that here on the calling thread, while off-main
+/// batched ones inherit it from waiting on full GPU completion (completed
+/// implies scheduled).
 static void present_in_transaction(ScreenwidePreviewSurface *surface,
                                    ScreenwidePreviewView *view,
                                    id<MTLCommandBuffer> command,
                                    id<CAMetalDrawable> drawable) {
-  [command commit];
-  [command waitUntilScheduled];
+  // ORDERING: Metal only accepts completed handlers before `commit`, so the
+  // batch membership decision (which needs a handler) has to happen first -
+  // hence the lock/handler/commit order rather than the older commit-first one.
   [surface.batchLock lock];
   if (surface.batchDepth > 0) {
+    if ([NSThread isMainThread]) {
+      [surface.batchLock unlock];
+      // SAME-TURN CONSTRAINT: this drawable was acquired (`nextDrawable`) on the
+      // main thread, so the current runloop turn owns it. A main-thread turn
+      // that ends still holding an acquired-but-unpresented drawable of a
+      // `presentsWithTransaction` layer makes the turn's closing Core Animation
+      // flush wait for that drawable's present - and any present deferred to a
+      // later main-queue block (the batch's `dispatch_group_notify`, a completed
+      // handler's `dispatch_async`) is queued BEHIND that very flush, so it can
+      // never arrive and the flush burns its ~1s watchdog. Measured directly:
+      // `screenwide-present-batch-enter: 1005 ms` with an instant commit.
+      // Presents from main-thread encodes therefore MUST land in the acquiring
+      // turn; batching them buys nothing here anyway (both batched drawables are
+      // the same pane-sized workspace layer, so there is no cross-layer
+      // atomicity at stake).
+      [command commit];
+      [command waitUntilScheduled];
+      [CATransaction begin];
+      [CATransaction setDisableActions:YES];
+      commit_frames_and_drawables(surface, @[drawable], @[view]);
+      [CATransaction commit];
+      return;
+    }
+    // Off-main acquisition: no main-thread flush is holding this drawable
+    // hostage, so deferring the present to `end_present` is safe and keeps the
+    // GPU wait off the main thread.
+    // Capture the group in a local: the property is replaced by the next
+    // `begin_present`, and this handler must leave the group it entered.
+    dispatch_group_t group = surface.batchGroup;
+    if (group != nil) {
+      dispatch_group_enter(group);
+      [command addCompletedHandler:^(__unused id<MTLCommandBuffer> completed) {
+        dispatch_group_leave(group);
+      }];
+    }
     [surface.batchDrawables addObject:drawable];
     [surface.batchViews addObject:view];
     [surface.batchLock unlock];
+    // No `waitUntilScheduled`: `end_present` now waits for this buffer to
+    // complete, which is strictly stronger than scheduled.
+    [command commit];
     return;
   }
   [surface.batchLock unlock];
+  [command commit];
+  [command waitUntilScheduled];
   run_on_main_transaction(^{
     commit_frames_and_drawables(surface, @[drawable], @[view]);
   });
@@ -2342,6 +2405,8 @@ void screenwide_preview_surface_begin_present(void *handle) {
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   [surface.batchLock lock];
   surface.batchDepth += 1;
+  // Only the outermost begin opens a group; nested begins join the open one.
+  if (surface.batchDepth == 1) surface.batchGroup = dispatch_group_create();
   [surface.batchLock unlock];
 }
 
@@ -2358,11 +2423,39 @@ void screenwide_preview_surface_end_present(void *handle) {
   }
   NSArray<id<CAMetalDrawable>> *drawables = [surface.batchDrawables copy];
   NSArray<ScreenwidePreviewView *> *views = [surface.batchViews copy];
+  dispatch_group_t group = surface.batchGroup;
   [surface.batchDrawables removeAllObjects];
   [surface.batchViews removeAllObjects];
+  // The group property stays until the next `begin_present` replaces it; this
+  // snapshot owns it from here on.
   [surface.batchLock unlock];
-  run_on_main_transaction(^{
+  if (drawables.count == 0 || group == nil) {
+    // Nothing composed: flush the pending layout immediately, there is no GPU
+    // work to wait for.
+    run_on_main_transaction(^{
+      commit_frames_and_drawables(surface, drawables, views);
+    });
+    return;
+  }
+  // Only OFF-MAIN acquisitions ever reach here: `present_in_transaction`
+  // presents main-thread-encoded drawables inline in their acquiring turn,
+  // because a deferred present would be queued behind that turn's own Core
+  // Animation flush (which blocks on it) and hang for the flush's ~1s watchdog.
+  // For off-main acquisitions there is no such flush to trap, so the present
+  // can wait for every batched command buffer to COMPLETE. That matters because
+  // a `presentsWithTransaction` layer holds the Core Animation commit open
+  // until its drawable's GPU work finishes, and that commit publishes the WHOLE
+  // window's layer tree (webview UI, OSC included) - so committing while a
+  // paused full-resolution still (~8MP compute dispatch) is still running froze
+  // all painting for most of a second. By notify time the work is done, so the
+  // commit only waits on the WindowServer handshake. Notify targets the main
+  // queue directly: an intermediate concurrent-queue hop could let successive
+  // batches' presents land out of GPU-completion order.
+  dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     commit_frames_and_drawables(surface, drawables, views);
+    [CATransaction commit];
   });
 }
 
@@ -2512,7 +2605,7 @@ void screenwide_preview_surface_set_viewport(void *handle,
                                         double alpha) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     CGFloat host_height = surface.host.bounds.size.height;
     NSRect nextFrame = NSMakeRect(x, host_height - y - height, width, height);
     if (!NSEqualRects(surface.interaction.frame, nextFrame)) {
@@ -2541,7 +2634,7 @@ void screenwide_preview_surface_enable_editor(
     void *context) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     surface.editorEnabled = callback != NULL;
     surface.transformCallback = callback;
     surface.transformContext = context;
@@ -2561,7 +2654,7 @@ void screenwide_preview_surface_set_selection_gesture_callback(
     void *context) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     surface.selectionGestureCallback = callback;
     surface.selectionGestureContext = context;
     invalidate_selection_cursor_rects(surface);
@@ -2573,7 +2666,7 @@ void screenwide_preview_surface_set_selection_callback(
     void *context) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     surface.selectionCallback = callback;
     surface.selectionContext = context;
   });
@@ -2584,11 +2677,13 @@ void screenwide_preview_surface_set_selection_targets(
     int enabled) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
-    NSMutableArray<NSValue *> *copied = [NSMutableArray arrayWithCapacity:count];
-    for (size_t index = 0; index < count; index++)
-      [copied addObject:[NSValue valueWithBytes:&targets[index]
-                                       objCType:@encode(ScreenwidePreviewSelection)]];
+  // The block outlives this call, so the caller's array is copied here, while
+  // it is still alive, and only the copy is captured.
+  NSMutableArray<NSValue *> *copied = [NSMutableArray arrayWithCapacity:count];
+  for (size_t index = 0; index < count; index++)
+    [copied addObject:[NSValue valueWithBytes:&targets[index]
+                                     objCType:@encode(ScreenwidePreviewSelection)]];
+  on_main_async(^{
     surface.selectionTargets = copied;
     surface.selectionHitTestingEnabled = enabled != 0;
   });
@@ -2598,7 +2693,7 @@ void screenwide_preview_surface_set_selection_snapping(void *handle,
                                                         int enabled) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     surface.selectionSnappingEnabled = enabled != 0;
     if (!surface.selectionSnappingEnabled) {
       clear_selection_snap_guides(surface);
@@ -2611,7 +2706,7 @@ void screenwide_preview_surface_set_editor_zoom(void *handle,
                                                 double zoom_percent) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     if (!surface.editorEnabled) return;
     NSPoint center = NSMakePoint(NSMidX(surface.interaction.bounds),
                                  NSMidY(surface.interaction.bounds));
@@ -2622,7 +2717,7 @@ void screenwide_preview_surface_set_editor_zoom(void *handle,
 void screenwide_preview_surface_center_editor(void *handle) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     if (!surface.editorEnabled) return;
     surface.editorPanX = 0.0;
     surface.editorPanY = 0.0;
@@ -2634,8 +2729,13 @@ void screenwide_preview_surface_set_selection(void *handle,
                                               const ScreenwidePreviewSelection *selection) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
-    if (surface.interaction.selectionDragActive && selection == NULL) {
+  // The block outlives this call, so the caller's selection is copied by
+  // value here and the block reads only the copy.
+  const BOOL hasSelection = selection != NULL;
+  const ScreenwidePreviewSelection copy =
+      hasSelection ? *selection : (ScreenwidePreviewSelection){0};
+  on_main_async(^{
+    if (surface.interaction.selectionDragActive && !hasSelection) {
       if (surface.interaction.selectionDragOperation == 3 ||
           (surface.interaction.selectionDragOperation == 0 &&
            !NSIsEmptyRect(surface.interaction.selectionMoveFrameStart)))
@@ -2664,28 +2764,28 @@ void screenwide_preview_surface_set_selection(void *handle,
                              surface.interaction.selectionDragEdges, 1.0, 0.0, 0.0);
       return;
     }
-    if (surface.interaction.selectionDragActive && selection != NULL) return;
+    if (surface.interaction.selectionDragActive && hasSelection) return;
     // Layout commands update selection, viewport and pane frames as one
     // logical scene. Drawing here would briefly apply the new normalized OSC
     // to the previous split/baked pane geometry; finish_layout draws it once
     // every base rect belongs to the same scene.
-    BOOL topologyChanged = surface.hasSelection != (selection != NULL);
+    BOOL topologyChanged = surface.hasSelection != hasSelection;
     BOOL changed = topologyChanged;
-    if (!changed && selection != NULL) {
-      topologyChanged = surface.selection.pane_index != selection->pane_index ||
-                        surface.selection.layer_id != selection->layer_id;
+    if (!changed && hasSelection) {
+      topologyChanged = surface.selection.pane_index != copy.pane_index ||
+                        surface.selection.layer_id != copy.layer_id;
       changed = topologyChanged ||
-                surface.selection.x != selection->x ||
-                surface.selection.y != selection->y ||
-                surface.selection.width != selection->width ||
-                surface.selection.height != selection->height;
+                surface.selection.x != copy.x ||
+                surface.selection.y != copy.y ||
+                surface.selection.width != copy.width ||
+                surface.selection.height != copy.height;
     }
     if (changed) {
       surface.selectionDrawRevision += 1;
       if (topologyChanged) surface.selectionLayer.hidden = YES;
     }
-    surface.hasSelection = selection != NULL;
-    if (selection != NULL) surface.selection = *selection;
+    surface.hasSelection = hasSelection;
+    if (hasSelection) surface.selection = copy;
     invalidate_selection_cursor_rects(surface);
   });
 }
@@ -2694,7 +2794,7 @@ void screenwide_preview_surface_set_selection_visible(void *handle,
                                                       int visible) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     surface.selectionVisible = visible != 0;
     redraw_selection(surface);
   });
@@ -2703,7 +2803,7 @@ void screenwide_preview_surface_set_selection_visible(void *handle,
 void screenwide_preview_surface_begin_layout(void *handle) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     for (ScreenwidePreviewView *view in surface.views) view.active = NO;
   });
 }
@@ -2713,7 +2813,7 @@ void screenwide_preview_surface_layout(void *handle, uint32_t index,
                                   int defer_resize) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     surface.workspaceMode = NO;
     while (surface.views.count <= index) [surface.views addObject:make_view(surface)];
     ScreenwidePreviewView *view = surface.views[index];
@@ -2756,7 +2856,7 @@ void screenwide_preview_surface_layout_workspace(
     double natural_width, double natural_height, int defer_draw) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     surface.workspaceMode = YES;
     surface.workspaceActivePaneIndices = [NSSet setWithObject:@0];
     surface.workspaceLayoutAwaitsPresent = defer_draw != 0;
@@ -2805,7 +2905,12 @@ void screenwide_preview_surface_layout_recording_workspace(
     int defer_draw) {
   if (handle == NULL || panes == NULL || pane_count == 0) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  // The block outlives this call, so the caller's pane array is copied into
+  // block-owned storage here and the block reads only that copy.
+  NSData *paneData = [NSData dataWithBytes:panes
+                                    length:sizeof(*panes) * (size_t)pane_count];
+  on_main_async(^{
+    const ScreenwideWorkspacePaneRect *copiedPanes = paneData.bytes;
     surface.workspaceMode = YES;
     surface.workspaceLayoutAwaitsPresent = defer_draw != 0;
     BOOL ownsFrame = surface.interaction.selectionDragActive &&
@@ -2822,7 +2927,7 @@ void screenwide_preview_surface_layout_recording_workspace(
     while (surface.editorBaseRects.count < pane_count)
       [surface.editorBaseRects addObject:[NSValue valueWithRect:NSZeroRect]];
     for (uint32_t index = 0; index < pane_count; index++) {
-      const ScreenwideWorkspacePaneRect *pane = &panes[index];
+      const ScreenwideWorkspacePaneRect *pane = &copiedPanes[index];
       while (surface.editorBaseRects.count <= pane->index)
         [surface.editorBaseRects addObject:[NSValue valueWithRect:NSZeroRect]];
       surface.editorBaseRects[pane->index] = [NSValue valueWithRect:
@@ -2830,7 +2935,7 @@ void screenwide_preview_surface_layout_recording_workspace(
     }
     NSMutableSet<NSNumber *> *active = [NSMutableSet setWithCapacity:pane_count];
     for (uint32_t index = 0; index < pane_count; index++)
-      [active addObject:@(panes[index].index)];
+      [active addObject:@(copiedPanes[index].index)];
     surface.workspaceActivePaneIndices = active;
     ScreenwidePreviewView *workspace = surface.views[0];
     workspace.frame = surface.container.bounds;
@@ -2851,7 +2956,7 @@ void screenwide_preview_surface_layout_recording_workspace(
 void screenwide_preview_surface_finish_layout(void *handle) {
   if (handle == NULL) return;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
-  on_main(^{
+  on_main_async(^{
     for (ScreenwidePreviewView *view in surface.views) {
       if (view.active) continue;
       view.hidden = YES;
@@ -2908,6 +3013,17 @@ static ScreenwidePresentBlock transaction_presenter(ScreenwidePreviewSurface *su
   };
 }
 
+/// Main thread only. Releases the workspace draw slot and re-runs the redraw
+/// that was coalesced away while this one was in flight.
+static void clear_workspace_draw_in_flight(ScreenwidePreviewSurface *surface) {
+  [surface.workspaceLock lock];
+  surface.workspaceDrawInFlight = NO;
+  BOOL pending = surface.workspaceDrawPending;
+  surface.workspaceDrawPending = NO;
+  [surface.workspaceLock unlock];
+  if (pending) redraw_workspace(surface);
+}
+
 static ScreenwidePresentBlock workspace_transaction_presenter(
     ScreenwidePreviewSurface *surface) {
   return ^(void *commandPointer, void *drawablePointer) {
@@ -2922,17 +3038,26 @@ static ScreenwidePresentBlock workspace_transaction_presenter(
     redraw_selection(surface);
     surface.workspaceEncodingCommand = nil;
     surface.workspaceEncodingTexture = nil;
+    ScreenwidePreviewView *workspace = surface.views.firstObject;
+    // SAME-TURN CONSTRAINT: a workspace redraw acquires its drawable and
+    // encodes on the main thread, so the present MUST happen in that same
+    // runloop turn. Deferring it - to this command buffer's completed handler,
+    // or to the batch's group-notify block - leaves the turn holding an
+    // acquired-but-unpresented drawable of a `presentsWithTransaction` layer;
+    // the turn's closing Core Animation flush then blocks waiting for a present
+    // that is itself queued behind that flush on the main queue, and gives up
+    // only at its ~1s watchdog. That is the measured 1-second hang. So hand the
+    // buffer to `present_in_transaction` unconditionally: batched or not, its
+    // main-thread path commits, waits for scheduled and presents inline here.
+    //
+    // Registered before the commit that `present_in_transaction` performs -
+    // Metal rejects completed handlers added after `commit`. This clear re-arms
+    // `workspaceDrawPending` coalescing, so it must stay.
     [command addCompletedHandler:^(__unused id<MTLCommandBuffer> completed) {
       dispatch_async(dispatch_get_main_queue(), ^{
-        [surface.workspaceLock lock];
-        surface.workspaceDrawInFlight = NO;
-        BOOL pending = surface.workspaceDrawPending;
-        surface.workspaceDrawPending = NO;
-        [surface.workspaceLock unlock];
-        if (pending) redraw_workspace(surface);
+        clear_workspace_draw_in_flight(surface);
       });
     }];
-    ScreenwidePreviewView *workspace = surface.views.firstObject;
     present_in_transaction(surface, workspace, command, drawable);
   };
 }
@@ -3283,7 +3408,13 @@ int screenwide_preview_surface_redraw_workspace(void *handle) {
   if (handle == NULL) return 0;
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   if (!surface.workspaceMode || surface.views.count == 0) return 0;
-  redraw_workspace(surface);
+  // The draw reads the pane geometry that the layout setters now apply
+  // asynchronously, so it has to queue behind them instead of racing them
+  // from the caller's thread. The result still reports what it always did:
+  // whether a workspace pane exists to draw into.
+  on_main_async(^{
+    redraw_workspace(surface);
+  });
   return 1;
 }
 
@@ -3352,6 +3483,18 @@ void screenwide_preview_surface_hide(void *handle) {
     surface.interaction.hidden = YES;
     for (ScreenwidePreviewView *view in surface.views) view.hidden = YES;
   });
+}
+
+/// Releases a caller-owned callback context behind every block already queued
+/// on the main queue. The callback setters install and clear their context
+/// asynchronously, so a caller that clears a callback and frees its context
+/// straight away would pull the memory out from under a main-thread gesture
+/// that is still holding the old pointer. Handing the free to the main queue
+/// orders it after the clear, which is the last block that can read it.
+void screenwide_preview_surface_release_context_on_main(
+    void (*release)(void *), void *context) {
+  if (release == NULL) return;
+  dispatch_async(dispatch_get_main_queue(), ^{ release(context); });
 }
 
 void screenwide_preview_surface_destroy(void *handle) {

@@ -139,6 +139,30 @@ unsafe extern "C" {
     >,
     context: *mut std::ffi::c_void,
   );
+  fn screenwide_preview_surface_release_context_on_main(
+    release: unsafe extern "C" fn(*mut std::ffi::c_void),
+    context: *mut std::ffi::c_void,
+  );
+}
+
+unsafe extern "C" fn release_boxed_callback<T>(context: *mut std::ffi::c_void) {
+  drop(unsafe { Box::from_raw(context.cast::<T>()) });
+}
+
+/// Frees a callback box on the main thread instead of here. The native
+/// callback setters apply asynchronously (a synchronous hop deadlocks against
+/// the player mutex), so when this thread returns from clearing or replacing
+/// a callback the main thread may still hold the old context pointer. The
+/// free is queued behind that clear, which is the last block that can read it.
+fn release_callback_on_main<T>(callback: Option<Box<T>>) {
+  if let Some(callback) = callback {
+    unsafe {
+      screenwide_preview_surface_release_context_on_main(
+        release_boxed_callback::<T>,
+        Box::into_raw(callback).cast::<std::ffi::c_void>(),
+      );
+    }
+  }
 }
 
 #[repr(C)]
@@ -303,7 +327,7 @@ impl RecordingPreviewSurface {
     unsafe {
       screenwide_preview_surface_enable_editor(self.handle, Some(transform_callback), context);
     }
-    self.transform_callback = Some(callback);
+    release_callback_on_main(self.transform_callback.replace(callback));
   }
 
   pub(crate) fn set_editor_active(&self, active: bool) {
@@ -381,7 +405,7 @@ impl RecordingPreviewSurface {
         context,
       );
     }
-    self.selection_callback = Some(callback);
+    release_callback_on_main(self.selection_callback.replace(callback));
   }
 
   /// Installs the native selection-body gesture callback. The callback is
@@ -399,7 +423,7 @@ impl RecordingPreviewSurface {
         context,
       );
     }
-    self.selection_gesture_callback = Some(callback);
+    release_callback_on_main(self.selection_gesture_callback.replace(callback));
   }
 
   /// Lays out one fixed drawable over the complete viewport while retaining
@@ -755,6 +779,9 @@ impl Drop for RecordingPreviewSurface {
       );
       screenwide_preview_surface_destroy(self.handle);
     }
+    release_callback_on_main(self.transform_callback.take());
+    release_callback_on_main(self.selection_callback.take());
+    release_callback_on_main(self.selection_gesture_callback.take());
   }
 }
 
