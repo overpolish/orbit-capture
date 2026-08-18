@@ -3,9 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::mesh::MeshGradientPoint;
+#[cfg(any(test, not(target_os = "macos")))]
+use super::CapturedImage;
 #[cfg(not(target_os = "macos"))]
 use super::{mesh::mesh_canvas, rounded_corners};
-use super::{mesh::MeshGradientPoint, CapturedImage};
 
 const MAX_OUTPUT_PIXELS: u64 = 120_000_000;
 
@@ -165,7 +167,7 @@ pub(crate) fn output_placement(
   })
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", test))]
 pub fn compose_screenshot(
   image: &CapturedImage,
   settings: &ScreenshotOutputSettings,

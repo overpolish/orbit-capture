@@ -67,6 +67,9 @@
 
 use serde::Serialize;
 
+pub(crate) mod workspace_editor;
+mod workspace_transform;
+
 #[cfg(target_os = "macos")]
 #[path = "preview_platform/surface_macos.rs"]
 mod surface;
@@ -80,6 +83,36 @@ mod surface;
 #[cfg(target_os = "windows")]
 pub(crate) use surface::ComposedFrame;
 pub(crate) use surface::RecordingPreviewSurface;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) use surface::{NativeWorkspacePlacement, RecordingWorkspaceLayer};
+
+pub(crate) type TransformCallback = Box<dyn FnMut(f64) + Send + 'static>;
+pub(crate) type SelectionCallback = Box<dyn FnMut(Option<u32>) + Send + 'static>;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SelectionGesturePhase {
+  Begin = 0,
+  Update = 1,
+  End = 2,
+  Cancel = 3,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SelectionGestureOperation {
+  Move = 0,
+  Resize = 1,
+  Radius = 2,
+  FrameResize = 3,
+  FrameRadius = 4,
+  CropMove = 5,
+  CropResize = 6,
+}
+
+pub(crate) type SelectionGestureCallback = Box<
+  dyn FnMut(SelectionGesturePhase, u32, SelectionGestureOperation, u32, f64, f64, f64)
+    + Send
+    + 'static,
+>;
 
 /// Builds the comparatively expensive Windows D3D/DirectComposition pipeline
 /// while the export webview is still hidden. The first recording review can
@@ -110,6 +143,31 @@ pub(crate) struct PreviewSurfaceRect {
   pub y: f64,
 }
 
+/// A render-only selection overlay in workspace coordinates. The rectangle is
+/// normalized to its pane so the native surface can apply the same pan/zoom
+/// transform as the media without knowing frontend output sizes.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct PreviewSelection {
+  pub pane_index: u32,
+  /// Logical editable layer. This is independent of the physical pane: a
+  /// baked camera and its screen both render in pane 0 but remain two layers.
+  pub layer_id: u32,
+  /// Non-zero when this rectangle is a crop window over an independent image.
+  pub crop_mode: u32,
+  /// Non-zero when this selection has no corner-radius gesture or OSC.
+  pub radius_disabled: u32,
+  pub x: f64,
+  pub y: f64,
+  pub width: f64,
+  pub height: f64,
+  pub radius_percent: f64,
+  pub image_x: f64,
+  pub image_y: f64,
+  pub image_width: f64,
+  pub image_height: f64,
+}
+
 /// What the current platform's preview backend can actually do.
 ///
 /// The frontend probes this instead of sniffing the platform, so a partially
@@ -120,6 +178,7 @@ pub(crate) struct PreviewSurfaceRect {
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewCapabilities {
+  pub native_workspace_editor: bool,
   pub native_recording_preview: bool,
   pub native_screenshot_preview: bool,
 }

@@ -14,6 +14,7 @@ import {
   setRecordingPreviewAudioVolumes,
   setRecordingPreviewComposition,
   setRecordingPreviewCursorEffects,
+  setRecordingPreviewZoom,
   startRecordingPreviewPlayer,
   stopRecordingPreviewPlayer,
 } from "./api";
@@ -21,7 +22,10 @@ import { ScrubPhase } from "./components/scrub-timeline";
 import { AudioTrackVolume, CursorEffectSettings } from "./types";
 import { useRecordingPreviewFrames } from "./use-recording-preview-frames";
 import { useRecordingPreviewSettings } from "./use-recording-preview-settings";
-import { useRecordingPreviewSurface } from "./use-recording-preview-surface";
+import {
+  type RecordingSelectionGestureEvent,
+  useRecordingPreviewSurface,
+} from "./use-recording-preview-surface";
 
 let sessionSequence = 0;
 
@@ -44,9 +48,18 @@ export function useRecordingPreviewPlayer({
   cursorEffects,
   enabledStreamIndices,
   isEnabled,
+  nativeEditorOwnsLayout,
+  nativeLayoutHasPanes,
+  nativeLayoutKey,
   onPosition,
+  onSelectionChange,
+  onSelectionGesture,
+  onZoomChange,
   recordingOutput,
   screenCanvasRef,
+  selection,
+  selectionTargets,
+  zoomPercent,
 }: {
   artifactId: number;
   audioTrackVolumes: AudioTrackVolume[];
@@ -57,9 +70,30 @@ export function useRecordingPreviewPlayer({
   cursorEffects: CursorEffectSettings;
   enabledStreamIndices: number[];
   isEnabled: boolean;
+  nativeEditorOwnsLayout: boolean;
+  nativeLayoutHasPanes: boolean;
+  nativeLayoutKey: string;
   onPosition: (positionMs: number) => void;
   recordingOutput: import("./screenshot-output").RecordingOutputSettings;
   screenCanvasRef: RefObject<HTMLCanvasElement | null>;
+  onSelectionChange?: (paneIndex: number | null) => void;
+  onSelectionGesture?: (event: RecordingSelectionGestureEvent) => void;
+  onZoomChange?: (zoomPercent: number) => void;
+  selection?: {
+    paneIndex: number;
+    radiusPercent: number;
+    rect: { height: number; width: number; x: number; y: number };
+    layerId?: number;
+  } | null;
+  selectionTargets?:
+    | {
+        paneIndex: number;
+        radiusPercent: number;
+        rect: { height: number; width: number; x: number; y: number };
+        layerId?: number;
+      }[]
+    | null;
+  zoomPercent?: number;
 }) {
   const isPlayingRef = useRef(false);
   const wantsPlaybackRef = useRef(false);
@@ -113,11 +147,21 @@ export function useRecordingPreviewPlayer({
     cameraCanvasRef,
     cameraOverlay,
     isEnabled,
+    isPlaying,
+    nativeEditorOwnsLayout,
+    nativeLayoutHasPanes,
+    nativeLayoutKey,
     onError: setError,
+    onSelectionChange,
+    onSelectionGesture,
+    onZoomChange,
     recordingOutput,
     screenCanvasRef,
+    selection,
+    selectionTargets,
     sessionIdRef,
     startedRef,
+    zoomPercent,
   });
 
   const updatePlaying = (playing: boolean) => {
@@ -218,6 +262,13 @@ export function useRecordingPreviewPlayer({
         durationRef.current = info.durationMs;
         setDurationMs(info.durationMs);
         startedRef.current = true;
+        if (nativeEditorOwnsLayout && zoomPercent !== undefined) {
+          void setRecordingPreviewZoom(sessionId, zoomPercent).catch(
+            (cause: unknown) => {
+              if (!disposed) setError(String(cause));
+            },
+          );
+        }
         const latestSettingsKey = settingsKey({
           audioTrackVolumes: audioTrackVolumesRef.current,
           bakeCamera: compositionRef.current.bakeCamera,
@@ -336,7 +387,9 @@ export function useRecordingPreviewPlayer({
     positionRef.current = normalized;
     updatePlaying(false);
     const send = (nextPosition: number, nextPhase: ScrubPhase) => {
-      if (nextPosition === lastSentSeekRef.current && nextPhase !== "end")
+      // Start/end also carry native OSC visibility, so only movement samples
+      // at the same playhead position are redundant.
+      if (nextPosition === lastSentSeekRef.current && nextPhase === "move")
         return;
       lastSentSeekRef.current = nextPosition;
       const requestId = ++seekRequestRef.current;
@@ -349,6 +402,12 @@ export function useRecordingPreviewPlayer({
         positionMs: nextPosition,
         requestId,
         rough: nextPhase !== "end",
+        selectionVisible:
+          nextPhase === "start"
+            ? false
+            : nextPhase === "end"
+              ? true
+              : undefined,
         sessionId: sessionIdRef.current,
       }).catch((cause: unknown) => {
         if (settleRequestRef.current === requestId) {

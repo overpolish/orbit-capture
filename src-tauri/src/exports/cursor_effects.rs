@@ -129,6 +129,7 @@ pub(crate) struct GpuCursor {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(in crate::exports) struct CursorOutputLayout {
   pub output_size: (u32, u32),
   pub image_rect: (f64, f64, f64, f64),
@@ -523,9 +524,8 @@ impl CursorCompositor {
     })
   }
 
-  /// Composes one explicit still-frame request. Live Windows preview never
-  /// calls this path; it exists for clipboard/export operations that need an
-  /// owned bitmap.
+  /// Composes one explicit still-frame request for the non-native fallback.
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   pub(in crate::exports) fn composite_output_rgba(
     &self,
     pixels: &mut [u8],

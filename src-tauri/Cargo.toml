@@ -9,6 +9,9 @@ authors = ["overpolish"]
 license = "GPL-3.0-or-later"
 edition = "2021"
 
+[patch.crates-io]
+block = { path = "vendor/block-0.1.6" }
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]

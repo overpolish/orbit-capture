@@ -10,10 +10,11 @@
 
 use tauri::WebviewWindow;
 
-use super::{PreviewCapabilities, PreviewSurfaceRect};
+use super::{PreviewCapabilities, PreviewSelection, PreviewSurfaceRect};
 use crate::screenshots::{CapturedImage, ScreenshotOutputSettings};
 
 pub(super) const CAPABILITIES: PreviewCapabilities = PreviewCapabilities {
+  native_workspace_editor: false,
   native_recording_preview: false,
   native_screenshot_preview: false,
 };
@@ -40,6 +41,10 @@ impl RecordingPreviewSurface {
   pub(crate) fn begin_layout(&self) {}
 
   pub(crate) fn set_scale(&self, _scale: f64) {}
+
+  pub(crate) fn set_selection(&self, _selection: Option<PreviewSelection>) {}
+
+  pub(crate) fn set_selection_targets(&self, _targets: Option<&[PreviewSelection]>) {}
 
   pub(crate) fn layout(&self, _index: u32, _rect: PreviewSurfaceRect, _defer_resize: bool) {}
 

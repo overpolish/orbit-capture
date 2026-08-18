@@ -33,9 +33,11 @@ pub use encoding::rounded_corners;
 pub(crate) use mesh::validate_mesh;
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) use mesh::MeshGradientPoint;
+#[cfg(not(target_os = "macos"))]
+pub use output::compose_screenshot;
 #[cfg(target_os = "windows")]
 pub(crate) use output::output_dimensions;
-pub use output::{compose_screenshot, ScreenshotOutputSettings};
+pub use output::ScreenshotOutputSettings;
 pub(crate) use output::{output_placement, parse_hex_colour};
 #[cfg(target_os = "macos")]
 pub(crate) use platform::{

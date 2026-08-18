@@ -12,11 +12,11 @@ import { RecordingPreviewPane, RecordingVideoTrackId } from "../types";
 import { usePreviewCapabilities } from "../use-preview-capabilities";
 
 import { InteractivePreviewViewport } from "./interactive-preview-viewport";
+import { NativeRecordingWorkspaceViewport } from "./native-recording-workspace-viewport";
 import { RecordingCanvasTool } from "./recording-crop-toggle";
+import { RECORDING_PREVIEW_PANE_GAP } from "./recording-preview-layout";
 import { ScreenshotCanvasControl } from "./screenshot-canvas-control";
 import { ScreenshotPreviewLayer } from "./screenshot-preview-layer";
-
-const PANE_GAP = 24;
 
 type Entry = {
   canvasRef: RefObject<HTMLCanvasElement | null>;
@@ -167,6 +167,7 @@ export function RecordingOutputPreviewViewport({
   onZoomChange?: (zoomPercent: number) => void;
   zoomPercent?: number;
 }) {
+  const capabilities = usePreviewCapabilities();
   // Canvas-resize bounds arrive in pane coordinates, cumulative from the
   // gesture start, but the viewport compensates in media-box coordinates -
   // and this component re-renders with the committed settings on every move,
@@ -188,8 +189,38 @@ export function RecordingOutputPreviewViewport({
   const width = Math.max(
     1,
     dimensions.reduce((total, size) => total + size.width, 0) +
-      Math.max(0, entries.length - 1) * PANE_GAP,
+      Math.max(0, entries.length - 1) * RECORDING_PREVIEW_PANE_GAP,
   );
+  if (
+    capabilities?.nativeRecordingPreview === true &&
+    capabilities.nativeWorkspaceEditor
+  ) {
+    let x = 0;
+    const panes = entries.map((entry, index) => {
+      const size = dimensions[index];
+      const pane = {
+        height: size.height,
+        index: entry.trackId === "primary" ? 0 : 1,
+        label: `${entry.pane.kind === "camera" ? "Camera" : "Screen"} composed preview`,
+        ref: entry.canvasRef,
+        width: size.width,
+        x,
+        y: (height - size.height) / 2,
+      };
+      x += size.width + RECORDING_PREVIEW_PANE_GAP;
+      return pane;
+    });
+    return (
+      <NativeRecordingWorkspaceViewport
+        ariaLabel="Native recording workspace preview"
+        isBusy={false}
+        isSelecting={tool === "select"}
+        panes={panes}
+        workspaceHeight={height}
+        workspaceWidth={width}
+      />
+    );
+  }
   return (
     <InteractivePreviewViewport<HTMLDivElement>
       getMediaSize={() => ({ height, width })}
@@ -213,7 +244,7 @@ export function RecordingOutputPreviewViewport({
             {entries.map((entry, index) => {
               const size = dimensions[index];
               const left = x;
-              x += size.width + PANE_GAP;
+              x += size.width + RECORDING_PREVIEW_PANE_GAP;
               return (
                 <div
                   className="absolute"

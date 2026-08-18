@@ -6,8 +6,10 @@ import { RefObject } from "react";
 import { CircularProgressBar } from "../../../components/base/circular-progress-bar/circular-progress-bar";
 import { Overlay } from "../../../components/base/overlay/overlay";
 import { RecordingPreviewLayout } from "../types";
+import { usePreviewCapabilities } from "../use-preview-capabilities";
 
 import { InteractivePreviewViewport } from "./interactive-preview-viewport";
+import { NativeRecordingWorkspaceViewport } from "./native-recording-workspace-viewport";
 
 export function RecordingPreviewViewport({
   canvasRefs,
@@ -24,6 +26,29 @@ export function RecordingPreviewViewport({
   onZoomChange?: (zoomPercent: number) => void;
   zoomPercent?: number;
 }) {
+  const capabilities = usePreviewCapabilities();
+  if (
+    capabilities?.nativeRecordingPreview === true &&
+    capabilities.nativeWorkspaceEditor
+  ) {
+    return (
+      <NativeRecordingWorkspaceViewport
+        ariaLabel="Native recording workspace preview"
+        isBusy={isBusy}
+        panes={layout.panes.map((pane, index) => ({
+          height: pane.height,
+          index,
+          label: `${pane.kind === "camera" ? "Camera" : "Screen"} preview`,
+          ref: canvasRefs[index],
+          width: pane.width,
+          x: pane.x,
+          y: pane.y,
+        }))}
+        workspaceHeight={layout.height}
+        workspaceWidth={layout.width}
+      />
+    );
+  }
   return (
     <InteractivePreviewViewport<HTMLDivElement>
       getMediaSize={() => ({ height: layout.height, width: layout.width })}

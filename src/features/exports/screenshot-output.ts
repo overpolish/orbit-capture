@@ -209,6 +209,10 @@ export type ScreenshotCanvasBounds = {
   width: number;
 };
 
+const CENTERED_RESIZE_EDGE = 1 << 16;
+const MAXIMUM_CANVAS_PIXELS = 120_000_000;
+const MINIMUM_CANVAS_SIZE = 64;
+
 export const screenshotLayout = (
   source: { height: number; width: number },
   output: { height: number; width: number },
@@ -260,6 +264,129 @@ export const resizeScreenshotCanvas = (
     screenshotImageWidthPercent: (layout.image.width * 100) / width,
     screenshotImageXPercent: (imageCenterX * 100) / width,
     screenshotImageYPercent: (imageCenterY * 100) / height,
+    width,
+  };
+};
+
+/** Resize a workspace canvas from a native frame-handle gesture. */
+export const resizeScreenshotWorkspaceCanvasEdges = ({
+  deltaX,
+  deltaY,
+  edges: encodedEdges,
+  settings,
+  sources,
+}: {
+  deltaX: number;
+  deltaY: number;
+  edges: number;
+  settings: ScreenshotWorkspaceOutputSettings;
+  sources: { height: number; id: number; width: number }[];
+}): ScreenshotWorkspaceOutputSettings => {
+  const centered = (encodedEdges & CENTERED_RESIZE_EDGE) !== 0;
+  const edges = encodedEdges & ~CENTERED_RESIZE_EDGE;
+  const resizeAxis = (
+    size: number,
+    delta: number,
+    edge: { far: boolean; near: boolean },
+  ) => {
+    if (edge.near) {
+      const movement = Math.min(
+        centered
+          ? (size - MINIMUM_CANVAS_SIZE) / 2
+          : size - MINIMUM_CANVAS_SIZE,
+        delta,
+      );
+      return {
+        far: centered ? size - movement : size,
+        near: movement,
+      };
+    }
+    if (edge.far) {
+      const movement = Math.max(
+        centered
+          ? -(size - MINIMUM_CANVAS_SIZE) / 2
+          : MINIMUM_CANVAS_SIZE - size,
+        delta,
+      );
+      return {
+        far: size + movement,
+        near: centered ? -movement : 0,
+      };
+    }
+    return { far: size, near: 0 };
+  };
+  const resizeAxisToSize = (
+    size: number,
+    nextSize: number,
+    edge: { far: boolean; near: boolean },
+  ) => {
+    if (centered && (edge.near || edge.far)) {
+      const inset = (size - nextSize) / 2;
+      return { far: size - inset, near: inset };
+    }
+    if (edge.near) return { far: size, near: size - nextSize };
+    if (edge.far) return { far: nextSize, near: 0 };
+    return { far: size, near: 0 };
+  };
+  const startWidth = Math.max(1, settings.width);
+  const startHeight = Math.max(1, settings.height);
+  const horizontal = resizeAxis(startWidth, deltaX * startWidth, {
+    far: (edges & 2) !== 0,
+    near: (edges & 1) !== 0,
+  });
+  const vertical = resizeAxis(startHeight, deltaY * startHeight, {
+    far: (edges & 8) !== 0,
+    near: (edges & 4) !== 0,
+  });
+  const horizontalActive = (edges & 3) !== 0;
+  const verticalActive = (edges & 12) !== 0;
+  let width = Math.max(MINIMUM_CANVAS_SIZE, horizontal.far - horizontal.near);
+  let height = Math.max(MINIMUM_CANVAS_SIZE, vertical.far - vertical.near);
+  if (width * height > MAXIMUM_CANVAS_PIXELS) {
+    if (horizontalActive && verticalActive) {
+      const factor = Math.sqrt(MAXIMUM_CANVAS_PIXELS / (width * height));
+      width = Math.floor(width * factor);
+      height = Math.floor(MAXIMUM_CANVAS_PIXELS / width);
+    } else if (horizontalActive) {
+      width = Math.floor(MAXIMUM_CANVAS_PIXELS / height);
+    } else if (verticalActive) {
+      height = Math.floor(MAXIMUM_CANVAS_PIXELS / width);
+    }
+  }
+  width = Math.round(width);
+  height = Math.round(height);
+  const constrainedHorizontal = resizeAxisToSize(startWidth, width, {
+    far: (edges & 2) !== 0,
+    near: (edges & 1) !== 0,
+  });
+  const constrainedVertical = resizeAxisToSize(startHeight, height, {
+    far: (edges & 8) !== 0,
+    near: (edges & 4) !== 0,
+  });
+  const bounds = {
+    height,
+    originX: constrainedHorizontal.near,
+    originY: constrainedVertical.near,
+    width,
+  };
+  return {
+    ...settings,
+    height,
+    items: settings.items.map((itemOutput) => {
+      const source = sources.find(
+        (candidate) => candidate.id === itemOutput.id,
+      );
+      return source
+        ? {
+            ...itemOutput,
+            output: resizeScreenshotCanvas(
+              source,
+              screenshotWorkspaceItemOutput(settings, itemOutput.id),
+              bounds,
+            ),
+          }
+        : itemOutput;
+    }),
     width,
   };
 };

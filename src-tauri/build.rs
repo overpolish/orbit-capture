@@ -46,11 +46,28 @@ fn compile_windows_preview_shaders() {
     Win32::Graphics::Direct3D::{Fxc::D3DCompile, ID3DBlob},
   };
 
-  const SOURCE_PATH: &str = "src/exports/preview_platform/surface_windows/compositor.rs";
+  compile_shader(
+    "src/exports/preview_platform/surface_windows/compositor.rs",
+    "recording_preview",
+  );
+  compile_shader(
+    "src/exports/preview_platform/surface_windows/selection.rs",
+    "recording_selection",
+  );
+}
+
+#[cfg(windows)]
+fn compile_shader(source_path: &str, output_prefix: &str) {
+  use std::{ffi::CString, path::PathBuf};
+  use windows::{
+    core::PCSTR,
+    Win32::Graphics::Direct3D::{Fxc::D3DCompile, ID3DBlob},
+  };
+
   const START: &str = "const SHADER: &str = r#\"";
   const END: &str = "\"#;";
-  println!("cargo:rerun-if-changed={SOURCE_PATH}");
-  let rust = std::fs::read_to_string(SOURCE_PATH).expect("read the Windows preview shader");
+  println!("cargo:rerun-if-changed={source_path}");
+  let rust = std::fs::read_to_string(source_path).expect("read the Windows preview shader");
   let start = rust.find(START).expect("find the preview shader start") + START.len();
   let end = rust[start..]
     .find(END)
@@ -59,10 +76,7 @@ fn compile_windows_preview_shaders() {
   let source = &rust.as_bytes()[start..end];
   let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo supplied OUT_DIR"));
 
-  for (entry, target, filename) in [
-    ("vs_main", "vs_4_0", "recording_preview_vs.cso"),
-    ("ps_main", "ps_4_0", "recording_preview_ps.cso"),
-  ] {
+  for (entry, target, suffix) in [("vs_main", "vs_4_0", "vs"), ("ps_main", "ps_4_0", "ps")] {
     let entry = CString::new(entry).expect("valid shader entry");
     let target = CString::new(target).expect("valid shader target");
     let mut code: Option<ID3DBlob> = None;
@@ -96,6 +110,7 @@ fn compile_windows_preview_shaders() {
     let bytes = unsafe {
       std::slice::from_raw_parts(code.GetBufferPointer().cast::<u8>(), code.GetBufferSize())
     };
-    std::fs::write(output.join(filename), bytes).expect("write compiled preview shader");
+    std::fs::write(output.join(format!("{output_prefix}_{suffix}.cso")), bytes)
+      .expect("write compiled preview shader");
   }
 }

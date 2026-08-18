@@ -2,9 +2,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::exports::CameraOverlaySettings;
-use tauri::{ipc::Channel, AppHandle, Manager};
+use tauri::{ipc::Channel, AppHandle, Emitter, Manager};
 
 use super::*;
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordingPreviewSelectionChangeEvent {
+  pane_index: Option<u32>,
+  session_id: u64,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordingPreviewSelectionGestureEvent {
+  camera_overlay: Option<CameraOverlaySettings>,
+  delta_x: f64,
+  delta_y: f64,
+  edges: u32,
+  operation: u32,
+  pane_index: u32,
+  phase: &'static str,
+  recording_output: Option<RecordingOutputSettings>,
+  scale: f64,
+  session_id: u64,
+}
 
 #[tauri::command]
 pub async fn start_recording_preview_player(
@@ -16,7 +38,77 @@ pub async fn start_recording_preview_player(
   event_channel: Channel<RecordingPreviewPlayerEvent>,
   session_id: u64,
 ) -> Result<RecordingPreviewPlayerInfo, String> {
-  let sources = sources(&app, artifact_id, Some(&settings))?;
+  let mut sources = sources(&app, artifact_id, Some(&settings))?;
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
+  if let Some(surface) = sources.preview_surface.as_mut() {
+    let surface = Arc::get_mut(surface)
+      .ok_or_else(|| "The recording preview surface is already in use".to_owned())?;
+    let event_app = app.clone();
+    surface.enable_editor(Box::new(move |zoom_percent| {
+      let _ = event_app.emit(
+        "recording-preview://transform",
+        RecordingPreviewTransformEvent {
+          session_id,
+          zoom_percent,
+        },
+      );
+    }));
+    let event_app = app.clone();
+    surface.set_selection_callback(Box::new(move |pane_index| {
+      let _ = event_app.emit(
+        "recording-preview://selection-change",
+        RecordingPreviewSelectionChangeEvent {
+          pane_index,
+          session_id,
+        },
+      );
+    }));
+    let event_app = app.clone();
+    surface.set_selection_gesture_callback(Box::new(
+      move |phase, pane_index, operation, edges, scale, delta_x, delta_y| {
+        let manager = event_app.state::<RecordingPreviewPlayerState>();
+        let composition = if let Ok(mut manager) = manager.0.try_lock() {
+          let _ = manager
+            .handle_selection_gesture(phase, pane_index, operation, edges, scale, delta_x, delta_y);
+          manager.selection_composition()
+        } else {
+          None
+        };
+        let phase = match phase {
+          super::super::preview_platform::SelectionGesturePhase::Begin => "begin",
+          super::super::preview_platform::SelectionGesturePhase::Update => "update",
+          super::super::preview_platform::SelectionGesturePhase::End => "end",
+          super::super::preview_platform::SelectionGesturePhase::Cancel => "cancel",
+        };
+        let operation = match operation {
+          super::super::preview_platform::SelectionGestureOperation::Move => 0,
+          super::super::preview_platform::SelectionGestureOperation::Resize => 1,
+          super::super::preview_platform::SelectionGestureOperation::Radius => 2,
+          super::super::preview_platform::SelectionGestureOperation::FrameResize => 3,
+          super::super::preview_platform::SelectionGestureOperation::FrameRadius => 4,
+          super::super::preview_platform::SelectionGestureOperation::CropMove => 5,
+          super::super::preview_platform::SelectionGestureOperation::CropResize => 6,
+        };
+        let _ = event_app.emit(
+          "recording-preview://selection-gesture",
+          RecordingPreviewSelectionGestureEvent {
+            camera_overlay: composition.as_ref().map(|value| value.camera_overlay),
+            delta_x,
+            delta_y,
+            edges,
+            operation,
+            pane_index,
+            phase,
+            recording_output: composition.map(|value| value.recording_output),
+            scale,
+            session_id,
+          },
+        );
+      },
+    ));
+    surface.set_selection_snapping(true);
+    surface.set_editor_active(false);
+  }
   let info = RecordingPreviewPlayerInfo {
     duration_ms: sources.duration_ms,
     layout: sources.layout.clone(),
@@ -66,20 +158,23 @@ pub async fn set_recording_preview_composition(
     .composition_settings
     .clone()
     .ok_or_else(|| "The recording preview composition is unavailable".to_owned())?;
-  #[cfg(target_os = "windows")]
-  let bake_changed = settings
+  let next = PreviewCompositionSettings {
+    bake_camera,
+    camera_overlay: camera_overlay.clone(),
+    recording_output: recording_output.clone(),
+  };
+  let current = settings
     .read()
-    .map_err(|_| "The recording preview composition is unavailable".to_owned())?
-    .bake_camera
-    != bake_camera;
+    .map_err(|_| "The recording preview composition is unavailable".to_owned())?;
+  if *current == next {
+    return Ok(());
+  }
+  #[cfg(target_os = "windows")]
+  let bake_changed = current.bake_camera != bake_camera;
+  drop(current);
   *settings
     .write()
-    .map_err(|_| "The recording preview composition is unavailable".to_owned())? =
-    PreviewCompositionSettings {
-      bake_camera,
-      camera_overlay: camera_overlay.clone(),
-      recording_output: recording_output.clone(),
-    };
+    .map_err(|_| "The recording preview composition is unavailable".to_owned())? = next;
   if !manager.is_playing {
     // A composition change leaves the decoded frame and its cursor valid, so
     // Windows redraws the paused still synchronously from the cached sources
@@ -210,6 +305,7 @@ pub fn request_recording_preview_full_resolution(
     .lock()
     .map_err(|_| "The recording preview player is unavailable".to_owned())?;
   manager.require_session(session_id)?;
+  manager.enable_full_resolution()?;
   if manager.is_playing {
     return Ok(());
   }
@@ -260,6 +356,7 @@ pub fn seek_recording_preview(
   position_ms: u64,
   request_id: u64,
   rough: bool,
+  selection_visible: Option<bool>,
   session_id: u64,
 ) -> Result<(), String> {
   let mut manager = state
@@ -269,6 +366,16 @@ pub fn seek_recording_preview(
   manager.require_session(session_id)?;
   if request_id < manager.latest_seek_request {
     return Ok(());
+  }
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
+  if let Some(visible) = selection_visible {
+    if let Some(surface) = manager
+      .sources
+      .as_ref()
+      .and_then(|sources| sources.preview_surface.as_ref())
+    {
+      surface.set_selection_visible(visible);
+    }
   }
   manager.latest_seek_request = request_id;
   manager.rough_seek = rough;

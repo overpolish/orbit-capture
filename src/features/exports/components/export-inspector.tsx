@@ -151,7 +151,7 @@ export function ExportInspector({
     settings: ScreenshotOutputSettings,
   ) => void;
   onResolutionScaleChange?: (scale: number) => void;
-  onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
+  onSelectedTrackChange?: (trackId: RecordingTrackId | null) => void;
   onSelectedTrackVolumeChange?: (decibels: number) => void;
   recordingOutput?: RecordingOutputSettings;
   resolutionScalePercent?: number;

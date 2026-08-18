@@ -13,6 +13,7 @@ mod naming;
 mod preferences;
 pub(crate) mod preview;
 pub(crate) mod preview_platform;
+mod preview_workspace_model;
 pub(crate) mod recording_preview;
 pub(crate) mod recording_preview_player;
 mod recovery;
@@ -326,7 +327,7 @@ pub struct RecordingCursor {
   pub path: PathBuf,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CameraOverlaySettings {
   pub camera_x_percent: f64,

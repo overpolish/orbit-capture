@@ -250,7 +250,7 @@ export function ScreenshotSection({
                 <ToggleButton
                   animation="scale-selected"
                   aria-keyshortcuts="C"
-                  aria-label="Edit screenshot placement and crop"
+                  aria-label="Crop screenshot"
                   isSelected={tool === "crop"}
                   onChange={(selected) => {
                     if (selectedItemId === null)
@@ -266,7 +266,7 @@ export function ScreenshotSection({
               </span>
               <Tooltip placement="bottom">
                 <span className="flex items-center gap-2">
-                  Edit placement and crop
+                  Crop
                   <Keyboard size="xs" variant="tooltip">
                     C
                   </Keyboard>
@@ -302,10 +302,6 @@ export function ScreenshotSection({
             x: Math.min(event.clientX, window.innerWidth - 196),
             y: Math.min(event.clientY, window.innerHeight - 132),
           });
-        }}
-        onItemDeselect={() => {
-          // Clicking the empty canvas only exits the active manipulation.
-          setTool(null);
         }}
         onItemSelect={onSelectedItemChange}
         onNeedFullResolution={onNeedFullResolution}
@@ -398,7 +394,7 @@ export function RecordingSection({
     trackId: RecordingVideoTrackId,
     settings: RecordingOutputSettings[RecordingVideoTrackId],
   ) => void;
-  onSelectedTrackChange?: (trackId: RecordingTrackId) => void;
+  onSelectedTrackChange?: (trackId: RecordingTrackId | null) => void;
   onVideoTrackOrderChange?: (tracks: RecordingVideoTrackId[]) => void;
   recordingOutput?: RecordingOutputSettings;
   recordingPreviewError?: string | null;

@@ -12,6 +12,7 @@ import { PreviewCapabilities, previewCapabilities } from "./api";
 const UNSUPPORTED: PreviewCapabilities = {
   nativeRecordingPreview: false,
   nativeScreenshotPreview: false,
+  nativeWorkspaceEditor: false,
 };
 
 let cached: PreviewCapabilities | undefined;

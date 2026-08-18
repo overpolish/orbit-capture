@@ -7,8 +7,10 @@ use tauri::{image::Image, ipc::Channel, AppHandle};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use super::{platform, sources};
-use crate::exports::{cursor_effects::CursorEffectSettings, RecordingOutputSettings};
-#[cfg(not(target_os = "windows"))]
+use crate::exports::{
+  cursor_effects::CursorEffectSettings, CameraOverlaySettings, RecordingOutputSettings,
+};
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use crate::{
   exports::cursor_effects::CursorOutputLayout,
   screenshots::{compose_screenshot, output_placement, CapturedImage},
@@ -40,36 +42,6 @@ pub(super) fn target_width(source_width: u32, source_height: u32) -> u32 {
     .max(1.0)) as u32
 }
 
-/// One full-resolution source frame as JPEG, so webview tools that need real
-/// pixels (the crop magnifier) have a bitmap even though display happens on
-/// the native surface below the webview.
-#[tauri::command]
-pub async fn copy_recording_preview_source_frame(
-  app: AppHandle,
-  artifact_id: u64,
-  position_ms: u64,
-  track: u32,
-) -> Result<tauri::ipc::Response, String> {
-  let sources = sources(&app, artifact_id, None)?;
-  let (path, duration_ms) = if track == 1 {
-    (
-      sources
-        .camera_path
-        .clone()
-        .ok_or_else(|| "The recording has no camera track".to_owned())?,
-      sources.camera_duration_ms.unwrap_or(sources.duration_ms),
-    )
-  } else {
-    (sources.screen_path.clone(), sources.duration_ms)
-  };
-  let jpeg = tauri::async_runtime::spawn_blocking(move || {
-    platform::source_frame_jpeg(&path, position_ms, duration_ms)
-  })
-  .await
-  .map_err(|error| error.to_string())??;
-  Ok(tauri::ipc::Response::new(jpeg))
-}
-
 /// Copies the composed primary frame at the playhead. Decoding and bitmap
 /// composition happen only for this explicit action; live preview stays on
 /// the native GPU surface and does not cross IPC.
@@ -78,23 +50,34 @@ pub async fn copy_recording_preview_frame_to_clipboard(
   app: AppHandle,
   artifact_id: u64,
   position_ms: u64,
+  bake_camera: bool,
+  camera_overlay: CameraOverlaySettings,
   cursor_effects: CursorEffectSettings,
   recording_output: RecordingOutputSettings,
 ) -> Result<(), String> {
   let sources = sources(&app, artifact_id, None)?;
-  #[cfg(target_os = "windows")]
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
   let composed = tauri::async_runtime::spawn_blocking(move || {
-    platform::composed_frame_image(&sources, position_ms, cursor_effects, &recording_output)
+    platform::composed_frame_image(
+      &sources,
+      position_ms,
+      bake_camera,
+      camera_overlay,
+      cursor_effects,
+      &recording_output,
+    )
   })
   .await
   .map_err(|error| error.to_string())??;
-  #[cfg(not(target_os = "windows"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  let _ = (bake_camera, camera_overlay);
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   let path = sources.screen_path.clone();
-  #[cfg(not(target_os = "windows"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   let duration_ms = sources.duration_ms;
-  #[cfg(not(target_os = "windows"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   let cursor = sources.cursor.clone();
-  #[cfg(not(target_os = "windows"))]
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   let composed = tauri::async_runtime::spawn_blocking(move || {
     let jpeg = platform::source_frame_jpeg(&path, position_ms, duration_ms)?;
     let decoded = image::load_from_memory(&jpeg)

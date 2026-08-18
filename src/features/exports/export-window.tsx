@@ -8,12 +8,19 @@ import {
   browseExportDirectory,
   cancelExport,
   cancelExportJob,
+  centerRecordingPreviewWorkspace,
+  centerScreenshotPreviewWorkspace,
   copyExportToClipboard,
   saveExport,
   setExportDirectory,
   setScreenshotBackgroundRadius,
   setScreenshotRadius,
 } from "./api";
+import {
+  cameraOverlayHasCrop,
+  cameraOutputWithOverlayCrop,
+  cameraOverlayWithCameraCrop,
+} from "./camera-overlay-geometry";
 import { ExportPanel } from "./components/export-panel";
 import {
   cameraExportSettings,
@@ -96,7 +103,7 @@ export function ExportWindow() {
   } | null>(null);
   const [selectedTrack, setSelectedTrack] = useState<{
     artifactId: number;
-    trackId: RecordingTrackId;
+    trackId: RecordingTrackId | null;
   } | null>(null);
   const [audioTrackVolumes, setAudioTrackVolumes] = useState<{
     artifactId: number;
@@ -175,7 +182,8 @@ export function ExportWindow() {
   const selectedTrackId: RecordingTrackId | null =
     artifact?.kind === "recording"
       ? selectedTrack?.artifactId === artifact.id &&
-        (selectedTrack.trackId === "primary" ||
+        (selectedTrack.trackId === null ||
+          selectedTrack.trackId === "primary" ||
           selectedTrack.trackId === "camera" ||
           artifact.audioTracks.some(
             (track) =>
@@ -234,7 +242,17 @@ export function ExportWindow() {
     setCompression(next.compression);
     setCursorEffects(next.cursorEffects);
     setResolutionScalePercent(next.resolutionScalePercent);
-    setRecordingOutput(next.recordingOutput);
+    setRecordingOutput({
+      ...next.recordingOutput,
+      camera: {
+        ...next.recordingOutput.camera,
+        backgroundRadiusPercent: 0,
+      },
+      primary: {
+        ...next.recordingOutput.primary,
+        backgroundRadiusPercent: 0,
+      },
+    });
     screenshotRadiusRef.current = next.screenshotOutput.radiusPercent;
     screenshotBackgroundRadiusRef.current =
       next.screenshotOutput.backgroundRadiusPercent;
@@ -245,6 +263,30 @@ export function ExportWindow() {
   }, []);
   const editGesture = useExportEditHistory({
     apply: applyEditState,
+    onApply: (before, after) => {
+      const screenshotFrameChanged =
+        before.screenshotOutput.width !== after.screenshotOutput.width ||
+        before.screenshotOutput.height !== after.screenshotOutput.height;
+      const recordingFrameChanged = (["primary", "camera"] as const).some(
+        (track) =>
+          before.recordingOutput[track].width !==
+            after.recordingOutput[track].width ||
+          before.recordingOutput[track].height !==
+            after.recordingOutput[track].height,
+      );
+      if (
+        (artifact?.kind === "screenshot" && !screenshotFrameChanged) ||
+        (artifact?.kind === "recording" && !recordingFrameChanged)
+      )
+        return;
+      requestAnimationFrame(() => {
+        const center =
+          artifact?.kind === "screenshot"
+            ? centerScreenshotPreviewWorkspace
+            : centerRecordingPreviewWorkspace;
+        void center().catch(() => undefined);
+      });
+    },
     resetKey:
       artifact?.kind === "screenshot"
         ? `${artifact.id.toString()}:${artifact.items.map((item) => item.id).join(":")}`
@@ -400,6 +442,66 @@ export function ExportWindow() {
     saveProgress.reset();
   };
 
+  const handleBakeCameraChange = useCallback(
+    (nextBake: boolean) => {
+      if (
+        nextBake &&
+        artifact?.kind === "recording" &&
+        artifact.camera &&
+        includePrimaryVideo &&
+        includeCamera
+      ) {
+        setCameraOverlay(
+          cameraOverlayWithCameraCrop({
+            cameraOutput: recordingOutput.camera,
+            cameraSource: {
+              height: artifact.camera.height,
+              width: artifact.camera.width,
+            },
+            screenOutput: recordingOutput.primary,
+            settings: cameraOverlay,
+          }),
+        );
+      } else if (
+        !nextBake &&
+        artifact?.kind === "recording" &&
+        artifact.camera &&
+        includePrimaryVideo &&
+        includeCamera &&
+        cameraOverlayHasCrop({
+          cameraSource: {
+            height: artifact.camera.height,
+            width: artifact.camera.width,
+          },
+          screenOutput: recordingOutput.primary,
+          settings: cameraOverlay,
+        })
+      ) {
+        const camera = artifact.camera;
+        setRecordingOutput((current) => ({
+          ...current,
+          camera: cameraOutputWithOverlayCrop({
+            cameraOutput: current.camera,
+            cameraSource: {
+              height: camera.height,
+              width: camera.width,
+            },
+            screenOutput: current.primary,
+            settings: cameraOverlay,
+          }),
+        }));
+      }
+      setBakeCamera(nextBake);
+    },
+    [
+      artifact,
+      cameraOverlay,
+      includeCamera,
+      includePrimaryVideo,
+      recordingOutput,
+    ],
+  );
+
   return (
     <ExportEditGestureContext value={editGesture}>
       <ExportPanel
@@ -425,7 +527,7 @@ export function ExportWindow() {
         isPreparingRecordingAudio={isPreparingRecordingPreview}
         isPreparingRecordingPreview={isPreparingRecordingPreview}
         isSaving={isSaving}
-        onBakeCameraChange={setBakeCamera}
+        onBakeCameraChange={handleBakeCameraChange}
         onBrowse={() => {
           browseExportDirectory()
             .then(async (chosen) => {

@@ -58,6 +58,8 @@ cbuffer Canvas : register(b0) {
   float4 camera_frame; // output-space x/y/width/height
   float4 camera_crop; // camera source-space x/y/width/height
   float4 camera_effects; // radius, enabled, shadow sigma, camera on top
+  float4 magnifier; // output-space center x/y, diameter, source zoom
+  float4 magnifier_options; // explicit camera source, active crop edges
   float4 native_cursor_hotspots[8]; // normalized atlas hotspot x/y
   uint4 options; // seed, mesh enabled, point count, shadow enabled
   uint4 cursor_options; // artwork, enabled, clip to video, foreground only
@@ -66,6 +68,7 @@ Texture2D source_image : register(t0);
 Texture2DArray native_cursor_images : register(t1);
 Texture2D camera_image : register(t2);
 SamplerState linear_sampler : register(s0);
+SamplerState point_sampler : register(s1);
 
 float hash(float2 position, uint seed) {
   float value = sin(dot(position, float2(127.1, 311.7)) + (float)seed * 0.017) * 43758.5453;
@@ -239,6 +242,48 @@ float4 ps_main(float4 position : SV_Position) : SV_Target {
   if (cursor_options.w == 0) {
     result.rgb = saturate(result.rgb + hash(pixel, 0x9e3779b9) / 255.0);
   }
+  // The crop editor magnifier samples the retained source directly. Keep the
+  // sample point- filtered so individual source pixels remain legible.
+  if (magnifier.z > 0.0) {
+    float2 center = magnifier.xy;
+    float2 box_size = magnifier.zz;
+    float2 box_origin = center - box_size * 0.5;
+    float corner_radius = max(magnifier.z / 24.0, 1.0);
+    float distance = rounded_distance(pixel, float4(box_origin, box_size), corner_radius);
+    if (distance <= 0.0) {
+      bool use_camera = magnifier_options.x != 0.0;
+      float2 source_pixel;
+      float2 dimensions;
+      if (use_camera) {
+        float2 local = (center - camera_frame.xy) / camera_frame.zw;
+        source_pixel = camera_crop.xy + local * camera_crop.zw
+          + (pixel - center) / max(magnifier.w, 1.0);
+        uint width, height;
+        camera_image.GetDimensions(width, height);
+        dimensions = float2(width, height);
+        result = camera_image.Sample(point_sampler, source_pixel / dimensions);
+      } else {
+        float2 local = (center - image_rect.xy) / image_rect.zw;
+        source_pixel = local * output_source.zw
+          + (pixel - center) / max(magnifier.w, 1.0);
+        dimensions = output_source.zw;
+        result = source_image.Sample(point_sampler, source_pixel / dimensions);
+      }
+      uint edges = (uint)magnifier_options.y;
+      bool shade = ((edges & 1u) != 0u && pixel.x < center.x)
+        || ((edges & 2u) != 0u && pixel.x >= center.x)
+        || ((edges & 4u) != 0u && pixel.y < center.y)
+        || ((edges & 8u) != 0u && pixel.y >= center.y);
+      if (shade) {
+        float3 shade_color = magnifier_options.z != 0.0
+          ? float3(0.0, 0.0, 0.0) : float3(1.0, 1.0, 1.0);
+        result.rgb = lerp(result.rgb, shade_color, 0.1);
+      }
+      float border_coverage = smoothstep(-1.5, -0.5, distance);
+      result.rgb = lerp(result.rgb, float3(0.15, 0.15, 0.16), border_coverage);
+      result.a = 1.0;
+    }
+  }
   // DirectComposition consumes premultiplied alpha. Clip every composed layer
   // to the rounded canvas and premultiply only once at the final boundary.
   result *= background_alpha;
@@ -267,6 +312,8 @@ struct Constants {
   camera_frame: [f32; 4],
   camera_crop: [f32; 4],
   camera_effects: [f32; 4],
+  magnifier: [f32; 4],
+  magnifier_options: [f32; 4],
   native_cursor_hotspots: [[f32; 4]; 8],
   options: [u32; 4],
   cursor_options: [u32; 4],
@@ -279,6 +326,7 @@ pub(super) struct Compositor {
   layer_blend: ID3D11BlendState,
   pixel_shader: ID3D11PixelShader,
   sampler: ID3D11SamplerState,
+  point_sampler: ID3D11SamplerState,
   vertex_shader: ID3D11VertexShader,
 }
 
@@ -567,6 +615,17 @@ impl Compositor {
       )
     }
     .map_err(|error| error.to_string())?;
+    let point_description = D3D11_SAMPLER_DESC {
+      Filter: windows::Win32::Graphics::Direct3D11::D3D11_FILTER_MIN_MAG_MIP_POINT,
+      AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+      AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+      AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+      MaxLOD: f32::MAX,
+      ..Default::default()
+    };
+    let mut point_sampler = None;
+    unsafe { device.CreateSamplerState(&point_description, Some(&mut point_sampler)) }
+      .map_err(|error| error.to_string())?;
     let cursors = [
       (IDC_ARROW, "Arrow", "aero_arrow.cur"),
       (IDC_IBEAM, "IBeam", "beam_r.cur"),
@@ -642,6 +701,8 @@ impl Compositor {
       pixel_shader: pixel_shader
         .ok_or_else(|| "D3D11 created no preview pixel shader".to_owned())?,
       sampler: sampler.ok_or_else(|| "D3D11 created no preview sampler".to_owned())?,
+      point_sampler: point_sampler
+        .ok_or_else(|| "D3D11 created no preview point sampler".to_owned())?,
       vertex_shader: vertex_shader
         .ok_or_else(|| "D3D11 created no preview vertex shader".to_owned())?,
     })
@@ -733,6 +794,7 @@ impl Compositor {
     settings: &ScreenshotOutputSettings,
     composition: super::ComposedFrame,
     camera: Option<(&SourceTexture, BakeGeometry, bool, bool)>,
+    magnifier: Option<super::CropMagnifier>,
   ) -> Result<(), String> {
     let placement = output_placement(source.size.0, source.size.1, settings)?;
     let mut mesh_points = [[0.0; 4]; 8];
@@ -864,6 +926,8 @@ impl Compositor {
           if camera_on_top { 1.0 } else { 0.0 },
         ]
       }),
+      magnifier: magnifier.map_or([0.0; 4], |value| value.geometry),
+      magnifier_options: magnifier.map_or([0.0; 4], |value| value.options),
       native_cursor_hotspots: self.cursor_hotspots,
       options: [
         settings.mesh_seed,
@@ -932,6 +996,7 @@ impl Compositor {
         ]),
       );
       context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
+      context.PSSetSamplers(1, Some(&[Some(self.point_sampler.clone())]));
       context.Draw(3, 0);
       context.PSSetShaderResources(0, Some(&[None, None, None]));
       context.OMSetBlendState(None::<&ID3D11BlendState>, None, u32::MAX);

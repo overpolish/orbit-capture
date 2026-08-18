@@ -43,11 +43,13 @@ use macos as backend;
 #[cfg(target_os = "windows")]
 use windows as backend;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) use backend::composed_frame_image;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub(super) use backend::source_frame_jpeg;
 #[cfg(target_os = "windows")]
 pub(crate) use backend::GpuVideoReader;
 pub(super) use backend::{
-  generate_thumbnails, playback_factors, send_frame, source_frame_jpeg, spawn_video, StillDecoder,
-  VideoFramePayload, NATIVE_STILLS,
+  generate_thumbnails, playback_factors, send_frame, spawn_video, StillDecoder, VideoFramePayload,
+  NATIVE_STILLS,
 };

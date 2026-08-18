@@ -67,6 +67,13 @@ impl NativeStillDecoder {
       let _ = thread.join();
     }
   }
+
+  pub(crate) fn is_finished(&self) -> bool {
+    self
+      .thread
+      .as_ref()
+      .is_some_and(std::thread::JoinHandle::is_finished)
+  }
 }
 
 fn run(

@@ -7,57 +7,6 @@ use crate::{
   screenshots::{self, CapturedImage, ScreenshotOutputSettings, StillOverlay},
 };
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn composed_layers_rgba(
-  screen: &CapturedImage,
-  output: &ScreenshotOutputSettings,
-  position_ms: u64,
-  cursor: Option<(&CursorPreview, CapturedImage)>,
-  camera: Option<&CapturedImage>,
-  camera_overlay: Option<CameraOverlaySettings>,
-  camera_drop_shadow: bool,
-  camera_on_top: bool,
-  clip_cursor_at_video_edge: bool,
-) -> Result<CapturedImage, String> {
-  let cursor_image = cursor.as_ref().map(|(_, image)| image);
-  let placement = screenshots::output_placement(screen.width, screen.height, output)?;
-  let mapped_cursor = cursor.as_ref().map(|(cursor, image)| {
-    let scale_x = f64::from(placement.image_width) / f64::from(cursor.canvas_width.max(1));
-    let scale_y = f64::from(placement.image_height) / f64::from(cursor.canvas_height.max(1));
-    (
-      (placement.image_x + f64::from(cursor.x) * scale_x).round() as i32,
-      (placement.image_y + f64::from(cursor.y) * scale_y).round() as i32,
-      (f64::from(image.width) * scale_x).round().max(1.0) as u32,
-      (f64::from(image.height) * scale_y).round().max(1.0) as u32,
-    )
-  });
-  let overlay = camera_overlay
-    .map(|settings| {
-      camera_still_overlay(
-        camera,
-        output,
-        settings,
-        mapped_cursor,
-        cursor_image,
-        camera_drop_shadow,
-        camera_on_top,
-      )
-    })
-    .transpose()?
-    .or_else(|| cursor_still_overlay(cursor.as_ref(), mapped_cursor));
-  screenshots::compose_output_layers(
-    screen,
-    output,
-    position_ms as f64 / 1_000.0,
-    true,
-    cursor_image,
-    camera,
-    overlay.as_ref(),
-    clip_cursor_at_video_edge,
-    false,
-  )
-}
-
 pub(super) fn still_overlay(
   screen: &CapturedImage,
   output: &ScreenshotOutputSettings,

@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import { listen } from "@tauri-apps/api/event";
 import { RefObject, useEffect, useRef } from "react";
 
-import { layoutRecordingPreviewSurface } from "./api";
+import {
+  layoutRecordingPreviewSurface,
+  requestRecordingPreviewFullResolution,
+  setRecordingPreviewZoom,
+} from "./api";
 import { RecordingOutputSettings } from "./screenshot-output";
 import { CameraOverlaySettings } from "./types";
 import { usePreviewCapabilities } from "./use-preview-capabilities";
@@ -170,30 +175,257 @@ export const clearBackdropMasks = () => {
   }
 };
 
+export type RecordingSelectionGestureEvent = {
+  deltaX: number;
+  deltaY: number;
+  edges: number;
+  operation:
+    | "cropMove"
+    | "cropResize"
+    | "frameRadius"
+    | "frameResize"
+    | "move"
+    | "radius"
+    | "resize";
+  paneIndex: number;
+  phase: "begin" | "update" | "end" | "cancel";
+  scale: number;
+  cameraOverlay?: CameraOverlaySettings;
+  recordingOutput?: RecordingOutputSettings;
+};
+
 export function useRecordingPreviewSurface({
   bakeCamera,
   cameraCanvasRef,
   cameraOverlay,
   isEnabled,
+  isPlaying = false,
+  nativeEditorOwnsLayout = false,
+  nativeLayoutHasPanes,
+  nativeLayoutKey,
   onError,
+  onSelectionChange,
+  onSelectionGesture,
+  onZoomChange,
   recordingOutput,
   screenCanvasRef,
+  selection,
+  selectionTargets,
   sessionIdRef,
   startedRef,
+  zoomPercent,
 }: {
   bakeCamera: boolean;
   cameraCanvasRef: RefObject<HTMLCanvasElement | null>;
   cameraOverlay: CameraOverlaySettings;
   isEnabled: boolean;
+  nativeLayoutHasPanes: boolean;
+  nativeLayoutKey: string;
   onError: (message: string) => void;
   recordingOutput: RecordingOutputSettings;
   screenCanvasRef: RefObject<HTMLCanvasElement | null>;
   sessionIdRef: RefObject<number>;
   startedRef: RefObject<boolean>;
+  isPlaying?: boolean;
+  nativeEditorOwnsLayout?: boolean;
+  onSelectionChange?: (paneIndex: number | null) => void;
+  onSelectionGesture?: (event: RecordingSelectionGestureEvent) => void;
+  onZoomChange?: (zoomPercent: number) => void;
+  selection?: {
+    paneIndex: number;
+    radiusPercent: number;
+    rect: { height: number; width: number; x: number; y: number };
+    cropMode?: boolean;
+    image?: { height: number; width: number; x: number; y: number };
+    layerId?: number;
+  } | null;
+  selectionTargets?:
+    | {
+        paneIndex: number;
+        radiusPercent: number;
+        rect: { height: number; width: number; x: number; y: number };
+        cropMode?: boolean;
+        image?: { height: number; width: number; x: number; y: number };
+        layerId?: number;
+      }[]
+    | null;
+  zoomPercent?: number;
 }) {
   const nativeSurface = usePreviewCapabilities()?.nativeRecordingPreview;
   const compositionRef = useRef({ bakeCamera, cameraOverlay, recordingOutput });
+  const selectionRef = useRef(selection);
+  selectionRef.current = isPlaying ? null : selection;
+  const selectionTargetsRef = useRef(selectionTargets);
+  selectionTargetsRef.current = isPlaying ? null : selectionTargets;
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
+  const onSelectionGestureRef = useRef(onSelectionGesture);
+  onSelectionGestureRef.current = onSelectionGesture;
+  const selectionGestureActiveRef = useRef(false);
+  const fullResolutionSessionRef = useRef<number | null>(null);
+  const layoutRequestIdRef = useRef(0);
+  const measureRef = useRef<() => void>(() => undefined);
+  const nativeZoomEchoRef = useRef<number | undefined>(undefined);
+  const zoomPercentRef = useRef(zoomPercent);
+  zoomPercentRef.current = zoomPercent;
   compositionRef.current = { bakeCamera, cameraOverlay, recordingOutput };
+
+  useEffect(() => {
+    if (!isEnabled || !nativeEditorOwnsLayout) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<{ sessionId: number; zoomPercent: number }>(
+      "recording-preview://transform",
+      (event) => {
+        if (
+          !disposed &&
+          event.payload.sessionId === sessionIdRef.current &&
+          Number.isFinite(event.payload.zoomPercent)
+        ) {
+          const roundedZoom = Math.round(event.payload.zoomPercent);
+          nativeZoomEchoRef.current =
+            roundedZoom === zoomPercentRef.current ? undefined : roundedZoom;
+          if (
+            event.payload.zoomPercent > 100 &&
+            fullResolutionSessionRef.current !== event.payload.sessionId
+          ) {
+            fullResolutionSessionRef.current = event.payload.sessionId;
+            void requestRecordingPreviewFullResolution(
+              event.payload.sessionId,
+            ).catch((cause: unknown) => {
+              if (!disposed) onError(String(cause));
+            });
+          }
+          onZoomChange?.(roundedZoom);
+        }
+      },
+    ).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [isEnabled, nativeEditorOwnsLayout, onError, onZoomChange, sessionIdRef]);
+
+  useEffect(() => {
+    if (
+      !isEnabled ||
+      !nativeEditorOwnsLayout ||
+      zoomPercent === undefined ||
+      !startedRef.current
+    )
+      return;
+    const nativeZoom = nativeZoomEchoRef.current;
+    if (nativeZoom !== undefined) {
+      if (nativeZoom === zoomPercent) nativeZoomEchoRef.current = undefined;
+      return;
+    }
+    void setRecordingPreviewZoom(sessionIdRef.current, zoomPercent).catch(
+      (cause: unknown) => {
+        onError(String(cause));
+      },
+    );
+  }, [
+    isEnabled,
+    nativeEditorOwnsLayout,
+    onError,
+    sessionIdRef,
+    startedRef,
+    zoomPercent,
+  ]);
+
+  useEffect(() => {
+    if (!isEnabled || !nativeEditorOwnsLayout) return;
+    let disposed = false;
+    const disposers: (() => void)[] = [];
+    void listen<{ paneIndex: number | null; sessionId: number }>(
+      "recording-preview://selection-change",
+      (event) => {
+        const payload = event.payload;
+        if (
+          disposed ||
+          payload.sessionId !== sessionIdRef.current ||
+          (payload.paneIndex !== null && !Number.isInteger(payload.paneIndex))
+        )
+          return;
+        onSelectionChangeRef.current?.(payload.paneIndex);
+      },
+    ).then((dispose) => {
+      if (disposed) dispose();
+      else disposers.push(dispose);
+    });
+    void listen<
+      Omit<RecordingSelectionGestureEvent, "operation"> & {
+        operation: number;
+        sessionId: number;
+      }
+    >("recording-preview://selection-gesture", (event) => {
+      const payload = event.payload;
+      if (
+        disposed ||
+        payload.sessionId !== sessionIdRef.current ||
+        !Number.isFinite(payload.deltaX) ||
+        !Number.isFinite(payload.deltaY) ||
+        !Number.isInteger(payload.edges) ||
+        ![0, 1, 2, 3, 4, 5, 6].includes(payload.operation) ||
+        !Number.isInteger(payload.paneIndex) ||
+        !Number.isFinite(payload.scale) ||
+        !["begin", "update", "end", "cancel"].includes(payload.phase)
+      )
+        return;
+      // Crop is a React-mirrored display mode. Its uncropped composition must
+      // be allowed to follow a layer selection immediately; freezing layout
+      // here leaves the native OSC on the new layer over the previous layer's
+      // pixels until mouse-up.
+      if (payload.phase === "begin")
+        selectionGestureActiveRef.current = payload.operation < 5;
+      else if (payload.phase === "end" || payload.phase === "cancel")
+        selectionGestureActiveRef.current = false;
+      onSelectionGestureRef.current?.({
+        cameraOverlay: payload.cameraOverlay,
+        deltaX: payload.deltaX,
+        deltaY: payload.deltaY,
+        edges: payload.edges,
+        operation:
+          payload.operation === 0
+            ? "move"
+            : payload.operation === 1
+              ? "resize"
+              : payload.operation === 2
+                ? "radius"
+                : payload.operation === 3
+                  ? "frameResize"
+                  : payload.operation === 4
+                    ? "frameRadius"
+                    : payload.operation === 5
+                      ? "cropMove"
+                      : "cropResize",
+        paneIndex: payload.paneIndex,
+        phase: payload.phase,
+        recordingOutput: payload.recordingOutput,
+        scale: payload.scale,
+      });
+      if (payload.phase === "end" || payload.phase === "cancel") {
+        // Pointer-rate composition is native, so React-driven layout sync is
+        // suppressed during the gesture. Reconcile once React has committed
+        // its final semantic frame; otherwise the native state can remain
+        // newer than React until some unrelated workarea interaction.
+        requestAnimationFrame(() => {
+          if (!disposed) measureRef.current();
+        });
+      }
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else disposers.push(dispose);
+    });
+    return () => {
+      disposed = true;
+      for (const dispose of disposers) dispose();
+    };
+  }, [isEnabled, nativeEditorOwnsLayout, sessionIdRef]);
+
   useEffect(() => {
     // Wait for the capability probe rather than guessing: masking backdrops
     // for panes that will never render would punch holes through the UI.
@@ -206,7 +438,6 @@ export function useRecordingPreviewSurface({
       acknowledgeTransform: boolean;
       value: Parameters<typeof layoutRecordingPreviewSurface>[0];
     } | null = null;
-    let requestId = 0;
     const queueLayout = (
       value: Parameters<typeof layoutRecordingPreviewSurface>[0],
       acknowledgeTransform = false,
@@ -225,13 +456,14 @@ export function useRecordingPreviewSurface({
         return;
       }
       lastLayout = nextLayout;
+      const requestId = ++layoutRequestIdRef.current;
       pendingLayout = {
         acknowledgeTransform:
           acknowledgeTransform ||
           (pendingLayout?.acknowledgeTransform ?? false),
         value: {
           ...value,
-          requestId: ++requestId,
+          requestId,
         },
       };
       flush();
@@ -256,6 +488,13 @@ export function useRecordingPreviewSurface({
         });
     };
     const measure = (acknowledgeTransform = false) => {
+      // Pointer-rate recording edits are rendered directly by the retained
+      // native workspace. ResizeObserver still sees React's live semantic
+      // mirror changing the invisible geometry markers; feeding those bounds
+      // back into native during the same gesture makes the two owners fight
+      // and visibly flicker. Reconcile exactly once from the final React state
+      // after end/cancel (scheduled by the gesture listener above).
+      if (selectionGestureActiveRef.current) return;
       if (startedRef.current) {
         const connected = [screenCanvasRef.current, cameraCanvasRef.current]
           .map((canvas, index) => ({ canvas, index }))
@@ -269,9 +508,11 @@ export function useRecordingPreviewSurface({
             {
               backdrop: effectiveBackdrop(),
               ...compositionRef.current,
+              nativeEditor: nativeEditorOwnsLayout,
               panes: [],
               requestId: 0,
               scale: window.devicePixelRatio || 1,
+              selection: null,
               sessionId: sessionIdRef.current,
               viewport: { height: 0, width: 0, x: 0, y: 0 },
             },
@@ -347,9 +588,12 @@ export function useRecordingPreviewSurface({
             {
               backdrop: effectiveBackdrop(),
               ...compositionRef.current,
+              nativeEditor: nativeEditorOwnsLayout,
               panes,
               requestId: 0,
               scale,
+              selection: selectionRef.current,
+              selectionTargets: selectionTargetsRef.current,
               sessionId: sessionIdRef.current,
               viewport: viewportSurface,
             },
@@ -358,6 +602,66 @@ export function useRecordingPreviewSurface({
         }
       }
     };
+    measureRef.current = () => {
+      measure();
+    };
+    if (nativeEditorOwnsLayout && nativeSurface) {
+      if (!nativeLayoutHasPanes) {
+        measure();
+        return () => {
+          disposed = true;
+          clearBackdropMasks();
+          measureRef.current = () => undefined;
+        };
+      }
+      const observer = new ResizeObserver(() => {
+        measure();
+      });
+      let mutationObserver: MutationObserver | undefined;
+      const observeMarkers = () => {
+        if (disposed) return;
+        const canvases = [
+          screenCanvasRef.current,
+          cameraCanvasRef.current,
+        ].filter(
+          (canvas): canvas is HTMLCanvasElement => canvas?.isConnected === true,
+        );
+        if (!startedRef.current || canvases.length === 0) {
+          animation = requestAnimationFrame(observeMarkers);
+          return;
+        }
+        for (const canvas of canvases) observer.observe(canvas);
+        const viewport = canvases[0]?.closest<HTMLElement>(
+          "[data-recording-preview-viewport]",
+        );
+        if (viewport) {
+          observer.observe(viewport);
+          mutationObserver = new MutationObserver(() => {
+            for (const canvas of [
+              screenCanvasRef.current,
+              cameraCanvasRef.current,
+            ]) {
+              if (canvas?.isConnected) observer.observe(canvas);
+            }
+            measure();
+          });
+          mutationObserver.observe(viewport, {
+            childList: true,
+            subtree: true,
+          });
+        }
+        measure();
+      };
+      animation = requestAnimationFrame(observeMarkers);
+      return () => {
+        disposed = true;
+        cancelAnimationFrame(animation);
+        mutationObserver?.disconnect();
+        observer.disconnect();
+        clearBackdropMasks();
+        measureRef.current = () => undefined;
+      };
+    }
     const update = () => {
       if (disposed) return;
       measure();
@@ -381,14 +685,45 @@ export function useRecordingPreviewSurface({
         onTransformed,
       );
       clearBackdropMasks();
+      measureRef.current = () => undefined;
     };
   }, [
     cameraCanvasRef,
     isEnabled,
+    nativeEditorOwnsLayout,
+    nativeLayoutHasPanes,
+    nativeLayoutKey,
     nativeSurface,
     onError,
     screenCanvasRef,
     sessionIdRef,
     startedRef,
+  ]);
+
+  useEffect(() => {
+    if (!isEnabled) return;
+    let animation = 0;
+    const updateAppearance = () => {
+      cancelAnimationFrame(animation);
+      animation = requestAnimationFrame(() => {
+        measureRef.current();
+      });
+    };
+    window.addEventListener("screenwide-theme-changed", updateAppearance);
+    return () => {
+      cancelAnimationFrame(animation);
+      window.removeEventListener("screenwide-theme-changed", updateAppearance);
+    };
+  }, [isEnabled]);
+
+  useEffect(() => {
+    if (!selectionGestureActiveRef.current) measureRef.current();
+  }, [
+    bakeCamera,
+    cameraOverlay,
+    isPlaying,
+    recordingOutput,
+    selection,
+    selectionTargets,
   ]);
 }

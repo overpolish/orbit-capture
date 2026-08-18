@@ -142,20 +142,36 @@ export const playRecordingPreview = (sessionId: number) =>
 export const pauseRecordingPreview = (sessionId: number) =>
   invoke<null>("pause_recording_preview", { sessionId });
 
+export const setRecordingPreviewZoom = (
+  sessionId: number,
+  zoomPercent: number,
+) =>
+  invoke<null>("set_recording_preview_zoom", {
+    sessionId,
+    zoomPercent,
+  });
+
+export const centerRecordingPreviewWorkspace = () =>
+  invoke<null>("center_recording_preview_workspace");
+
 export const layoutRecordingPreviewSurface = ({
   backdrop,
   bakeCamera,
   cameraOverlay,
+  nativeEditor,
   panes,
   recordingOutput,
   requestId,
   scale,
+  selection,
+  selectionTargets,
   sessionId,
   viewport,
 }: {
   backdrop: [number, number, number, number];
   bakeCamera: boolean;
   cameraOverlay: CameraOverlaySettings;
+  nativeEditor: boolean;
   panes: {
     index: number;
     rect: { height: number; width: number; x: number; y: number };
@@ -165,12 +181,31 @@ export const layoutRecordingPreviewSurface = ({
   scale: number;
   sessionId: number;
   viewport: { height: number; width: number; x: number; y: number };
+  selection?: {
+    paneIndex: number;
+    radiusPercent: number;
+    rect: { height: number; width: number; x: number; y: number };
+    cropMode?: boolean;
+    image?: { height: number; width: number; x: number; y: number };
+    layerId?: number;
+  } | null;
+  selectionTargets?:
+    | {
+        paneIndex: number;
+        radiusPercent: number;
+        rect: { height: number; width: number; x: number; y: number };
+        cropMode?: boolean;
+        image?: { height: number; width: number; x: number; y: number };
+        layerId?: number;
+      }[]
+    | null;
 }) =>
   invoke<null>("layout_recording_preview_surface", {
     layout: {
       backdrop,
       bakeCamera,
       cameraOverlay: normalizedCameraOverlay(cameraOverlay),
+      nativeEditor,
       panes,
       recordingOutput: {
         camera: normalizedScreenshotOutput(recordingOutput.camera),
@@ -179,6 +214,8 @@ export const layoutRecordingPreviewSurface = ({
       },
       requestId,
       scale,
+      selection: selection ?? null,
+      selectionTargets: selectionTargets ?? null,
       sessionId,
       viewport,
     },
@@ -191,12 +228,14 @@ export const seekRecordingPreview = ({
   positionMs,
   requestId,
   rough = false,
+  selectionVisible,
   sessionId,
 }: {
   positionMs: number;
   requestId: number;
   sessionId: number;
   rough?: boolean;
+  selectionVisible?: boolean;
 }) =>
   invoke<null>("seek_recording_preview", {
     positionMs: Number.isFinite(positionMs)
@@ -204,6 +243,7 @@ export const seekRecordingPreview = ({
       : 0,
     requestId,
     rough,
+    selectionVisible,
     sessionId,
   });
 
@@ -256,34 +296,25 @@ export const setRecordingPreviewComposition = ({
     sessionId,
   });
 
-export const copyRecordingPreviewSourceFrame = ({
-  artifactId,
-  positionMs,
-  track,
-}: {
-  artifactId: number;
-  positionMs: number;
-  track: 0 | 1;
-}) =>
-  invoke<ArrayBuffer>("copy_recording_preview_source_frame", {
-    artifactId,
-    positionMs: Math.max(0, Math.round(positionMs)),
-    track,
-  });
-
 export const copyRecordingPreviewFrameToClipboard = ({
   artifactId,
+  bakeCamera,
+  cameraOverlay,
   cursorEffects,
   positionMs,
   recordingOutput,
 }: {
   artifactId: number;
+  bakeCamera: boolean;
+  cameraOverlay: CameraOverlaySettings;
   cursorEffects: CursorEffectSettings;
   positionMs: number;
   recordingOutput: RecordingOutputSettings;
 }) =>
   invoke<null>("copy_recording_preview_frame_to_clipboard", {
     artifactId,
+    bakeCamera,
+    cameraOverlay: normalizedCameraOverlay(cameraOverlay),
     cursorEffects: normalizedCursorEffects(cursorEffects),
     positionMs: Math.max(0, Math.round(positionMs)),
     recordingOutput: {
@@ -301,6 +332,7 @@ export const copyRecordingPreviewFrameToClipboard = ({
 export type PreviewCapabilities = {
   nativeRecordingPreview: boolean;
   nativeScreenshotPreview: boolean;
+  nativeWorkspaceEditor: boolean;
 };
 
 export const previewCapabilities = () =>
@@ -311,13 +343,17 @@ export const startScreenshotPreview = (artifactId: number, sessionId: number) =>
 
 export const layoutScreenshotPreviewSurface = ({
   backdrop,
+  interactionOutput,
   output,
   panes,
   scale,
+  selection,
+  selectionTargets,
   sessionId,
   viewport,
 }: {
   backdrop: [number, number, number, number];
+  interactionOutput: ScreenshotWorkspaceOutputSettings;
   output: ScreenshotWorkspaceOutputSettings;
   panes: {
     index: number;
@@ -326,15 +362,57 @@ export const layoutScreenshotPreviewSurface = ({
   scale: number;
   sessionId: number;
   viewport: { height: number; width: number; x: number; y: number };
+  selection?: {
+    paneIndex: number;
+    radiusPercent: number;
+    rect: { height: number; width: number; x: number; y: number };
+    cropMode?: boolean;
+    image?: { height: number; width: number; x: number; y: number };
+    layerId?: number;
+  } | null;
+  selectionTargets?:
+    | {
+        paneIndex: number;
+        radiusPercent: number;
+        rect: { height: number; width: number; x: number; y: number };
+        cropMode?: boolean;
+        image?: { height: number; width: number; x: number; y: number };
+        layerId?: number;
+      }[]
+    | null;
 }) =>
   invoke<null>("layout_screenshot_preview_surface", {
     backdrop,
+    interactionOutput: normalizedScreenshotWorkspaceOutput(interactionOutput),
     output: normalizedScreenshotWorkspaceOutput(output),
     panes,
     scale,
+    selection: selection ?? null,
+    selectionTargets: selectionTargets ?? null,
     sessionId,
     viewport,
   });
+
+export const refreshScreenshotPreviewSources = (
+  artifactId: number,
+  sessionId: number,
+) =>
+  invoke<null>("refresh_screenshot_preview_sources", {
+    artifactId,
+    sessionId,
+  });
+
+export const setScreenshotPreviewZoom = (
+  sessionId: number,
+  zoomPercent: number,
+) =>
+  invoke<null>("set_screenshot_preview_zoom", {
+    sessionId,
+    zoomPercent,
+  });
+
+export const centerScreenshotPreviewWorkspace = () =>
+  invoke<null>("center_screenshot_preview_workspace");
 
 export const stopScreenshotPreview = (sessionId: number) =>
   invoke<null>("stop_screenshot_preview", { sessionId });

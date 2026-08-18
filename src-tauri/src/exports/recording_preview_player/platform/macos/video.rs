@@ -13,7 +13,7 @@ use std::{
 use cidre::{arc, av, cm, cv, ns};
 
 use super::{
-  composition::{composed_layers_rgba, cursor_rgba},
+  composition::{cursor_rgba, still_overlay},
   cursor::cursor_preview,
   frame::CursorPreview,
   VideoFramePayload,
@@ -302,10 +302,9 @@ pub(super) fn spawn(
           .and_then(|cursor| cursor_rgba(cursor).ok());
         let screen_output =
           super::still_decode::scaled_output(&composition.recording_output.primary, screen_factor);
-        let screen_frame = match composed_layers_rgba(
+        let (cursor_image, overlay) = match still_overlay(
           &raw_screen,
           &screen_output,
-          target_ms,
           cursor_frame.as_ref().zip(cursor_pixels),
           composition
             .bake_camera
@@ -316,39 +315,25 @@ pub(super) fn spawn(
             .then_some(composition.camera_overlay),
           composition.recording_output.camera.drop_shadow,
           composition.recording_output.camera_on_top,
-          cursor_settings.clip_at_video_edge,
         ) {
-          Ok(frame) => frame,
+          Ok(value) => value,
           Err(_) => break,
         };
-        let camera_frame = if composition.bake_camera {
-          None
-        } else {
-          raw_camera.as_ref().and_then(|camera| {
-            let camera_output = super::still_decode::scaled_output(
-              &composition.recording_output.camera,
-              camera_factor,
-            );
-            composed_layers_rgba(
-              camera,
-              &camera_output,
-              target_ms,
-              None,
-              None,
-              None,
-              false,
-              true,
-              false,
-            )
-            .ok()
-          })
-        };
+        let camera_output =
+          super::still_decode::scaled_output(&composition.recording_output.camera, camera_factor);
         let mut frame = VideoFrame {
           timestamp_ms: target_ms,
           payload: VideoFramePayload::Native {
-            screen: screen_frame,
-            camera: camera_frame,
+            screen: raw_screen,
+            camera: raw_camera,
             cursor: None,
+            screen_output,
+            camera_output,
+            cursor_image,
+            overlay,
+            bake_camera: composition.bake_camera,
+            seconds: target_ms as f64 / 1_000.0,
+            clip_cursor_at_video_edge: cursor_settings.clip_at_video_edge,
           },
         };
         loop {

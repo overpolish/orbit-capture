@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import {
+  screenshotLayout,
+  screenshotOutputDimensions,
+  ScreenshotOutputSettings,
+} from "./screenshot-output";
 import { CameraOverlaySettings, RecordingPreviewPane } from "./types";
 
 export type OverlayRect = {
@@ -85,6 +90,175 @@ export const uncroppedCameraPreviewOverlay = (
     frameYPercent: (image.y * 100) / screen.height,
     radiusPercent: 0,
   };
+};
+
+/**
+ * Carry a camera crop from split-track output into the baked overlay frame.
+ *
+ * The split preview stores the camera crop in the camera track's output
+ * settings, while baked preview stores the same visible window as the
+ * overlay's frame rectangle. Converting at the bake boundary keeps the crop
+ * visually and semantically intact instead of resetting it to the full camera
+ * image.
+ */
+export const cameraOverlayWithCameraCrop = ({
+  cameraOutput,
+  cameraSource,
+  screenOutput,
+  settings,
+}: {
+  cameraOutput: ScreenshotOutputSettings;
+  cameraSource: { height: number; width: number };
+  screenOutput: { height: number; width: number };
+  settings: CameraOverlaySettings;
+}): CameraOverlaySettings => {
+  const screen = {
+    height: screenOutput.height,
+    kind: "screen" as const,
+    sourceHeight: screenOutput.height,
+    sourceWidth: screenOutput.width,
+    width: screenOutput.width,
+    x: 0,
+    y: 0,
+  };
+  const camera = {
+    height: cameraSource.height,
+    kind: "camera" as const,
+    sourceHeight: cameraSource.height,
+    sourceWidth: cameraSource.width,
+    width: cameraSource.width,
+    x: 0,
+    y: 0,
+  };
+  const geometry = cameraOverlayGeometry(screen, camera, settings);
+  const layout = screenshotLayout(
+    cameraSource,
+    screenshotOutputDimensions(cameraOutput),
+    cameraOutput,
+  );
+  const cropLeft =
+    geometry.camera.x +
+    ((layout.crop.x - layout.image.x) / Math.max(1, layout.image.width)) *
+      geometry.camera.width;
+  const cropTop =
+    geometry.camera.y +
+    ((layout.crop.y - layout.image.y) / Math.max(1, layout.image.height)) *
+      geometry.camera.height;
+  const cropWidth =
+    (layout.crop.width / Math.max(1, layout.image.width)) *
+    geometry.camera.width;
+  const cropHeight =
+    (layout.crop.height / Math.max(1, layout.image.height)) *
+    geometry.camera.height;
+
+  return {
+    ...settings,
+    frameHeightPercent: (cropHeight * 100) / Math.max(1, screen.height),
+    frameWidthPercent: (cropWidth * 100) / Math.max(1, screen.width),
+    frameXPercent: (cropLeft * 100) / Math.max(1, screen.width),
+    frameYPercent: (cropTop * 100) / Math.max(1, screen.height),
+  };
+};
+
+/** Convert the baked overlay frame back into the split camera crop settings. */
+export const cameraOutputWithOverlayCrop = ({
+  cameraOutput,
+  cameraSource,
+  screenOutput,
+  settings,
+}: {
+  cameraOutput: ScreenshotOutputSettings;
+  cameraSource: { height: number; width: number };
+  screenOutput: { height: number; width: number };
+  settings: CameraOverlaySettings;
+}): ScreenshotOutputSettings => {
+  const screen = {
+    height: screenOutput.height,
+    kind: "screen" as const,
+    sourceHeight: screenOutput.height,
+    sourceWidth: screenOutput.width,
+    width: screenOutput.width,
+    x: 0,
+    y: 0,
+  };
+  const camera = {
+    height: cameraSource.height,
+    kind: "camera" as const,
+    sourceHeight: cameraSource.height,
+    sourceWidth: cameraSource.width,
+    width: cameraSource.width,
+    x: 0,
+    y: 0,
+  };
+  const geometry = cameraOverlayGeometry(screen, camera, settings);
+  const layout = screenshotLayout(
+    cameraSource,
+    screenshotOutputDimensions(cameraOutput),
+    cameraOutput,
+  );
+  const cropX =
+    layout.image.x +
+    ((geometry.frame.x - geometry.camera.x) /
+      Math.max(1, geometry.camera.width)) *
+      layout.image.width;
+  const cropY =
+    layout.image.y +
+    ((geometry.frame.y - geometry.camera.y) /
+      Math.max(1, geometry.camera.height)) *
+      layout.image.height;
+  const cropWidth =
+    (geometry.frame.width / Math.max(1, geometry.camera.width)) *
+    layout.image.width;
+  const cropHeight =
+    (geometry.frame.height / Math.max(1, geometry.camera.height)) *
+    layout.image.height;
+  const output = screenshotOutputDimensions(cameraOutput);
+  return {
+    ...cameraOutput,
+    screenshotCropHeightPercent:
+      (cropHeight * 100) / Math.max(1, output.height),
+    screenshotCropWidthPercent: (cropWidth * 100) / Math.max(1, output.width),
+    screenshotCropXPercent: (cropX * 100) / Math.max(1, output.width),
+    screenshotCropYPercent: (cropY * 100) / Math.max(1, output.height),
+  };
+};
+
+/** Whether the overlay frame is acting as a crop window rather than the full image. */
+export const cameraOverlayHasCrop = ({
+  cameraSource,
+  screenOutput,
+  settings,
+}: {
+  cameraSource: { height: number; width: number };
+  screenOutput: { height: number; width: number };
+  settings: CameraOverlaySettings;
+}) => {
+  const screen = {
+    height: screenOutput.height,
+    kind: "screen" as const,
+    sourceHeight: screenOutput.height,
+    sourceWidth: screenOutput.width,
+    width: screenOutput.width,
+    x: 0,
+    y: 0,
+  };
+  const camera = {
+    height: cameraSource.height,
+    kind: "camera" as const,
+    sourceHeight: cameraSource.height,
+    sourceWidth: cameraSource.width,
+    width: cameraSource.width,
+    x: 0,
+    y: 0,
+  };
+  const geometry = cameraOverlayGeometry(screen, camera, settings);
+  const epsilon = 0.000_001;
+  return (
+    Math.abs(geometry.frame.x - geometry.camera.x) > epsilon ||
+    Math.abs(geometry.frame.y - geometry.camera.y) > epsilon ||
+    Math.abs(geometry.frame.width - geometry.camera.width) > epsilon ||
+    Math.abs(geometry.frame.height - geometry.camera.height) > epsilon
+  );
 };
 
 /** Grow the output canvas around a camera frame dragged past its edges. */

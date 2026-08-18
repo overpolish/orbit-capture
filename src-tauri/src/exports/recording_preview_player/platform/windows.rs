@@ -270,6 +270,8 @@ pub(crate) fn source_frame_jpeg(
 pub(crate) fn composed_frame_image(
   sources: &PlayerSources,
   position_ms: u64,
+  bake_camera: bool,
+  camera_overlay: crate::exports::CameraOverlaySettings,
   cursor_effects: crate::exports::cursor_effects::CursorEffectSettings,
   recording_output: &crate::exports::RecordingOutputSettings,
 ) -> Result<crate::screenshots::CapturedImage, String> {
@@ -282,14 +284,7 @@ pub(crate) fn composed_frame_image(
   let frame = reader
     .frame_at(position_ms)?
     .ok_or_else(|| "Media Foundation returned no source frame".to_owned())?;
-  let composition = sources
-    .composition_settings
-    .as_ref()
-    .and_then(|settings| settings.read().ok().map(|settings| settings.clone()));
-  let mut camera_reader = if composition
-    .as_ref()
-    .is_some_and(|settings| settings.bake_camera)
-  {
+  let mut camera_reader = if bake_camera {
     sources
       .camera_path
       .as_ref()
@@ -306,14 +301,13 @@ pub(crate) fn composed_frame_image(
     .filter(|frame| frame.timestamp_ms <= position_ms.saturating_add(50));
   let camera_geometry = camera_frame
     .as_ref()
-    .zip(composition.as_ref())
-    .map(|(camera, settings)| {
+    .map(|camera| {
       crate::exports::media_preview::bake_geometry(
         crate::exports::media_preview::BakedVideoExportOptions {
-          camera_drop_shadow: settings.recording_output.camera.drop_shadow,
+          camera_drop_shadow: recording_output.camera.drop_shadow,
           camera_height: camera.height,
           camera_width: camera.width,
-          overlay: settings.camera_overlay,
+          overlay: camera_overlay,
           screen_height: recording_output.primary.height,
           screen_width: recording_output.primary.width,
           video: crate::exports::media_preview::VideoExportOptions {

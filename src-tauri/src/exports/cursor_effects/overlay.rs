@@ -16,6 +16,7 @@ struct OverlayVisualKey {
   rotation: i16,
   scale: i16,
   style: CursorStyle,
+  layer_size: usize,
   width: i32,
 }
 
@@ -54,7 +55,11 @@ fn quantize(value: f64, steps: f64) -> i16 {
     .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16
 }
 
-fn visual_key(output: OutputCursor, settings: CursorEffectSettings) -> OverlayVisualKey {
+fn visual_key(
+  output: OutputCursor,
+  settings: CursorEffectSettings,
+  layer_size: usize,
+) -> OverlayVisualKey {
   let travel = output.delta_x.hypot(output.delta_y);
   let blur_distance = if settings.motion_blur {
     travel.min(MAX_BLUR_DISTANCE)
@@ -76,6 +81,7 @@ fn visual_key(output: OutputCursor, settings: CursorEffectSettings) -> OverlayVi
     rotation: quantize(output.cursor.rotation_degrees, 1.0),
     scale: quantize(output.cursor.scale, 50.0),
     style: output.cursor.appearance.style,
+    layer_size,
     width: (output.width * 100.0).round() as i32,
   }
 }
@@ -120,7 +126,7 @@ impl CursorCompositor {
     let half = layer_size as f64 / 2.0;
     let left = (output.x - half).floor();
     let top = (output.y - half).floor();
-    let key = visual_key(output, settings);
+    let key = visual_key(output, settings, layer_size);
     if let Some(cached) = cache.get(key) {
       pixels.copy_from_slice(cached);
     } else {
@@ -144,5 +150,43 @@ impl CursorCompositor {
       x: left as i32,
       y: top as i32,
     })
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{CursorOverlayCache, OverlayVisualKey};
+  use crate::exports::cursor_effects::CursorStyle;
+
+  fn key(layer_size: usize) -> OverlayVisualKey {
+    OverlayVisualKey {
+      blur_direction_x: 0,
+      blur_direction_y: 0,
+      blur_distance: 0,
+      height: 32,
+      hotspot_x: 1,
+      hotspot_y: 1,
+      rotation: 0,
+      scale: 50,
+      style: CursorStyle::Arrow,
+      layer_size,
+      width: 24,
+    }
+  }
+
+  #[test]
+  fn cache_does_not_reuse_pixels_with_a_different_layer_size() {
+    let mut cache = CursorOverlayCache::new();
+    cache.insert(key(16), &[1; 16 * 16 * 4]);
+    cache.insert(key(18), &[2; 18 * 18 * 4]);
+
+    assert_eq!(
+      cache.get(key(16)).map(|pixels| pixels.len()),
+      Some(16 * 16 * 4)
+    );
+    assert_eq!(
+      cache.get(key(18)).map(|pixels| pixels.len()),
+      Some(18 * 18 * 4)
+    );
   }
 }

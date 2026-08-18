@@ -17,6 +17,7 @@ use super::cursor::cursor_preview;
 use super::image::frame_position;
 use super::still_decode::{scaled_output, DecodedFrame, PaneDecoder};
 use crate::exports::cursor_effects::CursorOverlayCache;
+use crate::exports::preview_platform::{NativeWorkspacePlacement, RecordingWorkspaceLayer};
 use crate::exports::recording_preview_player::{PlayerSources, RecordingPreviewPlayerEvent};
 
 enum DecoderCommand {
@@ -190,7 +191,7 @@ fn run(
     let Some(surface) = sources.preview_surface.as_ref() else {
       continue;
     };
-    let (screen_presented, camera_presented) = if let Some(composition) = &composition {
+    let presented = if let Some(composition) = &composition {
       let screen_factor = super::still_decode::pane_factor(
         &target_sizes,
         0,
@@ -228,99 +229,76 @@ fn run(
         .bake_camera
         .then_some(cache.camera.as_ref())
         .flatten();
-      let screen_presented = if let Some(source_pixels) = cache.screen.pixels() {
-        surface.present_composed_pixels(
-          0,
-          screen_position_ms,
-          source_pixels,
-          cache.screen.dimensions(),
-          &screen_output,
-          screen_position_ms as f64 / 1_000.0,
-          cursor_image.as_ref(),
-          baked_camera.and_then(|camera| camera.rgba()),
-          baked_camera.and_then(DecodedFrame::pixels),
-          overlay.as_ref(),
-          cursor_settings.clip_at_video_edge,
-        )
-      } else if let Some(screen) = cache.screen.rgba() {
-        surface.present_composed(
-          0,
-          screen_position_ms,
-          screen,
-          &screen_output,
-          screen_position_ms as f64 / 1_000.0,
-          cursor_image.as_ref(),
-          baked_camera.and_then(|camera| camera.rgba()),
-          overlay.as_ref(),
-          cursor_settings.clip_at_video_edge,
-        )
-      } else {
-        Ok(false)
-      }
-      .unwrap_or(false);
-      let camera_presented = if composition.bake_camera {
-        true
-      } else {
-        cache.camera.as_ref().is_none_or(|camera| {
-          // The webview opens with 1x1 placeholder camera output settings
-          // until the real dimensions load; presenting would fail dimension
-          // validation, so the pane simply waits for the settled settings.
-          if composition.recording_output.camera.width < 64
-            || composition.recording_output.camera.height < 64
-          {
-            return true;
-          }
-          let camera_factor = super::still_decode::pane_factor(
-            &target_sizes,
-            1,
-            composition.recording_output.camera.width,
-          );
-          let camera_output = scaled_output(&composition.recording_output.camera, camera_factor);
-          let presented = if let Some(pixels) = camera.pixels() {
-            surface.present_composed_pixels(
-              1,
-              camera_position_ms.unwrap_or(0),
-              pixels,
-              camera.dimensions(),
-              &camera_output,
-              screen_position_ms as f64 / 1_000.0,
-              None,
-              None,
-              None,
-              None,
-              false,
-            )
-          } else if let Some(camera) = camera.rgba() {
-            surface.present_composed(
-              1,
-              camera_position_ms.unwrap_or(0),
-              camera,
-              &camera_output,
-              screen_position_ms as f64 / 1_000.0,
-              None,
-              None,
-              None,
-              false,
-            )
-          } else {
-            Ok(false)
-          };
-          presented.unwrap_or(false)
-        })
+      let camera_output = (!composition.bake_camera).then(|| {
+        let factor = super::still_decode::pane_factor(
+          &target_sizes,
+          1,
+          composition.recording_output.camera.width,
+        );
+        scaled_output(&composition.recording_output.camera, factor)
+      });
+      let (screen_source, screen_pixels) = match cache.screen.rgba() {
+        Some(source) => (Some(source), None),
+        None => (
+          None,
+          cache
+            .screen
+            .pixels()
+            .map(|pixels| (pixels, cache.screen.dimensions())),
+        ),
       };
-      (screen_presented, camera_presented)
+      let mut layers = vec![RecordingWorkspaceLayer {
+        pane_index: 0,
+        source_token: screen_position_ms << 2,
+        source: screen_source,
+        source_pixels: screen_pixels,
+        settings: screen_output,
+        placement: NativeWorkspacePlacement::default(),
+        seconds: screen_position_ms as f64 / 1_000.0,
+        cursor: cursor_image.as_ref(),
+        camera: baked_camera.and_then(|camera| camera.rgba()),
+        camera_pixels: baked_camera
+          .and_then(|camera| camera.pixels().map(|pixels| (pixels, camera.dimensions()))),
+        overlay: overlay.as_ref(),
+        clip_cursor_at_video_edge: cursor_settings.clip_at_video_edge,
+        foreground_only: false,
+      }];
+      if let (Some(camera), Some(camera_output)) = (cache.camera.as_ref(), camera_output) {
+        if camera_output.width >= 64 && camera_output.height >= 64 {
+          let (source, source_pixels) = match camera.rgba() {
+            Some(source) => (Some(source), None),
+            None => (
+              None,
+              camera.pixels().map(|pixels| (pixels, camera.dimensions())),
+            ),
+          };
+          layers.push(RecordingWorkspaceLayer {
+            pane_index: 1,
+            source_token: (camera_position_ms.unwrap_or(0) << 2) | 1,
+            source,
+            source_pixels,
+            settings: camera_output,
+            placement: NativeWorkspacePlacement::default(),
+            seconds: screen_position_ms as f64 / 1_000.0,
+            cursor: None,
+            camera: None,
+            camera_pixels: None,
+            overlay: None,
+            clip_cursor_at_video_edge: false,
+            foreground_only: false,
+          });
+        }
+      }
+      surface
+        .present_recording_workspace(&layers)
+        .unwrap_or(false)
     } else {
-      let screen_presented = cache
+      cache
         .screen
         .rgba()
-        .is_some_and(|image| surface.present(0, image));
-      let camera_presented = cache
-        .camera
-        .as_ref()
-        .is_none_or(|camera| camera.rgba().is_some_and(|image| surface.present(1, image)));
-      (screen_presented, camera_presented)
+        .is_some_and(|image| surface.present(0, image))
     };
-    if screen_presented && camera_presented {
+    if presented {
       let _ = event_channel.send(RecordingPreviewPlayerEvent::Ready {
         position_ms,
         request_id,
@@ -363,6 +341,13 @@ impl NativeStillDecoder {
         target_sizes,
       })
       .map_err(|_| "The native preview decoder stopped".to_owned())
+  }
+
+  pub(crate) fn is_finished(&self) -> bool {
+    self
+      .thread
+      .as_ref()
+      .is_some_and(std::thread::JoinHandle::is_finished)
   }
 
   pub(crate) fn stop(mut self) {

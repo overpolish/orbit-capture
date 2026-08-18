@@ -52,6 +52,10 @@ impl StillDecoder {
   }
 
   pub(crate) fn stop(self) {}
+
+  pub(crate) fn is_finished(&self) -> bool {
+    false
+  }
 }
 
 pub(crate) fn send_frame(

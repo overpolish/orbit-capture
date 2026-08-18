@@ -31,6 +31,7 @@ import { useExportEditGesture } from "../use-export-edit-history";
 import { usePreviewCapabilities } from "../use-preview-capabilities";
 
 import { InteractivePreviewViewport } from "./interactive-preview-viewport";
+import { NativeRecordingWorkspaceViewport } from "./native-recording-workspace-viewport";
 import { RecordingCanvasTool } from "./recording-crop-toggle";
 import { ScreenshotCanvasControl } from "./screenshot-canvas-control";
 import { ScreenshotCropMagnifier } from "./screenshot-crop-magnifier";
@@ -45,6 +46,7 @@ export function BakedCameraPreviewViewport({
   controlsVisible = true,
   interactionEnabled = true,
   isBusy,
+  nativeWorkspaceEditor = false,
   onCanvasResizeDraft,
   onInteractionEnd,
   onInteractionStart,
@@ -73,6 +75,7 @@ export function BakedCameraPreviewViewport({
   tool: RecordingCanvasTool;
   controlsVisible?: boolean;
   interactionEnabled?: boolean;
+  nativeWorkspaceEditor?: boolean;
   onCanvasResizeDraft?: (settings: ScreenshotOutputSettings | null) => void;
   onInteractionEnd?: () => void;
   onInteractionStart?: () => void;
@@ -134,6 +137,7 @@ export function BakedCameraPreviewViewport({
     width: output.width,
   };
   const geometry = cameraOverlayGeometry(outputPane, cameraPane, settings);
+
   const endAutoFit = () => {
     if (autoFitRef.current?.used) mediaResizeRef.current?.onMediaResizeEnd();
     autoFitRef.current = null;
@@ -221,6 +225,29 @@ export function BakedCameraPreviewViewport({
     onPointerMove: moveInteraction,
     onPointerUp: finishInteraction,
   };
+
+  if (nativeWorkspaceEditor) {
+    return (
+      <NativeRecordingWorkspaceViewport
+        ariaLabel="Native baked recording workspace preview"
+        isBusy={isBusy}
+        isSelecting={tool === "select"}
+        panes={[
+          {
+            height: output.height,
+            index: 0,
+            label: "Composed recording preview",
+            ref: screenCanvasRef,
+            width: output.width,
+            x: 0,
+            y: 0,
+          },
+        ]}
+        workspaceHeight={output.height}
+        workspaceWidth={output.width}
+      />
+    );
+  }
 
   return (
     <InteractivePreviewViewport<HTMLDivElement>

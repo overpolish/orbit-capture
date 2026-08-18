@@ -6,9 +6,12 @@
 //! recording frames never enter system memory or cross Tauri IPC, while transparent webview
 //! regions leave DOM controls above the video.
 
-use std::sync::{
-  atomic::{AtomicU32, Ordering},
-  Mutex, OnceLock,
+use std::{
+  collections::HashMap,
+  sync::{
+    atomic::{AtomicU32, Ordering},
+    Mutex, OnceLock,
+  },
 };
 
 use tauri::WebviewWindow;
@@ -42,19 +45,71 @@ use windows::{
 
 #[path = "surface_windows/compositor.rs"]
 mod compositor;
+#[path = "surface_windows/editor.rs"]
+mod editor;
+#[path = "surface_windows/selection.rs"]
+mod selection;
+#[path = "surface_windows/snapping.rs"]
+mod snapping;
 #[path = "surface_windows/window.rs"]
 mod window;
 
-use super::{PreviewCapabilities, PreviewSurfaceRect};
+use super::{
+  workspace_editor::{
+    apply_crop_move, apply_crop_resize, hit_test_display, rebase_display_fit, DisplayRect,
+    DisplayTarget, NormalizedRect,
+  },
+  workspace_transform::WorkspaceTransform,
+  PreviewCapabilities, PreviewSelection, PreviewSurfaceRect, SelectionCallback,
+  SelectionGestureCallback, SelectionGestureOperation, SelectionGesturePhase, TransformCallback,
+};
 use crate::exports::media_preview::{BakeGeometry, BakedVideoExportOptions, VideoExportOptions};
 use crate::screenshots::{CapturedImage, ScreenshotOutputSettings};
 
 pub(super) const CAPABILITIES: PreviewCapabilities = PreviewCapabilities {
+  native_workspace_editor: true,
   native_recording_preview: true,
   native_screenshot_preview: true,
 };
 
 pub(crate) struct StillOverlay;
+
+const FRAME_LAYER_ID: u32 = u32::MAX;
+const CENTERED_RESIZE_EDGE: u32 = 1 << 16;
+
+/// Logical placement of a recording layer in the retained workspace. Windows
+/// keeps the placement in the DirectComposition pane geometry rather than
+/// baking it into an intermediate bitmap, but the type mirrors the Metal
+/// backend so the recording pipeline can submit one platform-independent
+/// workspace description.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub(crate) struct NativeWorkspacePlacement {
+  pub(crate) x: i32,
+  pub(crate) y: i32,
+  pub(crate) width: u32,
+  pub(crate) height: u32,
+}
+
+/// One decoded source in the retained recording workspace. Native Windows
+/// playback currently supplies RGBA frames; the pixel-buffer fields are kept
+/// in the contract for parity with the zero-copy macOS path and are rejected
+/// clearly until the Media Foundation texture path is wired here.
+pub(crate) struct RecordingWorkspaceLayer<'a> {
+  pub pane_index: u32,
+  pub source_token: u64,
+  pub source: Option<&'a CapturedImage>,
+  pub source_pixels: Option<(*mut std::ffi::c_void, (u32, u32))>,
+  pub settings: ScreenshotOutputSettings,
+  pub placement: NativeWorkspacePlacement,
+  pub seconds: f64,
+  pub cursor: Option<&'a CapturedImage>,
+  pub camera: Option<&'a CapturedImage>,
+  pub camera_pixels: Option<(*mut std::ffi::c_void, (u32, u32))>,
+  pub overlay: Option<&'a StillOverlay>,
+  pub clip_cursor_at_video_edge: bool,
+  pub foreground_only: bool,
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct ComposedFrame {
@@ -80,6 +135,7 @@ struct Gpu {
   device: ID3D11Device,
   factory: IDXGIFactory2,
   root: IDCompositionVisual,
+  selection: Mutex<selection::SelectionOverlay>,
   _target: IDCompositionTarget,
 }
 
@@ -90,6 +146,8 @@ struct Backdrop {
 }
 
 struct Pane {
+  /// Stable viewport-local geometry before the shared workspace transform.
+  base_rect: PreviewSurfaceRect,
   /// Allocated swap-chain size. Grown with headroom and kept, so an
   /// interactive canvas resize does not reallocate GPU buffers per pointer
   /// move; `SetSourceSize` presents only the `content_size` region.
@@ -108,6 +166,8 @@ struct Pane {
   /// output-settings change redraws from the cached source with this
   /// composition instead of round-tripping through the decoder.
   last_composition: Option<ComposedFrame>,
+  settings: Option<ScreenshotOutputSettings>,
+  magnifier: Option<CropMagnifier>,
   /// A frame drawn inside an open present batch, waiting for the batch flush
   /// to call `Present` so every pane's new pixels reach the compositor in the
   /// same pass.
@@ -121,13 +181,59 @@ struct Pane {
   visual: IDCompositionVisual,
 }
 
+#[derive(Clone, Copy)]
+struct CropMagnifier {
+  display_box: [f32; 4],
+  geometry: [f32; 4],
+  options: [f32; 4],
+}
+
 struct SurfaceState {
   backdrop: [f64; 4],
   camera_source: Option<compositor::SourceTexture>,
+  editor_active: bool,
+  gesture: Option<ActiveGesture>,
+  last_pointer: (f64, f64),
   panes: Vec<Option<Pane>>,
   primary_composition: Option<ComposedFrame>,
   scale: f64,
+  selection: Option<PreviewSelection>,
+  selection_visible: bool,
+  selection_snapping_enabled: bool,
+  selection_snap_guide_x: Option<snapping::SnapGuide>,
+  selection_snap_guide_y: Option<snapping::SnapGuide>,
+  selection_targets: Vec<PreviewSelection>,
   viewport: PreviewSurfaceRect,
+  workspace_natural_size: Option<(u32, u32)>,
+  workspace_transform: WorkspaceTransform,
+  workspace_transforms: HashMap<(u32, u32), WorkspaceTransform>,
+}
+
+#[derive(Clone, Copy)]
+struct EditorGesture {
+  edges: u32,
+  last_delta: (f64, f64),
+  last_scale: f64,
+  operation: SelectionGestureOperation,
+  pane_start: PreviewSurfaceRect,
+  pointer_start: (f64, f64),
+  selection_start: PreviewSelection,
+}
+
+#[derive(Clone, Copy)]
+enum ActiveGesture {
+  Pan {
+    pointer_start: (f64, f64),
+    transform_start: WorkspaceTransform,
+  },
+  Selection(EditorGesture),
+}
+
+#[derive(Default)]
+struct EditorCallbacks {
+  gesture: Option<SelectionGestureCallback>,
+  selection: Option<SelectionCallback>,
+  transform: Option<TransformCallback>,
 }
 
 struct SurfaceInner {
@@ -136,6 +242,8 @@ struct SurfaceInner {
   /// pending geometry in one flush (the DirectComposition analogue of the
   /// macOS single-`CATransaction` batch).
   batch_depth: AtomicU32,
+  callbacks: Mutex<EditorCallbacks>,
+  editor: editor::EditorWindow,
   gpu: Gpu,
   state: Mutex<SurfaceState>,
 }
@@ -202,6 +310,7 @@ impl Gpu {
     unsafe { composition.Commit() }
       .map_err(|error| format!("The Windows preview compositor could not start: {error}"))?;
     let compositor = compositor::Compositor::new(&device)?;
+    let selection = selection::SelectionOverlay::new(&device, &factory, &composition, &root)?;
     Ok(Self {
       backdrop,
       compositor,
@@ -210,6 +319,7 @@ impl Gpu {
       device,
       factory,
       root,
+      selection: Mutex::new(selection),
       _target: target,
     })
   }
@@ -264,12 +374,20 @@ impl Gpu {
     })()
     .map_err(|error| format!("The Windows preview pane could not be attached: {error}"))?;
     Ok(Pane {
+      base_rect: PreviewSurfaceRect {
+        height: 0.0,
+        width: 0.0,
+        x: 0.0,
+        y: 0.0,
+      },
       buffer_size: (2, 2),
       clip,
       clip_edges: (0, 0, 2, 2),
       content_size: (2, 2),
       display_size: (2, 2),
       last_composition: None,
+      settings: None,
+      magnifier: None,
       pending_geometry: false,
       pending_present: false,
       position: (0, 0),
@@ -431,6 +549,1171 @@ impl Pane {
   }
 }
 
+fn set_pane_geometry(
+  pane: &mut Pane,
+  viewport: PreviewSurfaceRect,
+  rect: PreviewSurfaceRect,
+  scale: f64,
+  defer_resize: bool,
+) {
+  let (x, right) = window::scaled_edges(viewport.x + rect.x, rect.width, scale);
+  let (y, bottom) = window::scaled_edges(viewport.y + rect.y, rect.height, scale);
+  let width = (right - x).max(2);
+  let height = (bottom - y).max(2);
+  let (viewport_x, viewport_right) = window::scaled_edges(viewport.x, viewport.width, scale);
+  let (viewport_y, viewport_bottom) = window::scaled_edges(viewport.y, viewport.height, scale);
+  pane.position = (x, y);
+  pane.display_size = (width, height);
+  pane.clip_edges = (
+    (viewport_x - x).clamp(0, width),
+    (viewport_y - y).clamp(0, height),
+    (viewport_right - x).clamp(0, width),
+    (viewport_bottom - y).clamp(0, height),
+  );
+  if defer_resize {
+    pane.pending_geometry = true;
+  } else if pane.display_aspect_matches_buffer() {
+    pane.pending_geometry = false;
+    let _ = pane.update_geometry();
+  } else {
+    pane.pending_geometry = true;
+  }
+}
+
+fn display_selection(
+  state: &SurfaceState,
+  selection: PreviewSelection,
+) -> Option<PreviewSurfaceRect> {
+  let pane = state.panes.get(selection.pane_index as usize)?.as_ref()?;
+  let pane = state
+    .workspace_transform
+    .apply(state.viewport, pane.base_rect);
+  Some(PreviewSurfaceRect {
+    x: pane.x + selection.x * pane.width,
+    y: pane.y + selection.y * pane.height,
+    width: selection.width * pane.width,
+    height: selection.height * pane.height,
+  })
+}
+
+fn update_magnifier(state: &mut SurfaceState) {
+  let Some(ActiveGesture::Selection(gesture)) = state.gesture else {
+    for pane in state.panes.iter_mut().flatten() {
+      pane.magnifier = None;
+    }
+    return;
+  };
+  let show = gesture.operation == SelectionGestureOperation::CropResize;
+  for pane in state.panes.iter_mut().flatten() {
+    pane.magnifier = None;
+  }
+  if !show {
+    return;
+  }
+  let Some(selection) = state.selection else {
+    return;
+  };
+  let Some(pane) = state
+    .panes
+    .get_mut(selection.pane_index as usize)
+    .and_then(Option::as_mut)
+  else {
+    return;
+  };
+  let rect = state
+    .workspace_transform
+    .apply(state.viewport, pane.base_rect);
+  let Some(settings) = pane.settings.as_ref() else {
+    return;
+  };
+  let display_point = if gesture.operation == SelectionGestureOperation::CropResize {
+    let frame = PreviewSurfaceRect {
+      x: rect.x + selection.x * rect.width,
+      y: rect.y + selection.y * rect.height,
+      width: selection.width * rect.width,
+      height: selection.height * rect.height,
+    };
+    (
+      if gesture.edges & 1 != 0 {
+        frame.x
+      } else if gesture.edges & 2 != 0 {
+        frame.x + frame.width
+      } else {
+        state.last_pointer.0
+      },
+      if gesture.edges & 4 != 0 {
+        frame.y
+      } else if gesture.edges & 8 != 0 {
+        frame.y + frame.height
+      } else {
+        state.last_pointer.1
+      },
+    )
+  } else {
+    state.last_pointer
+  };
+  let x = ((display_point.0 - rect.x) / rect.width * settings.width as f64) as f32;
+  let y = ((display_point.1 - rect.y) / rect.height * settings.height as f64) as f32;
+  let diameter = (96.0 * settings.width as f64 / rect.width.max(1.0)) as f32;
+  let sample_camera = state.camera_source.is_some() && selection.layer_id != selection.pane_index;
+  let luminance =
+    state.backdrop[0] * 0.2126 + state.backdrop[1] * 0.7152 + state.backdrop[2] * 0.0722;
+  pane.magnifier = Some(CropMagnifier {
+    display_box: [
+      (display_point.0 - 48.0) as f32,
+      (display_point.1 - 48.0) as f32,
+      96.0,
+      96.0,
+    ],
+    // A 40-source-pixel window fills a 96-DIP native overlay.
+    geometry: [x, y, diameter, diameter / 40.0],
+    options: [
+      if sample_camera { 1.0 } else { 0.0 },
+      gesture.edges as f32,
+      if luminance > 0.5 { 1.0 } else { 0.0 },
+      0.0,
+    ],
+  });
+}
+
+fn redraw_magnifier(inner: &std::sync::Arc<SurfaceInner>, state: &mut SurfaceState) {
+  let Some(selection) = state.selection else {
+    return;
+  };
+  let Some(pane) = state
+    .panes
+    .get_mut(selection.pane_index as usize)
+    .and_then(Option::as_mut)
+  else {
+    return;
+  };
+  let (Some(settings), Some(composition)) = (pane.settings.clone(), pane.last_composition) else {
+    return;
+  };
+  let surface = RecordingPreviewSurface {
+    inner: std::sync::Arc::clone(inner),
+  };
+  let _ = surface.present_cached_source(pane, &settings, composition);
+}
+
+fn radius_point(frame: PreviewSurfaceRect, radius_percent: f64) -> (f64, f64) {
+  let offset =
+    frame.width.min(frame.height) * radius_percent.clamp(0.0, 50.0) / 100.0 * 0.55 + 10.0;
+  (frame.x + offset, frame.y + offset)
+}
+
+fn shared_selection_hit(state: &SurfaceState, point: (f64, f64)) -> Option<(PreviewSelection, u8)> {
+  let mut selections = state.selection_targets.clone();
+  if let Some(current) = state.selection {
+    if let Some(target) = selections
+      .iter_mut()
+      .find(|target| target.pane_index == current.pane_index && target.layer_id == current.layer_id)
+    {
+      *target = current;
+    } else {
+      selections.push(current);
+    }
+  }
+  let targets = selections
+    .iter()
+    .enumerate()
+    .filter_map(|(index, selection)| {
+      let rect = display_selection(state, *selection)?;
+      Some(DisplayTarget {
+        id: (u64::from(selection.pane_index) << 32) | u64::from(selection.layer_id),
+        rect: DisplayRect {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        },
+        radius_enabled: u8::from(selection.crop_mode == 0 && selection.radius_disabled == 0),
+        radius_percent: selection.radius_percent,
+        z_order: index as i32,
+        selected: u8::from(state.selection.is_some_and(|current| {
+          current.pane_index == selection.pane_index && current.layer_id == selection.layer_id
+        })),
+        visible: 1,
+      })
+    })
+    .collect::<Vec<_>>();
+  let hit = hit_test_display(&targets, point, 8.0)?;
+  let pane_index = (hit.target_id >> 32) as u32;
+  let layer_id = hit.target_id as u32;
+  selections
+    .into_iter()
+    .find(|selection| selection.pane_index == pane_index && selection.layer_id == layer_id)
+    .map(|selection| (selection, hit.handle))
+}
+
+fn shared_handle_edges(handle: u8) -> u32 {
+  match handle {
+    1 => 4,
+    2 => 8,
+    3 => 2,
+    4 => 1,
+    5 => 2 | 4,
+    6 => 1 | 4,
+    7 => 2 | 8,
+    8 => 1 | 8,
+    _ => 0,
+  }
+}
+
+fn selection_pane_rect(state: &SurfaceState, selection: PreviewSelection) -> PreviewSurfaceRect {
+  state
+    .panes
+    .get(selection.pane_index as usize)
+    .and_then(Option::as_ref)
+    .map_or(
+      PreviewSurfaceRect {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+      },
+      |pane| pane.base_rect,
+    )
+}
+
+fn draw_selection(inner: &SurfaceInner, state: &SurfaceState) {
+  let scale = state.scale.max(0.1);
+  let (viewport_x, viewport_right) =
+    window::scaled_edges(state.viewport.x, state.viewport.width, scale);
+  let (viewport_y, viewport_bottom) =
+    window::scaled_edges(state.viewport.y, state.viewport.height, scale);
+  let display = (state.editor_active && state.selection_visible)
+    .then(|| {
+      state
+        .selection
+        .and_then(|selection| display_selection(state, selection).map(|rect| (selection, rect)))
+        .map(|(selection, rect)| {
+          let (x, right) = window::scaled_edges(rect.x, rect.width, scale);
+          let (y, bottom) = window::scaled_edges(rect.y, rect.height, scale);
+          let frame = [x as f32, y as f32, (right - x) as f32, (bottom - y) as f32];
+          let radius = if selection.crop_mode == 0 && selection.radius_disabled == 0 {
+            let radius = radius_point(rect, selection.radius_percent);
+            [(radius.0 * scale) as f32, (radius.1 * scale) as f32]
+          } else {
+            [f32::NAN, f32::NAN]
+          };
+          (frame, radius)
+        })
+    })
+    .flatten();
+  let frame = display.map(|value| value.0);
+  let radius = display.map(|value| value.1);
+  let crop_image = display.and_then(|_| {
+    let selection = state.selection?;
+    (selection.crop_mode != 0).then(|| {
+      let image = state
+        .panes
+        .get(selection.pane_index as usize)
+        .and_then(Option::as_ref)
+        .map(|pane| {
+          state
+            .workspace_transform
+            .apply(state.viewport, pane.base_rect)
+        })?;
+      [
+        ((image.x + selection.image_x * image.width) * scale) as f32,
+        ((image.y + selection.image_y * image.height) * scale) as f32,
+        (selection.image_width * image.width * scale) as f32,
+        (selection.image_height * image.height * scale) as f32,
+      ]
+    })
+  });
+  let guides = display.and_then(|_| {
+    let selection = state.selection?;
+    let pane = state.panes.get(selection.pane_index as usize)?.as_ref()?;
+    let pane = state
+      .workspace_transform
+      .apply(state.viewport, pane.base_rect);
+    let x = state
+      .selection_snap_guide_x
+      .map(|guide| ((pane.x + guide.guide * pane.width) * scale) as f32);
+    let y = state
+      .selection_snap_guide_y
+      .map(|guide| ((pane.y + guide.guide * pane.height) * scale) as f32);
+    Some((
+      x,
+      y,
+      state
+        .selection_snap_guide_x
+        .map_or(false, |guide| guide.object),
+      state
+        .selection_snap_guide_y
+        .map_or(false, |guide| guide.object),
+    ))
+  });
+  let luminance =
+    state.backdrop[0] * 0.2126 + state.backdrop[1] * 0.7152 + state.backdrop[2] * 0.0722;
+  let magnifier_box = state
+    .selection
+    .and_then(|selection| state.panes.get(selection.pane_index as usize))
+    .and_then(Option::as_ref)
+    .and_then(|pane| pane.magnifier)
+    .map(|magnifier| {
+      let [x, y, width, height] = magnifier.display_box;
+      [
+        x * scale as f32,
+        y * scale as f32,
+        width * scale as f32,
+        height * scale as f32,
+      ]
+    });
+  if let Ok(mut overlay) = inner.gpu.selection.lock() {
+    let _ = overlay.draw(
+      &inner.gpu.device,
+      &inner.gpu.context,
+      (viewport_x, viewport_y),
+      (
+        (viewport_right - viewport_x).max(2) as u32,
+        (viewport_bottom - viewport_y).max(2) as u32,
+      ),
+      frame,
+      radius.filter(|point| point[0].is_finite() && point[1].is_finite()),
+      crop_image,
+      guides,
+      magnifier_box,
+      luminance > 0.5,
+    );
+  }
+}
+
+fn clear_selection_snap_guides(state: &mut SurfaceState) {
+  state.selection_snap_guide_x = None;
+  state.selection_snap_guide_y = None;
+}
+
+fn selection_snap_targets(
+  state: &SurfaceState,
+  start: PreviewSelection,
+  horizontal: bool,
+) -> Vec<(u32, f64, f64)> {
+  let Some(start_pane) = state
+    .panes
+    .get(start.pane_index as usize)
+    .and_then(Option::as_ref)
+  else {
+    return Vec::new();
+  };
+  let same_frame = |target: &PreviewSelection| {
+    state
+      .panes
+      .get(target.pane_index as usize)
+      .and_then(Option::as_ref)
+      .is_some_and(|pane| {
+        let first = start_pane.base_rect;
+        let second = pane.base_rect;
+        (first.x - second.x).abs() < 0.000_001
+          && (first.y - second.y).abs() < 0.000_001
+          && (first.width - second.width).abs() < 0.000_001
+          && (first.height - second.height).abs() < 0.000_001
+      })
+  };
+  state
+    .selection_targets
+    .iter()
+    .filter(|target| same_frame(target))
+    .map(|target| {
+      if horizontal {
+        (target.layer_id, target.x, target.width)
+      } else {
+        (target.layer_id, target.y, target.height)
+      }
+    })
+    .collect()
+}
+
+fn cursor_for_state(state: &SurfaceState, point: (f64, f64)) -> editor::CursorKind {
+  let Some((selection, handle)) = shared_selection_hit(state, point) else {
+    return editor::CursorKind::Arrow;
+  };
+  if handle == 0 && selection.layer_id == FRAME_LAYER_ID {
+    return editor::CursorKind::Arrow;
+  }
+  let edges = shared_handle_edges(handle);
+  match handle {
+    0 => editor::CursorKind::Move,
+    9 => editor::CursorKind::ResizeNwse,
+    _ if edges == 1 || edges == 2 => editor::CursorKind::ResizeHorizontal,
+    _ if edges == 4 || edges == 8 => editor::CursorKind::ResizeVertical,
+    _ if edges == (1 | 4) || edges == (2 | 8) => editor::CursorKind::ResizeNwse,
+    _ => editor::CursorKind::ResizeNesw,
+  }
+}
+
+fn rebase_workspace_fit(state: &mut SurfaceState) {
+  let active = state
+    .panes
+    .iter()
+    .enumerate()
+    .filter_map(|(index, pane)| {
+      pane
+        .as_ref()
+        .filter(|pane| pane.seen)
+        .map(|pane| (index, pane.base_rect))
+    })
+    .collect::<Vec<_>>();
+  let Some((_, first)) = active.first().copied() else {
+    return;
+  };
+  let union = |left: PreviewSurfaceRect, right: PreviewSurfaceRect| {
+    let x = left.x.min(right.x);
+    let y = left.y.min(right.y);
+    let right_edge = (left.x + left.width).max(right.x + right.width);
+    let bottom = (left.y + left.height).max(right.y + right.height);
+    PreviewSurfaceRect {
+      x,
+      y,
+      width: right_edge - x,
+      height: bottom - y,
+    }
+  };
+  let bounds = active
+    .iter()
+    .skip(1)
+    .fold(first, |bounds, (_, rect)| union(bounds, *rect));
+  let first_display = state.workspace_transform.apply(state.viewport, first);
+  let displayed = active
+    .iter()
+    .skip(1)
+    .fold(first_display, |bounds, (_, rect)| {
+      union(
+        bounds,
+        state.workspace_transform.apply(state.viewport, *rect),
+      )
+    });
+  let rebased = rebase_display_fit(
+    (state.viewport.width, state.viewport.height),
+    DisplayRect {
+      x: displayed.x - state.viewport.x,
+      y: displayed.y - state.viewport.y,
+      width: displayed.width,
+      height: displayed.height,
+    },
+    8.0,
+  );
+  let fit = PreviewSurfaceRect {
+    x: state.viewport.x + rebased.fit.x,
+    y: state.viewport.y + rebased.fit.y,
+    width: rebased.fit.width,
+    height: rebased.fit.height,
+  };
+  let scale_x = fit.width / bounds.width.max(1.0);
+  let scale_y = fit.height / bounds.height.max(1.0);
+  for (index, rect) in active {
+    if let Some(pane) = state.panes.get_mut(index).and_then(Option::as_mut) {
+      pane.base_rect = PreviewSurfaceRect {
+        x: fit.x + (rect.x - bounds.x) * scale_x,
+        y: fit.y + (rect.y - bounds.y) * scale_y,
+        width: rect.width * scale_x,
+        height: rect.height * scale_y,
+      };
+    }
+  }
+  state.workspace_transform.zoom = rebased.zoom;
+  state.workspace_transform.pan_x = rebased.pan_x;
+  state.workspace_transform.pan_y = rebased.pan_y;
+}
+
+fn apply_workspace_transform(inner: &SurfaceInner, state: &mut SurfaceState) {
+  let transform = state.workspace_transform;
+  let viewport = state.viewport;
+  let scale = state.scale;
+  for pane in state.panes.iter_mut().flatten().filter(|pane| pane.seen) {
+    let rect = transform.apply(viewport, pane.base_rect);
+    set_pane_geometry(pane, viewport, rect, scale, false);
+  }
+  draw_selection(inner, state);
+  let _ = unsafe { inner.gpu.composition.Commit() };
+}
+
+fn emit_transform(inner: &SurfaceInner, zoom: f64) {
+  if let Ok(mut callbacks) = inner.callbacks.lock() {
+    if let Some(callback) = callbacks.transform.as_mut() {
+      callback(zoom * 100.0);
+    }
+  }
+}
+
+fn emit_selection(inner: &SurfaceInner, selection: Option<u32>) {
+  if let Ok(mut callbacks) = inner.callbacks.lock() {
+    if let Some(callback) = callbacks.selection.as_mut() {
+      callback(selection);
+    }
+  }
+}
+
+fn emit_gesture(inner: &SurfaceInner, phase: SelectionGesturePhase, gesture: EditorGesture) {
+  if let Ok(mut callbacks) = inner.callbacks.lock() {
+    if let Some(callback) = callbacks.gesture.as_mut() {
+      callback(
+        phase,
+        gesture.selection_start.layer_id,
+        gesture.operation,
+        gesture.edges,
+        gesture.last_scale,
+        gesture.last_delta.0,
+        gesture.last_delta.1,
+      );
+    }
+  }
+}
+
+pub(super) fn refresh_editor_cursor() {
+  let Some(Ok(inner)) = PREVIEW_SURFACE.get() else {
+    return;
+  };
+  let kind = inner
+    .state
+    .lock()
+    .ok()
+    .map(|state| match state.gesture {
+      Some(ActiveGesture::Pan { .. }) => editor::CursorKind::Move,
+      Some(ActiveGesture::Selection(gesture))
+        if matches!(
+          gesture.operation,
+          SelectionGestureOperation::Move | SelectionGestureOperation::CropMove
+        ) =>
+      {
+        editor::CursorKind::Move
+      }
+      Some(ActiveGesture::Selection(gesture))
+        if gesture.operation == SelectionGestureOperation::Radius =>
+      {
+        editor::CursorKind::ResizeNwse
+      }
+      Some(ActiveGesture::Selection(gesture)) => {
+        let edges = gesture.edges;
+        if edges == 1 || edges == 2 {
+          editor::CursorKind::ResizeHorizontal
+        } else if edges == 4 || edges == 8 {
+          editor::CursorKind::ResizeVertical
+        } else if edges == (1 | 4) || edges == (2 | 8) {
+          editor::CursorKind::ResizeNwse
+        } else {
+          editor::CursorKind::ResizeNesw
+        }
+      }
+      _ => cursor_for_state(&state, state.last_pointer),
+    })
+    .unwrap_or(editor::CursorKind::Arrow);
+  editor::EditorWindow::set_cursor(kind);
+}
+
+pub(super) fn handle_editor_input(input: editor::Input) {
+  let Some(Ok(inner)) = PREVIEW_SURFACE.get() else {
+    return;
+  };
+  let scale = inner
+    .state
+    .lock()
+    .ok()
+    .map_or(1.0, |state| state.scale.max(0.1));
+  let logical = |x: f64, y: f64| (x / scale, y / scale);
+  match input {
+    editor::Input::Down {
+      centered: _,
+      x,
+      y,
+      snapping,
+    } => {
+      let point = logical(x, y);
+      let mut selected = None;
+      let mut began = None;
+      if let Ok(mut state) = inner.state.lock() {
+        state.last_pointer = point;
+        let shared = shared_selection_hit(&state, point);
+        let inactive_frame_target = shared
+          .filter(|(selection, _)| {
+            selection.layer_id == FRAME_LAYER_ID
+              && state.selection.is_none_or(|current| {
+                current.pane_index != selection.pane_index || current.layer_id != selection.layer_id
+              })
+          })
+          .map(|hit| hit.0);
+        let radius = shared.filter(|(_, handle)| *handle == 9).map(|hit| hit.0);
+        let handle = shared
+          .filter(|(_, handle)| (1..=8).contains(handle))
+          .map(|(selection, handle)| (selection, shared_handle_edges(handle)));
+        let target = shared
+          .filter(|(selection, handle)| *handle == 0 && selection.layer_id != FRAME_LAYER_ID)
+          .map(|hit| hit.0);
+        let frame_target = shared
+          .filter(|(selection, handle)| *handle == 0 && selection.layer_id == FRAME_LAYER_ID)
+          .map(|hit| hit.0);
+        if let Some(target) = inactive_frame_target {
+          state.selection = Some(target);
+          state.gesture = None;
+          clear_selection_snap_guides(&mut state);
+          selected = Some(Some(target.pane_index));
+          draw_selection(inner, &state);
+        } else if let Some(selection) = radius {
+          let changed = state.selection.is_none_or(|current| {
+            current.pane_index != selection.pane_index || current.layer_id != selection.layer_id
+          });
+          state.selection = Some(selection);
+          let gesture = EditorGesture {
+            edges: 0,
+            last_delta: (0.0, 0.0),
+            last_scale: selection.radius_percent,
+            operation: if selection.layer_id == FRAME_LAYER_ID {
+              SelectionGestureOperation::FrameRadius
+            } else {
+              SelectionGestureOperation::Radius
+            },
+            pane_start: selection_pane_rect(&state, selection),
+            pointer_start: point,
+            selection_start: selection,
+          };
+          state.gesture = Some(ActiveGesture::Selection(gesture));
+          if changed {
+            selected = Some(Some(if selection.layer_id == FRAME_LAYER_ID {
+              selection.pane_index
+            } else {
+              selection.layer_id
+            }));
+          }
+          began = Some(gesture);
+          draw_selection(inner, &state);
+        } else if let Some((selection, edges)) = handle {
+          let changed = state.selection.is_none_or(|current| {
+            current.pane_index != selection.pane_index || current.layer_id != selection.layer_id
+          });
+          state.selection = Some(selection);
+          let gesture = EditorGesture {
+            edges,
+            last_delta: (0.0, 0.0),
+            last_scale: 1.0,
+            operation: if selection.layer_id == FRAME_LAYER_ID {
+              SelectionGestureOperation::FrameResize
+            } else if selection.crop_mode != 0 {
+              SelectionGestureOperation::CropResize
+            } else {
+              SelectionGestureOperation::Resize
+            },
+            pane_start: selection_pane_rect(&state, selection),
+            pointer_start: point,
+            selection_start: selection,
+          };
+          if gesture.operation == SelectionGestureOperation::FrameResize {
+            if let Some(size) = state.workspace_natural_size {
+              let transform = state.workspace_transform;
+              state.workspace_transforms.insert(size, transform);
+            }
+          }
+          state.gesture = Some(ActiveGesture::Selection(gesture));
+          if changed {
+            selected = Some(Some(if selection.layer_id == FRAME_LAYER_ID {
+              selection.pane_index
+            } else {
+              selection.layer_id
+            }));
+          }
+          began = Some(gesture);
+          draw_selection(inner, &state);
+        } else if let Some(target) = frame_target {
+          let changed = state.selection.is_none_or(|current| {
+            current.pane_index != target.pane_index || current.layer_id != target.layer_id
+          });
+          state.selection = Some(target);
+          state.gesture = None;
+          clear_selection_snap_guides(&mut state);
+          if changed {
+            selected = Some(Some(target.pane_index));
+          }
+          draw_selection(inner, &state);
+        } else if let Some(target) = target {
+          let changed = state.selection.is_none_or(|current| {
+            current.pane_index != target.pane_index || current.layer_id != target.layer_id
+          });
+          let selection = if changed {
+            target
+          } else {
+            state.selection.unwrap_or(target)
+          };
+          state.selection = Some(selection);
+          let gesture = EditorGesture {
+            edges: 0,
+            last_delta: (0.0, 0.0),
+            last_scale: 1.0,
+            operation: if selection.crop_mode != 0 {
+              SelectionGestureOperation::CropMove
+            } else {
+              SelectionGestureOperation::Move
+            },
+            pane_start: selection_pane_rect(&state, selection),
+            pointer_start: point,
+            selection_start: selection,
+          };
+          state.gesture = Some(ActiveGesture::Selection(gesture));
+          if changed {
+            selected = Some(Some(if target.layer_id == FRAME_LAYER_ID {
+              target.pane_index
+            } else {
+              target.layer_id
+            }));
+          }
+          began = Some(gesture);
+          draw_selection(inner, &state);
+        } else {
+          state.gesture = Some(ActiveGesture::Pan {
+            pointer_start: point,
+            transform_start: state.workspace_transform,
+          });
+          draw_selection(inner, &state);
+        }
+      }
+      if let Some(selection) = selected {
+        emit_selection(inner, selection);
+      }
+      if let Some(gesture) = began {
+        emit_gesture(inner, SelectionGesturePhase::Begin, gesture);
+      }
+      refresh_editor_cursor();
+    }
+    editor::Input::Move {
+      centered,
+      x,
+      y,
+      pressed,
+      snapping,
+    } => {
+      let point = logical(x, y);
+      let mut update = None;
+      if let Ok(mut state) = inner.state.lock() {
+        state.last_pointer = point;
+        if pressed {
+          match state.gesture {
+            Some(ActiveGesture::Pan {
+              pointer_start,
+              transform_start,
+            }) => {
+              state.workspace_transform.pan_x = transform_start.pan_x + point.0 - pointer_start.0;
+              state.workspace_transform.pan_y = transform_start.pan_y + point.1 - pointer_start.1;
+              apply_workspace_transform(inner, &mut state);
+            }
+            Some(ActiveGesture::Selection(mut gesture)) => {
+              let pane = state
+                .panes
+                .get(gesture.selection_start.pane_index as usize)
+                .and_then(Option::as_ref)
+                .map(|pane| pane.base_rect);
+              if let Some(pane) = pane {
+                let dx = (point.0 - gesture.pointer_start.0)
+                  / (pane.width * state.workspace_transform.zoom).max(1.0);
+                let dy = (point.1 - gesture.pointer_start.1)
+                  / (pane.height * state.workspace_transform.zoom).max(1.0);
+                let mut selection = gesture.selection_start;
+                if gesture.operation == SelectionGestureOperation::FrameResize {
+                  clear_selection_snap_guides(&mut state);
+                  let start = gesture.pane_start;
+                  let raw_x = (point.0 - gesture.pointer_start.0)
+                    / state.workspace_transform.zoom.max(0.0001);
+                  let raw_y = (point.1 - gesture.pointer_start.1)
+                    / state.workspace_transform.zoom.max(0.0001);
+                  let edges = gesture.edges & !CENTERED_RESIZE_EDGE;
+                  let mut left = start.x;
+                  let mut right = start.x + start.width;
+                  let mut top = start.y;
+                  let mut bottom = start.y + start.height;
+                  if edges & 1 != 0 {
+                    let movement = raw_x.min(if centered {
+                      (start.width - 36.0) / 2.0
+                    } else {
+                      start.width - 36.0
+                    });
+                    left += movement;
+                    if centered {
+                      right -= movement;
+                    }
+                  } else if edges & 2 != 0 {
+                    let movement = raw_x.max(if centered {
+                      -(start.width - 36.0) / 2.0
+                    } else {
+                      36.0 - start.width
+                    });
+                    right += movement;
+                    if centered {
+                      left -= movement;
+                    }
+                  }
+                  if edges & 4 != 0 {
+                    let movement = raw_y.min(if centered {
+                      (start.height - 36.0) / 2.0
+                    } else {
+                      start.height - 36.0
+                    });
+                    top += movement;
+                    if centered {
+                      bottom -= movement;
+                    }
+                  } else if edges & 8 != 0 {
+                    let movement = raw_y.max(if centered {
+                      -(start.height - 36.0) / 2.0
+                    } else {
+                      36.0 - start.height
+                    });
+                    bottom += movement;
+                    if centered {
+                      top -= movement;
+                    }
+                  }
+                  if let Some(pane) = state
+                    .panes
+                    .get_mut(gesture.selection_start.pane_index as usize)
+                    .and_then(Option::as_mut)
+                  {
+                    pane.base_rect = PreviewSurfaceRect {
+                      x: left,
+                      y: top,
+                      width: right - left,
+                      height: bottom - top,
+                    };
+                  }
+                  gesture.edges = edges | if centered { CENTERED_RESIZE_EDGE } else { 0 };
+                  gesture.last_delta =
+                    (raw_x / start.width.max(1.0), raw_y / start.height.max(1.0));
+                  gesture.last_scale = 1.0;
+                  apply_workspace_transform(inner, &mut state);
+                } else if matches!(
+                  gesture.operation,
+                  SelectionGestureOperation::Radius | SelectionGestureOperation::FrameRadius
+                ) {
+                  clear_selection_snap_guides(&mut state);
+                  let frame = display_selection(&state, gesture.selection_start).unwrap_or(
+                    PreviewSurfaceRect {
+                      height: 1.0,
+                      width: 1.0,
+                      x: 0.0,
+                      y: 0.0,
+                    },
+                  );
+                  let shortest = frame.width.min(frame.height).max(1.0);
+                  let radius = (((point.0 - frame.x) + (point.1 - frame.y)) / 2.0 - 10.0) / 0.55;
+                  selection.radius_percent = (radius * 100.0 / shortest).clamp(0.0, 50.0);
+                  gesture.last_scale = selection.radius_percent;
+                } else if gesture.operation == SelectionGestureOperation::Move {
+                  selection.x += dx;
+                  selection.y += dy;
+                  gesture.last_delta = (dx, dy);
+                  if state.selection_snapping_enabled && snapping {
+                    let targets_x = selection_snap_targets(&state, gesture.selection_start, true);
+                    let targets_y = selection_snap_targets(&state, gesture.selection_start, false);
+                    let horizontal = snapping::move_axis(
+                      selection.x,
+                      selection.width,
+                      pane.width,
+                      pane.height,
+                      state.workspace_transform.zoom,
+                      &targets_x,
+                      selection.layer_id,
+                    );
+                    let vertical = snapping::move_axis(
+                      selection.y,
+                      selection.height,
+                      pane.height,
+                      pane.width,
+                      state.workspace_transform.zoom,
+                      &targets_y,
+                      selection.layer_id,
+                    );
+                    if horizontal.found {
+                      selection.x += horizontal.adjustment;
+                    }
+                    if vertical.found {
+                      selection.y += vertical.adjustment;
+                    }
+                    state.selection_snap_guide_x = horizontal.found.then_some(horizontal);
+                    state.selection_snap_guide_y = vertical.found.then_some(vertical);
+                    gesture.last_delta = (
+                      selection.x - gesture.selection_start.x,
+                      selection.y - gesture.selection_start.y,
+                    );
+                  } else {
+                    clear_selection_snap_guides(&mut state);
+                  }
+                } else if gesture.operation == SelectionGestureOperation::CropMove {
+                  clear_selection_snap_guides(&mut state);
+                  let crop = NormalizedRect {
+                    x: selection.x,
+                    y: selection.y,
+                    width: selection.width,
+                    height: selection.height,
+                  };
+                  let image = NormalizedRect {
+                    x: gesture.selection_start.image_x,
+                    y: gesture.selection_start.image_y,
+                    width: gesture.selection_start.image_width,
+                    height: gesture.selection_start.image_height,
+                  };
+                  let next = apply_crop_move(crop, image, (dx, dy));
+                  selection.x = next.x;
+                  selection.y = next.y;
+                  gesture.last_delta = (
+                    selection.x - gesture.selection_start.x,
+                    selection.y - gesture.selection_start.y,
+                  );
+                } else if gesture.operation == SelectionGestureOperation::CropResize {
+                  clear_selection_snap_guides(&mut state);
+                  let crop = NormalizedRect {
+                    x: gesture.selection_start.x,
+                    y: gesture.selection_start.y,
+                    width: gesture.selection_start.width,
+                    height: gesture.selection_start.height,
+                  };
+                  let image = NormalizedRect {
+                    x: gesture.selection_start.image_x,
+                    y: gesture.selection_start.image_y,
+                    width: gesture.selection_start.image_width,
+                    height: gesture.selection_start.image_height,
+                  };
+                  let next = apply_crop_resize(crop, image, gesture.edges, (dx, dy), false);
+                  selection.x = next.x;
+                  selection.y = next.y;
+                  selection.width = next.width;
+                  selection.height = next.height;
+                  gesture.last_delta = (
+                    if gesture.edges & 1 != 0 {
+                      selection.x - gesture.selection_start.x
+                    } else if gesture.edges & 2 != 0 {
+                      selection.x + selection.width
+                        - gesture.selection_start.x
+                        - gesture.selection_start.width
+                    } else {
+                      0.0
+                    },
+                    if gesture.edges & 4 != 0 {
+                      selection.y - gesture.selection_start.y
+                    } else if gesture.edges & 8 != 0 {
+                      selection.y + selection.height
+                        - gesture.selection_start.y
+                        - gesture.selection_start.height
+                    } else {
+                      0.0
+                    },
+                  );
+                  gesture.last_scale = if gesture.selection_start.width.abs() > f64::EPSILON {
+                    selection.width / gesture.selection_start.width
+                  } else {
+                    1.0
+                  };
+                } else {
+                  let edges = gesture.edges;
+                  let start = gesture.selection_start;
+                  let anchor_x = if edges & 1 != 0 {
+                    start.x + start.width
+                  } else if edges & 2 != 0 {
+                    start.x
+                  } else {
+                    start.x + start.width / 2.0
+                  };
+                  let anchor_y = if edges & 4 != 0 {
+                    start.y + start.height
+                  } else if edges & 8 != 0 {
+                    start.y
+                  } else {
+                    start.y + start.height / 2.0
+                  };
+                  let handle_x = if edges & 1 != 0 {
+                    start.x
+                  } else if edges & 2 != 0 {
+                    start.x + start.width
+                  } else {
+                    start.x + start.width / 2.0
+                  };
+                  let handle_y = if edges & 4 != 0 {
+                    start.y
+                  } else if edges & 8 != 0 {
+                    start.y + start.height
+                  } else {
+                    start.y + start.height / 2.0
+                  };
+                  let vx = handle_x - anchor_x;
+                  let vy = handle_y - anchor_y;
+                  let denominator = vx * vx + vy * vy;
+                  let factor = if denominator > 0.0 {
+                    ((dx + vx) * vx + (dy + vy) * vy) / denominator
+                  } else {
+                    1.0
+                  };
+                  let minimum = (36.0
+                    / (pane.width * state.workspace_transform.zoom * start.width).max(1.0))
+                  .max(
+                    36.0 / (pane.height * state.workspace_transform.zoom * start.height).max(1.0),
+                  );
+                  let factor = factor.clamp(minimum, 8.0);
+                  let mut factor = factor;
+                  if state.selection_snapping_enabled && snapping {
+                    let targets_x = selection_snap_targets(&state, start, true);
+                    let targets_y = selection_snap_targets(&state, start, false);
+                    let horizontal = snapping::resize_axis(
+                      anchor_x,
+                      vx,
+                      factor,
+                      pane.width,
+                      pane.height,
+                      state.workspace_transform.zoom,
+                      minimum,
+                      8.0,
+                      &targets_x,
+                      start.layer_id,
+                    );
+                    let vertical = snapping::resize_axis(
+                      anchor_y,
+                      vy,
+                      factor,
+                      pane.height,
+                      pane.width,
+                      state.workspace_transform.zoom,
+                      minimum,
+                      8.0,
+                      &targets_y,
+                      start.layer_id,
+                    );
+                    let chosen = if horizontal.found
+                      && (!vertical.found || horizontal.distance <= vertical.distance)
+                    {
+                      horizontal
+                    } else {
+                      vertical
+                    };
+                    if chosen.found {
+                      factor = chosen.adjustment;
+                    }
+                    let x_difference = horizontal
+                      .found
+                      .then_some(
+                        (horizontal.adjustment - factor).abs()
+                          * vx.abs()
+                          * pane.width
+                          * state.workspace_transform.zoom,
+                      )
+                      .unwrap_or(f64::INFINITY);
+                    let y_difference = vertical
+                      .found
+                      .then_some(
+                        (vertical.adjustment - factor).abs()
+                          * vy.abs()
+                          * pane.height
+                          * state.workspace_transform.zoom,
+                      )
+                      .unwrap_or(f64::INFINITY);
+                    state.selection_snap_guide_x =
+                      (horizontal.found && x_difference <= 0.5).then_some(horizontal);
+                    state.selection_snap_guide_y =
+                      (vertical.found && y_difference <= 0.5).then_some(vertical);
+                  } else {
+                    clear_selection_snap_guides(&mut state);
+                  }
+                  selection.x = anchor_x + (start.x - anchor_x) * factor;
+                  selection.y = anchor_y + (start.y - anchor_y) * factor;
+                  selection.width = start.width * factor;
+                  selection.height = start.height * factor;
+                  gesture.last_delta = (selection.x - start.x, selection.y - start.y);
+                  gesture.last_scale = factor;
+                }
+                state.selection = Some(selection);
+                state.gesture = Some(ActiveGesture::Selection(gesture));
+                update_magnifier(&mut state);
+                redraw_magnifier(inner, &mut state);
+                draw_selection(inner, &state);
+                let _ = unsafe { inner.gpu.composition.Commit() };
+                update = Some(gesture);
+              }
+            }
+            None => {}
+          }
+        } else {
+          editor::EditorWindow::set_cursor(cursor_for_state(&state, point));
+        }
+      }
+      if let Some(gesture) = update {
+        emit_gesture(inner, SelectionGesturePhase::Update, gesture);
+      }
+    }
+    editor::Input::Up { x, y } => {
+      let point = logical(x, y);
+      let mut ended = None;
+      if let Ok(mut state) = inner.state.lock() {
+        state.last_pointer = point;
+        if let Some(ActiveGesture::Selection(gesture)) = state.gesture.take() {
+          ended = Some(gesture);
+        } else {
+          state.gesture = None;
+        }
+        clear_selection_snap_guides(&mut state);
+        update_magnifier(&mut state);
+        redraw_magnifier(inner, &mut state);
+        draw_selection(inner, &state);
+        editor::EditorWindow::set_cursor(cursor_for_state(&state, point));
+      }
+      if let Some(gesture) = ended {
+        emit_gesture(inner, SelectionGesturePhase::End, gesture);
+      }
+    }
+    editor::Input::Cancel => {
+      let mut cancelled = None;
+      if let Ok(mut state) = inner.state.lock() {
+        if let Some(ActiveGesture::Selection(gesture)) = state.gesture.take() {
+          state.selection = Some(gesture.selection_start);
+          if gesture.operation == SelectionGestureOperation::FrameResize {
+            if let Some(pane) = state
+              .panes
+              .get_mut(gesture.selection_start.pane_index as usize)
+              .and_then(Option::as_mut)
+            {
+              pane.base_rect = gesture.pane_start;
+            }
+            apply_workspace_transform(inner, &mut state);
+          }
+          clear_selection_snap_guides(&mut state);
+          update_magnifier(&mut state);
+          redraw_magnifier(inner, &mut state);
+          draw_selection(inner, &state);
+          cancelled = Some(gesture);
+        } else {
+          state.gesture = None;
+          clear_selection_snap_guides(&mut state);
+        }
+      }
+      if let Some(gesture) = cancelled {
+        emit_gesture(inner, SelectionGesturePhase::Cancel, gesture);
+      }
+    }
+    editor::Input::Wheel { x, y, delta } => {
+      let point = logical(x, y);
+      let mut zoom = None;
+      if let Ok(mut state) = inner.state.lock() {
+        state.last_pointer = point;
+        let old = state.workspace_transform.zoom;
+        let next = (old * (delta * 0.12).exp()).clamp(0.1, 16.0);
+        let ratio = next / old;
+        let center = (state.viewport.width / 2.0, state.viewport.height / 2.0);
+        state.workspace_transform.pan_x =
+          point.0 - center.0 - (point.0 - center.0 - state.workspace_transform.pan_x) * ratio;
+        state.workspace_transform.pan_y =
+          point.1 - center.1 - (point.1 - center.1 - state.workspace_transform.pan_y) * ratio;
+        state.workspace_transform.zoom = next;
+        apply_workspace_transform(inner, &mut state);
+        zoom = Some(next);
+      }
+      if let Some(zoom) = zoom {
+        emit_transform(inner, zoom);
+      }
+    }
+    editor::Input::DoubleClick { .. } => {
+      if let Ok(mut state) = inner.state.lock() {
+        state.workspace_transform = WorkspaceTransform::default();
+        apply_workspace_transform(inner, &mut state);
+      }
+      emit_transform(inner, 1.0);
+    }
+  }
+}
+
 impl RecordingPreviewSurface {
   fn present_cached_source(
     &self,
@@ -482,6 +1765,7 @@ impl RecordingPreviewSurface {
       pane.content_size = output_size;
     }
     pane.last_composition = Some(composition);
+    pane.settings = Some(settings.clone());
     let source = pane
       .source
       .as_ref()
@@ -504,7 +1788,13 @@ impl RecordingPreviewSurface {
       }
       .map_err(|error| format!("The layer preview could not clear its target: {error}"))?;
       if let Some(view) = view {
-        unsafe { self.inner.gpu.context.ClearRenderTargetView(&view, &[0.0; 4]) };
+        unsafe {
+          self
+            .inner
+            .gpu
+            .context
+            .ClearRenderTargetView(&view, &[0.0; 4])
+        };
       }
     }
     self.inner.gpu.compositor.draw_with_camera(
@@ -514,6 +1804,7 @@ impl RecordingPreviewSurface {
       settings,
       composition,
       camera,
+      pane.magnifier,
     )?;
     unsafe { self.inner.gpu.context.Flush() };
     // Inside an open batch the frame is parked: the closing guard presents
@@ -557,19 +1848,33 @@ impl RecordingPreviewSurface {
         let host = HWND(host.0);
         Ok(std::sync::Arc::new(SurfaceInner {
           batch_depth: AtomicU32::new(0),
+          callbacks: Mutex::new(EditorCallbacks::default()),
+          editor: editor::EditorWindow::new(host)?,
           gpu: Gpu::new(host)?,
           state: Mutex::new(SurfaceState {
             backdrop: [0.09, 0.09, 0.10, 1.0],
             camera_source: None,
+            editor_active: false,
+            gesture: None,
+            last_pointer: (0.0, 0.0),
             panes: Vec::new(),
             primary_composition: None,
             scale: 1.0,
+            selection: None,
+            selection_visible: true,
+            selection_snapping_enabled: false,
+            selection_snap_guide_x: None,
+            selection_snap_guide_y: None,
+            selection_targets: Vec::new(),
             viewport: PreviewSurfaceRect {
               height: 0.0,
               width: 0.0,
               x: 0.0,
               y: 0.0,
             },
+            workspace_transform: WorkspaceTransform::default(),
+            workspace_natural_size: None,
+            workspace_transforms: HashMap::new(),
           }),
         }))
       })
@@ -622,12 +1927,126 @@ impl RecordingPreviewSurface {
   pub(crate) fn set_scale(&self, scale: f64) {
     if let Ok(mut state) = self.inner.state.lock() {
       state.scale = scale.max(0.1);
+      let (x, right) = window::scaled_edges(state.viewport.x, state.viewport.width, state.scale);
+      let (y, bottom) = window::scaled_edges(state.viewport.y, state.viewport.height, state.scale);
+      self
+        .inner
+        .editor
+        .set_frame(x, y, right - x, bottom - y, state.editor_active);
+      draw_selection(&self.inner, &state);
+    }
+  }
+
+  pub(crate) fn enable_editor(&mut self, callback: TransformCallback) {
+    if let Ok(mut callbacks) = self.inner.callbacks.lock() {
+      callbacks.transform = Some(callback);
+    }
+    if let Ok(mut state) = self.inner.state.lock() {
+      state.editor_active = true;
+      state.workspace_transform = WorkspaceTransform::default();
+      state.workspace_natural_size = None;
+      state.workspace_transforms.clear();
+      let (x, right) = window::scaled_edges(state.viewport.x, state.viewport.width, state.scale);
+      let (y, bottom) = window::scaled_edges(state.viewport.y, state.viewport.height, state.scale);
+      self
+        .inner
+        .editor
+        .set_frame(x, y, right - x, bottom - y, true);
+      draw_selection(&self.inner, &state);
+    }
+  }
+
+  pub(crate) fn set_editor_active(&self, active: bool) {
+    if let Ok(mut state) = self.inner.state.lock() {
+      state.editor_active = active;
+      self.inner.editor.set_active(active);
+      draw_selection(&self.inner, &state);
+    }
+  }
+
+  pub(crate) fn set_editor_zoom(&self, zoom_percent: f64) {
+    let zoom = (zoom_percent / 100.0).clamp(0.1, 16.0);
+    let mut changed = false;
+    if let Ok(mut state) = self.inner.state.lock() {
+      if (state.workspace_transform.zoom - zoom).abs() > 0.0001 {
+        let ratio = zoom / state.workspace_transform.zoom;
+        state.workspace_transform.pan_x *= ratio;
+        state.workspace_transform.pan_y *= ratio;
+        state.workspace_transform.zoom = zoom;
+        apply_workspace_transform(&self.inner, &mut state);
+        changed = true;
+      }
+    }
+    if changed {
+      emit_transform(&self.inner, zoom);
+    }
+  }
+
+  pub(crate) fn center_editor(&self) {
+    if let Ok(mut state) = self.inner.state.lock() {
+      state.workspace_transform.pan_x = 0.0;
+      state.workspace_transform.pan_y = 0.0;
+      apply_workspace_transform(&self.inner, &mut state);
+    }
+  }
+
+  pub(crate) fn set_selection_callback(&mut self, callback: SelectionCallback) {
+    if let Ok(mut callbacks) = self.inner.callbacks.lock() {
+      callbacks.selection = Some(callback);
+    }
+  }
+
+  pub(crate) fn set_selection_gesture_callback(&mut self, callback: SelectionGestureCallback) {
+    if let Ok(mut callbacks) = self.inner.callbacks.lock() {
+      callbacks.gesture = Some(callback);
+    }
+  }
+
+  pub(crate) fn set_selection_snapping(&self, enabled: bool) {
+    if let Ok(mut state) = self.inner.state.lock() {
+      state.selection_snapping_enabled = enabled;
+      if !enabled {
+        clear_selection_snap_guides(&mut state);
+        draw_selection(&self.inner, &state);
+      }
+    }
+  }
+
+  pub(crate) fn set_selection(&self, selection: Option<PreviewSelection>) {
+    if let Ok(mut state) = self.inner.state.lock() {
+      state.selection = selection;
+      if state.gesture.is_none() {
+        clear_selection_snap_guides(&mut state);
+      }
+      draw_selection(&self.inner, &state);
+    }
+  }
+
+  pub(crate) fn set_selection_visible(&self, visible: bool) {
+    if let Ok(mut state) = self.inner.state.lock() {
+      state.selection_visible = visible;
+      draw_selection(&self.inner, &state);
+    }
+  }
+
+  pub(crate) fn set_selection_targets(&self, targets: Option<&[PreviewSelection]>) {
+    if let Ok(mut state) = self.inner.state.lock() {
+      state.selection_targets.clear();
+      state
+        .selection_targets
+        .extend_from_slice(targets.unwrap_or_default());
     }
   }
 
   pub(crate) fn set_viewport(&self, rect: PreviewSurfaceRect, backdrop: [f64; 4]) {
     if let Ok(mut state) = self.inner.state.lock() {
       state.viewport = rect;
+      let (x, right) = window::scaled_edges(rect.x, rect.width, state.scale);
+      let (y, bottom) = window::scaled_edges(rect.y, rect.height, state.scale);
+      self
+        .inner
+        .editor
+        .set_frame(x, y, right - x, bottom - y, state.editor_active);
       self.inner.gpu.backdrop.set_geometry(rect, state.scale);
       if state.backdrop != backdrop
         && self
@@ -639,6 +2058,7 @@ impl RecordingPreviewSurface {
       {
         state.backdrop = backdrop;
       }
+      draw_selection(&self.inner, &state);
     }
   }
 
@@ -672,38 +2092,107 @@ impl RecordingPreviewSurface {
     }
     let scale = state.scale;
     let viewport = state.viewport;
+    let transformed = state.workspace_transform.apply(viewport, rect);
     let Some(pane) = state.panes[index].as_mut() else {
       return;
     };
     pane.seen = true;
-    let (x, right) = window::scaled_edges(viewport.x + rect.x, rect.width, scale);
-    let (y, bottom) = window::scaled_edges(viewport.y + rect.y, rect.height, scale);
-    let width = (right - x).max(2);
-    let height = (bottom - y).max(2);
-    let (viewport_x, viewport_right) = window::scaled_edges(viewport.x, viewport.width, scale);
-    let (viewport_y, viewport_bottom) = window::scaled_edges(viewport.y, viewport.height, scale);
-    pane.position = (x, y);
-    pane.display_size = (width, height);
-    pane.clip_edges = (
-      (viewport_x - x).clamp(0, width),
-      (viewport_y - y).clamp(0, height),
-      (viewport_right - x).clamp(0, width),
-      (viewport_bottom - y).clamp(0, height),
-    );
+    pane.base_rect = rect;
     // With a present on the way the geometry waits for it, so the pane's rect
     // and its freshly composed pixels land in the same commit. A pure pan (no
     // present coming) applies at once - but never while the DOM rect's aspect
     // has outrun the buffer: stretching the old frame into a new-aspect rect
     // for one transaction is exactly the jitter this avoids. Deferred
     // geometry is published by the pane's next present or the batch flush.
-    if defer_resize {
-      pane.pending_geometry = true;
-    } else if pane.display_aspect_matches_buffer() {
-      pane.pending_geometry = false;
-      let _ = pane.update_geometry();
-    } else {
-      pane.pending_geometry = true;
+    set_pane_geometry(pane, viewport, transformed, scale, defer_resize);
+  }
+
+  /// Lays out the recording panes as one retained workspace. DirectComposition
+  /// still uses one visual per source (each visual shares the same transform),
+  /// but callers submit the complete pane topology in one operation and the
+  /// existing batch keeps geometry and pixels atomic.
+  pub(crate) fn layout_recording_workspace(
+    &self,
+    _rect: PreviewSurfaceRect,
+    natural_size: (u32, u32),
+    panes: &[(u32, PreviewSurfaceRect)],
+    defer_draw: bool,
+  ) {
+    let mut restored_zoom = None;
+    if let Ok(mut state) = self.inner.state.lock() {
+      if state.workspace_natural_size != Some(natural_size) {
+        if let Some(transform) = state.workspace_transforms.get(&natural_size).copied() {
+          if (state.workspace_transform.zoom - transform.zoom).abs() > 0.0001 {
+            restored_zoom = Some(transform.zoom);
+          }
+          state.workspace_transform.zoom = transform.zoom;
+          state.workspace_transform.pan_x = 0.0;
+          state.workspace_transform.pan_y = 0.0;
+        }
+        state.workspace_natural_size = Some(natural_size);
+      }
     }
+    for (index, rect) in panes {
+      self.layout(*index, *rect, defer_draw);
+    }
+    if let Some(zoom) = restored_zoom {
+      emit_transform(&self.inner, zoom);
+    }
+  }
+
+  /// Applies a native Frame resize to the selected recording pane. The
+  /// ratios describe the pane's new normalized frame; retaining that geometry
+  /// here lets the GPU scene and its OSC use the same source of truth while
+  /// React mirrors the committed semantic state.
+  pub(crate) fn update_workspace_selected_resize(
+    &self,
+    selected_layer: u32,
+    origin_x_ratio: f64,
+    origin_y_ratio: f64,
+    width_ratio: f64,
+    height_ratio: f64,
+  ) -> bool {
+    let Ok(mut state) = self.inner.state.lock() else {
+      return false;
+    };
+    let Some(pane) = state
+      .panes
+      .get_mut(selected_layer as usize)
+      .and_then(Option::as_mut)
+    else {
+      return false;
+    };
+    let width = width_ratio.max(0.0001);
+    let height = height_ratio.max(0.0001);
+    // Match the retained Metal workspace contract: origin is expressed as a
+    // fraction of the old canvas, while width/height are multiplicative
+    // resize factors. This preserves the opposite edge under a corner drag.
+    pane.base_rect.x -= pane.base_rect.width * origin_x_ratio;
+    pane.base_rect.y -= pane.base_rect.height * origin_y_ratio;
+    pane.base_rect.width *= width;
+    pane.base_rect.height *= height;
+    let viewport = state.viewport;
+    let scale = state.scale;
+    let transform = state.workspace_transform;
+    let base_rect = pane.base_rect;
+    let transformed = transform.apply(viewport, base_rect);
+    set_pane_geometry(pane, viewport, transformed, scale, true);
+    draw_selection(&self.inner, &state);
+    true
+  }
+
+  /// Applies one viewport-local transform to every pane while retaining their
+  /// relative positions. Native Windows input will drive this directly.
+  pub(crate) fn set_workspace_transform(&self, pan_x: f64, pan_y: f64, zoom: f64) {
+    let Ok(mut state) = self.inner.state.lock() else {
+      return;
+    };
+    state.workspace_transform = WorkspaceTransform {
+      pan_x,
+      pan_y,
+      zoom: zoom.clamp(0.1, 16.0),
+    };
+    apply_workspace_transform(&self.inner, &mut state);
   }
 
   /// Opens a present batch: frames drawn until the guard drops are parked on
@@ -717,18 +2206,14 @@ impl RecordingPreviewSurface {
 
   pub(crate) fn finish_layout(&self) {
     if let Ok(mut state) = self.inner.state.lock() {
-      for pane in state
-        .panes
-        .iter_mut()
-        .flatten()
-        .filter(|pane| !pane.seen)
-      {
+      for pane in state.panes.iter_mut().flatten().filter(|pane| !pane.seen) {
         pane.hide();
         // A hidden pane has nothing stale to show; drop leftovers so a later
         // flush cannot resurrect it at a parked offset.
         pane.pending_geometry = false;
         pane.pending_present = false;
       }
+      draw_selection(&self.inner, &state);
       // An open batch commits for everything on its flush; a second
       // commit-and-wait here would add a display tick of latency to every
       // layout that presents in the same invoke.
@@ -1188,6 +2673,46 @@ impl RecordingPreviewSurface {
   }
 
   #[allow(clippy::too_many_arguments)]
+  pub(crate) fn present_recording_workspace(
+    &self,
+    layers: &[RecordingWorkspaceLayer<'_>],
+  ) -> Result<bool, String> {
+    if layers.is_empty() {
+      return Ok(false);
+    }
+    let batch = self.present_batch();
+    let mut presented = false;
+    for layer in layers {
+      let Some(source) = layer.source else {
+        // Keep this explicit rather than silently reading back a native
+        // texture. The Windows decoder's D3D11 path will provide this branch
+        // once its zero-copy source contract is promoted.
+        if layer.source_pixels.is_some() {
+          return Err("Windows recording workspace pixel sources are not wired".to_owned());
+        }
+        return Err("Recording workspace layer has no source".to_owned());
+      };
+      // The retained pane topology is already laid out by
+      // `layout_recording_workspace`; the shared workspace transform is
+      // applied by the pane visuals, so no CPU composition or intermediate
+      // webview transport is introduced here.
+      presented |= self.present_composed(
+        layer.pane_index,
+        layer.source_token,
+        source,
+        &layer.settings,
+        layer.seconds,
+        layer.cursor,
+        layer.camera,
+        layer.overlay,
+        layer.clip_cursor_at_video_edge,
+      )?;
+    }
+    drop(batch);
+    Ok(presented)
+  }
+
+  #[allow(clippy::too_many_arguments)]
   pub(crate) fn present_composed(
     &self,
     index: u32,
@@ -1299,6 +2824,12 @@ impl RecordingPreviewSurface {
       for pane in state.panes.iter().flatten() {
         pane.hide();
       }
+      state.editor_active = false;
+      state.selection = None;
+      state.selection_targets.clear();
+      state.gesture = None;
+      self.inner.editor.set_active(false);
+      draw_selection(&self.inner, &state);
       let _ = unsafe { self.inner.gpu.composition.Commit() };
     }
   }
