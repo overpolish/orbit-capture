@@ -168,6 +168,19 @@ impl PreviewPlayerManager {
     }
   }
 
+  /// Takes the worker without joining it, so the caller can join it off the
+  /// main thread. Signalling here still happens under the state lock: the
+  /// dying worker has to stop presenting frames, and its displayed position
+  /// has to be recorded, before whatever replaces it starts decoding. Any
+  /// `cancel_worker` the caller reaches afterwards - `restart`'s, for
+  /// instance - is then a no-op.
+  fn take_worker(&mut self) -> Option<PreviewPlayerWorker> {
+    let worker = self.worker.take()?;
+    worker.signal_cancel();
+    self.position_ms = worker.position();
+    Some(worker)
+  }
+
   fn restart(&mut self, mode: PlaybackMode) -> Result<(), String> {
     self.cancel_worker();
     let sources = self

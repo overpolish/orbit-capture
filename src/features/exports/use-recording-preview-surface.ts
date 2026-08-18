@@ -623,7 +623,15 @@ export function useRecordingPreviewSurface({
         );
         if (viewport) {
           observer.observe(viewport);
-          mutationObserver = new MutationObserver(() => {
+          mutationObserver = new MutationObserver((records) => {
+            // measure() writes the backdrop mask's style inside this same
+            // subtree; reacting to that write would loop forever.
+            const relevant = records.some(
+              (record) =>
+                !(record.target instanceof HTMLElement) ||
+                !record.target.closest("[data-preview-backdrop]"),
+            );
+            if (!relevant) return;
             for (const canvas of [
               screenCanvasRef.current,
               cameraCanvasRef.current,
@@ -632,7 +640,16 @@ export function useRecordingPreviewSurface({
             }
             measure();
           });
+          // `attributes` matters as much as `childList`: when the workspace is
+          // width-constrained, a viewport height change (the timeline loading
+          // in) moves the centred marker without resizing it. ResizeObserver
+          // only reports size changes, and the viewport-resize measure runs
+          // before React has repositioned the marker - so the corrected
+          // position only ever reaches native if the marker's style write
+          // itself re-triggers a measure.
           mutationObserver.observe(viewport, {
+            attributeFilter: ["style"],
+            attributes: true,
             childList: true,
             subtree: true,
           });

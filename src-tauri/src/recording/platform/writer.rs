@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 use std::{
   collections::VecDeque,
   io::Cursor,
+  ops::ControlFlow,
   path::PathBuf,
   sync::{
     atomic::Ordering,
@@ -18,7 +19,7 @@ use std::{
   time::Instant,
 };
 
-use cidre::{arc, av, cm, ns};
+use cidre::{arc, av, cm, ns, objc};
 
 use super::output::FrameClock;
 use super::{
@@ -251,115 +252,137 @@ impl Writer {
     let mut announced = false;
 
     while let Ok(command) = commands.recv() {
-      match command {
-        Command::Begin { .. } => {}
-        Command::Frame(frame) => {
-          if self.timeline.is_paused() {
-            // Still worth keeping: it is the frame the movie resumes from and
-            // the one the poster is drawn from if the user stops here.
-            self.tail = Some(frame);
-            continue;
-          }
-
-          let source_ns = match frame.clock {
-            FrameClock::Source(source_ns) => source_ns,
-            FrameClock::Wall => self.elapsed_ns(frame.wall),
-          };
-          let is_first_frame = !self.timeline.has_started();
-          if is_first_frame && !self.primary_video {
-            let Some(origin) = self.timeline_origin.get().copied() else {
-              self.tail = Some(frame);
-              continue;
-            };
-            let origin_ns = self.elapsed_ns(origin);
-            // The camera sample clock is smooth but has its own epoch. Anchor
-            // it to the shared screen wall origin once, then retain its source
-            // cadence instead of recording callback-delivery jitter.
-            let source_origin_ns = match frame.clock {
-              FrameClock::Source(_) => source_ns
-                .saturating_sub(self.elapsed_ns(frame.wall).saturating_sub(origin_ns).max(0)),
-              FrameClock::Wall => origin_ns,
-            };
-            self.timeline.start_at(source_origin_ns, origin_ns);
-            self.origin_wall = Some(origin);
-            // Camera capture is opened before screen capture, so the last
-            // warm frame from before the screen's first frame is the honest
-            // picture at shared time zero. Writing it there prevents a black
-            // lead-in without inventing a frame from the future.
-            if let Some(pre_origin) = self.tail.take() {
-              let appended = self.append(&pre_origin, 0);
-              self.tail = Some(pre_origin);
-              if !announced && appended {
-                announced = true;
-                let _ = first_frame.send(Ok(()));
-              }
-            }
-          }
-          let is_first_frame = !self.timeline.has_started();
-          if is_first_frame {
-            self.origin_source_ns = Some(source_ns);
-            self.origin_wall = Some(frame.wall);
-            let _ = self.timeline_origin.set(frame.wall);
-          }
-          let pts = self
-            .timeline
-            .frame_pts_ns(source_ns, self.elapsed_ns(frame.wall));
-          let appended = self.append(&frame, pts);
-          self.tail = Some(frame);
-
-          if is_first_frame {
-            self.flush_system_audio_preroll();
-            self.ensure_system_audio_track();
-            self.flush_microphone_preroll();
-          }
-
-          if !announced && appended {
-            announced = true;
-            let _ = first_frame.send(Ok(()));
-          }
-        }
-        Command::SystemAudio(sample) => {
-          if !self.timeline.has_started() {
-            if self.pending_system_audio.len() == SYSTEM_AUDIO_PREROLL_LIMIT {
-              self.pending_system_audio.pop_front();
-            }
-            self.pending_system_audio.push_back(sample);
-          } else if !self.timeline.is_paused() {
-            self.append_system_audio_from_origin(sample);
-          }
-        }
-        Command::Microphone(microphone) => {
-          if !self.timeline.has_started() {
-            if self.pending_microphone.len() == MICROPHONE_PREROLL_LIMIT {
-              self.pending_microphone.pop_front();
-            }
-            self.pending_microphone.push_back(microphone);
-          } else if !self.timeline.is_paused() {
-            self.append_microphone_from_origin(microphone);
-          }
-        }
-        Command::MicrophoneFailed(error) => {
-          if !self.microphone_failure_reported {
-            self.microphone_failure_reported = true;
-            eprintln!("Microphone capture failed: {error}");
-            (self.on_failure)(format!("The microphone stopped recording: {error}"));
-          }
-        }
-        Command::Pause { at } => self.timeline.pause(self.elapsed_ns(at)),
-        Command::Resume { at } => self.timeline.resume(self.elapsed_ns(at)),
-        Command::Stop { at, reply } => {
-          let _ = reply.send(self.finish(at));
-          return;
-        }
-        Command::Cancel => {
-          self.writer.cancel_writing();
-          return;
-        }
+      // This is a plain `std::thread`, so it has no autorelease pool of its
+      // own. Every append hands AVFoundation and CoreMedia work that leaves
+      // autoreleased scratch objects behind, and without a pool per command
+      // they pile up for the whole session and are only drained when the
+      // thread exits: measured at ~12MB/s, reaching 13GB in eleven minutes.
+      // One pool per command keeps that scratch alive exactly as long as the
+      // append that made it.
+      if objc::ar_pool(|| self.handle(command, first_frame, &mut announced)).is_break() {
+        return;
       }
     }
 
     // The session outlived its controller, which only happens if the handle
     // was dropped without stopping. Leave nothing half-written behind.
     self.writer.cancel_writing();
+  }
+
+  /// One command, start to finish. `ControlFlow::Break` ends the session:
+  /// the writer has been finished or cancelled and must not be used again.
+  fn handle(
+    &mut self,
+    command: Command,
+    first_frame: &mpsc::Sender<Result<(), String>>,
+    announced: &mut bool,
+  ) -> ControlFlow<()> {
+    match command {
+      Command::Begin { .. } => {}
+      Command::Frame(frame) => {
+        if self.timeline.is_paused() {
+          // Still worth keeping: it is the frame the movie resumes from and
+          // the one the poster is drawn from if the user stops here.
+          self.tail = Some(frame);
+          return ControlFlow::Continue(());
+        }
+
+        let source_ns = match frame.clock {
+          FrameClock::Source(source_ns) => source_ns,
+          FrameClock::Wall => self.elapsed_ns(frame.wall),
+        };
+        let is_first_frame = !self.timeline.has_started();
+        if is_first_frame && !self.primary_video {
+          let Some(origin) = self.timeline_origin.get().copied() else {
+            self.tail = Some(frame);
+            return ControlFlow::Continue(());
+          };
+          let origin_ns = self.elapsed_ns(origin);
+          // The camera sample clock is smooth but has its own epoch. Anchor
+          // it to the shared screen wall origin once, then retain its source
+          // cadence instead of recording callback-delivery jitter.
+          let source_origin_ns = match frame.clock {
+            FrameClock::Source(_) => {
+              source_ns.saturating_sub(self.elapsed_ns(frame.wall).saturating_sub(origin_ns).max(0))
+            }
+            FrameClock::Wall => origin_ns,
+          };
+          self.timeline.start_at(source_origin_ns, origin_ns);
+          self.origin_wall = Some(origin);
+          // Camera capture is opened before screen capture, so the last
+          // warm frame from before the screen's first frame is the honest
+          // picture at shared time zero. Writing it there prevents a black
+          // lead-in without inventing a frame from the future.
+          if let Some(pre_origin) = self.tail.take() {
+            let appended = self.append(&pre_origin, 0);
+            self.tail = Some(pre_origin);
+            if !*announced && appended {
+              *announced = true;
+              let _ = first_frame.send(Ok(()));
+            }
+          }
+        }
+        let is_first_frame = !self.timeline.has_started();
+        if is_first_frame {
+          self.origin_source_ns = Some(source_ns);
+          self.origin_wall = Some(frame.wall);
+          let _ = self.timeline_origin.set(frame.wall);
+        }
+        let pts = self
+          .timeline
+          .frame_pts_ns(source_ns, self.elapsed_ns(frame.wall));
+        let appended = self.append(&frame, pts);
+        self.tail = Some(frame);
+
+        if is_first_frame {
+          self.flush_system_audio_preroll();
+          self.ensure_system_audio_track();
+          self.flush_microphone_preroll();
+        }
+
+        if !*announced && appended {
+          *announced = true;
+          let _ = first_frame.send(Ok(()));
+        }
+      }
+      Command::SystemAudio(sample) => {
+        if !self.timeline.has_started() {
+          if self.pending_system_audio.len() == SYSTEM_AUDIO_PREROLL_LIMIT {
+            self.pending_system_audio.pop_front();
+          }
+          self.pending_system_audio.push_back(sample);
+        } else if !self.timeline.is_paused() {
+          self.append_system_audio_from_origin(sample);
+        }
+      }
+      Command::Microphone(microphone) => {
+        if !self.timeline.has_started() {
+          if self.pending_microphone.len() == MICROPHONE_PREROLL_LIMIT {
+            self.pending_microphone.pop_front();
+          }
+          self.pending_microphone.push_back(microphone);
+        } else if !self.timeline.is_paused() {
+          self.append_microphone_from_origin(microphone);
+        }
+      }
+      Command::MicrophoneFailed(error) => {
+        if !self.microphone_failure_reported {
+          self.microphone_failure_reported = true;
+          eprintln!("Microphone capture failed: {error}");
+          (self.on_failure)(format!("The microphone stopped recording: {error}"));
+        }
+      }
+      Command::Pause { at } => self.timeline.pause(self.elapsed_ns(at)),
+      Command::Resume { at } => self.timeline.resume(self.elapsed_ns(at)),
+      Command::Stop { at, reply } => {
+        let _ = reply.send(self.finish(at));
+        return ControlFlow::Break(());
+      }
+      Command::Cancel => {
+        self.writer.cancel_writing();
+        return ControlFlow::Break(());
+      }
+    }
+    ControlFlow::Continue(())
   }
 }

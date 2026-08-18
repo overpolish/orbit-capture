@@ -52,6 +52,10 @@ export const useCameraPreview = ({
   deviceId,
   mode,
 }: UseCameraPreviewOptions) => {
+  // Keyed on the mode's primitive fields, not the object: the camera list is
+  // re-fetched (and its mode objects rebuilt) every time the selector opens, so
+  // identity changes constantly while the selected capture mode does not.
+  const { fps, height, width } = mode ?? ({} as Partial<CameraResolution>);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const latestFrameRef = useRef<ArrayBuffer | null>(null);
   const operationsRef = useRef(Promise.resolve());
@@ -94,13 +98,15 @@ export const useCameraPreview = ({
       .then(async () => {
         setHasFrame(false);
         await stopCameraPreview();
-        if (!active || !deviceId || !mode || cancelled) return;
+        if (!active || !deviceId || cancelled) return;
+        if (fps === undefined || height === undefined || width === undefined)
+          return;
 
         const channel = new Channel<ArrayBuffer>();
         channel.onmessage = (frame) => {
           if (!cancelled) latestFrameRef.current = frame;
         };
-        await startCameraPreview(deviceId, mode, channel);
+        await startCameraPreview(deviceId, { fps, height, width }, channel);
       })
       .catch((error: unknown) => {
         console.error("Could not start camera preview", error);
@@ -114,7 +120,7 @@ export const useCameraPreview = ({
         .then(stopCameraPreview)
         .catch(() => undefined);
     };
-  }, [active, deviceId, mode]);
+  }, [active, deviceId, fps, height, width]);
 
   return { canvasRef, hasFrame };
 };

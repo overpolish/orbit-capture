@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::ops::ControlFlow;
+
+use cidre::objc;
+
 use super::*;
 
 impl AudioWriter {
@@ -56,41 +60,59 @@ impl AudioWriter {
     ready: mpsc::Sender<Result<(), String>>,
   ) {
     while let Ok(command) = inbox.recv() {
-      match command {
-        Command::Begin { at } => {
-          let _ = ready.send(self.begin(at));
-        }
-        Command::SystemAudio(sample) if self.origin.is_none() => {
-          if self.pending_system_audio.len() == SYSTEM_AUDIO_PREROLL_LIMIT {
-            self.pending_system_audio.pop_front();
-          }
-          self.pending_system_audio.push_back(sample);
-        }
-        Command::SystemAudio(sample) => self.append_system_audio(sample),
-        Command::Microphone(buffer) => {
-          if self.origin.is_none() {
-            if self.pending_microphone.len() == MICROPHONE_PREROLL_LIMIT {
-              self.pending_microphone.pop_front();
-            }
-            self.pending_microphone.push_back(buffer);
-          } else if let Some(format) = self.microphone_format {
-            self.append_pcm(buffer, format, false);
-          }
-        }
-        Command::MicrophoneFailed(error) => self.fail(error),
-        Command::Pause { at } => self.timeline.pause(self.elapsed_ns(at)),
-        Command::Resume { at } => self.timeline.resume(self.elapsed_ns(at)),
-        Command::Stop { at, reply } => {
-          let _ = reply.send(self.finish(at));
-          return;
-        }
-        Command::Cancel => {
-          self.writer.cancel_writing();
-          return;
-        }
-        Command::Frame(_) => self.fail("Audio-only capture received a video frame".to_owned()),
+      // A plain `std::thread` has no autorelease pool of its own, and every
+      // append leaves autoreleased AVFoundation and CoreMedia scratch behind.
+      // Without a pool per command that scratch accumulates for the whole
+      // session and is only released when the thread exits: measured on the
+      // video writer at ~12MB/s, reaching 13GB in eleven minutes.
+      if objc::ar_pool(|| self.handle(command, &ready)).is_break() {
+        return;
       }
     }
     self.writer.cancel_writing();
+  }
+
+  /// One command, start to finish. `ControlFlow::Break` ends the session:
+  /// the writer has been finished or cancelled and must not be used again.
+  fn handle(
+    &mut self,
+    command: Command,
+    ready: &mpsc::Sender<Result<(), String>>,
+  ) -> ControlFlow<()> {
+    match command {
+      Command::Begin { at } => {
+        let _ = ready.send(self.begin(at));
+      }
+      Command::SystemAudio(sample) if self.origin.is_none() => {
+        if self.pending_system_audio.len() == SYSTEM_AUDIO_PREROLL_LIMIT {
+          self.pending_system_audio.pop_front();
+        }
+        self.pending_system_audio.push_back(sample);
+      }
+      Command::SystemAudio(sample) => self.append_system_audio(sample),
+      Command::Microphone(buffer) => {
+        if self.origin.is_none() {
+          if self.pending_microphone.len() == MICROPHONE_PREROLL_LIMIT {
+            self.pending_microphone.pop_front();
+          }
+          self.pending_microphone.push_back(buffer);
+        } else if let Some(format) = self.microphone_format {
+          self.append_pcm(buffer, format, false);
+        }
+      }
+      Command::MicrophoneFailed(error) => self.fail(error),
+      Command::Pause { at } => self.timeline.pause(self.elapsed_ns(at)),
+      Command::Resume { at } => self.timeline.resume(self.elapsed_ns(at)),
+      Command::Stop { at, reply } => {
+        let _ = reply.send(self.finish(at));
+        return ControlFlow::Break(());
+      }
+      Command::Cancel => {
+        self.writer.cancel_writing();
+        return ControlFlow::Break(());
+      }
+      Command::Frame(_) => self.fail("Audio-only capture received a video frame".to_owned()),
+    }
+    ControlFlow::Continue(())
   }
 }

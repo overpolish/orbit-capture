@@ -36,25 +36,36 @@ struct CameraPreviewManager {
 }
 
 impl CameraPreviewManager {
-  fn begin_start(&mut self) -> u64 {
+  /// Claims the next generation and hands back the worker it supersedes. The
+  /// caller tears that worker down off the state lock so a slow camera close
+  /// never blocks the thread that is holding it.
+  fn begin_start(&mut self) -> (u64, Option<CameraPreviewWorker>) {
     self.generation = self.generation.wrapping_add(1);
-    if let Some(worker) = self.worker.take() {
-      worker.cancel();
-    }
-    self.generation
+    (self.generation, self.worker.take())
   }
 
-  fn finish_start(&mut self, generation: u64, worker: CameraPreviewWorker) {
+  /// Stores the worker when it still matches the current generation, otherwise
+  /// returns it so the caller can cancel it away from the lock.
+  fn finish_start(
+    &mut self,
+    generation: u64,
+    worker: CameraPreviewWorker,
+  ) -> Option<CameraPreviewWorker> {
     if self.generation == generation {
       self.worker = Some(worker);
+      None
     } else {
-      worker.cancel();
+      Some(worker)
     }
+  }
+
+  fn take_worker(&mut self) -> Option<CameraPreviewWorker> {
+    self.generation = self.generation.wrapping_add(1);
+    self.worker.take()
   }
 
   fn cancel(&mut self) {
-    self.generation = self.generation.wrapping_add(1);
-    if let Some(worker) = self.worker.take() {
+    if let Some(worker) = self.take_worker() {
       worker.cancel();
     }
   }
@@ -135,19 +146,50 @@ fn frame_payload(frame: Buffer) -> Result<Vec<u8>, String> {
   Ok(payload)
 }
 
+const DELIVERY_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 struct PreviewDelivery {
+  cancelled: Arc<AtomicBool>,
   sender: Option<mpsc::SyncSender<Buffer>>,
   thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl PreviewDelivery {
   fn spawn(channel: Channel) -> Result<Self, String> {
+    Self::spawn_with_sink(move |body| channel.send(body))
+  }
+
+  /// The delivery thread never waits on channel disconnect alone: nokhwa can
+  /// permanently leak the thread that owns the frame callback, and that
+  /// callback holds a sender clone. Polling the cancel flag keeps teardown
+  /// bounded to `DELIVERY_POLL_INTERVAL` no matter how many senders survive.
+  fn spawn_with_sink<S, E>(mut sink: S) -> Result<Self, String>
+  where
+    S: FnMut(InvokeResponseBody) -> Result<(), E> + Send + 'static,
+  {
     let (sender, receiver) = mpsc::sync_channel::<Buffer>(0);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let thread_cancelled = Arc::clone(&cancelled);
     let thread = std::thread::Builder::new()
       .name("camera-preview-delivery".to_owned())
       .spawn(move || {
         let mut last_sent = None;
-        while let Ok(frame) = receiver.recv() {
+        loop {
+          let frame = match receiver.recv_timeout(DELIVERY_POLL_INTERVAL) {
+            Ok(frame) => {
+              if thread_cancelled.load(Ordering::Acquire) {
+                break;
+              }
+              frame
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+              if thread_cancelled.load(Ordering::Acquire) {
+                break;
+              }
+              continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+          };
           let now = Instant::now();
           if last_sent.is_some_and(|last| now.duration_since(last) < PREVIEW_INTERVAL) {
             continue;
@@ -155,7 +197,7 @@ impl PreviewDelivery {
           let Ok(payload) = frame_payload(frame) else {
             continue;
           };
-          if channel.send(InvokeResponseBody::Raw(payload)).is_err() {
+          if sink(InvokeResponseBody::Raw(payload)).is_err() {
             break;
           }
           last_sent = Some(now);
@@ -163,6 +205,7 @@ impl PreviewDelivery {
       })
       .map_err(|error| error.to_string())?;
     Ok(Self {
+      cancelled,
       sender: Some(sender),
       thread: Some(thread),
     })
@@ -172,20 +215,22 @@ impl PreviewDelivery {
     self.sender.as_ref().expect("delivery is active").clone()
   }
 
-  fn stop(mut self) {
+  fn shutdown(&mut self) {
+    self.cancelled.store(true, Ordering::Release);
     self.sender.take();
     if let Some(thread) = self.thread.take() {
       let _ = thread.join();
     }
   }
+
+  fn stop(mut self) {
+    self.shutdown();
+  }
 }
 
 impl Drop for PreviewDelivery {
   fn drop(&mut self) {
-    self.sender.take();
-    if let Some(thread) = self.thread.take() {
-      let _ = thread.join();
-    }
+    self.shutdown();
   }
 }
 
@@ -268,31 +313,51 @@ pub async fn start_camera_preview(
   fps: u32,
   channel: Channel,
 ) -> Result<(), String> {
-  let generation = state
+  let (generation, previous) = state
     .0
     .lock()
     .map_err(|_| "Camera preview state is unavailable".to_owned())?
     .begin_start();
   let worker = tauri::async_runtime::spawn_blocking(move || {
+    // The previous worker has to release the device before the new camera is
+    // opened, otherwise the same device can still be busy.
+    if let Some(previous) = previous {
+      previous.cancel();
+    }
     build_camera_preview(&device_id, width, height, fps, channel)
   })
   .await
   .map_err(|error| error.to_string())??;
-  state
+  let stale = state
     .0
     .lock()
     .map_err(|_| "Camera preview state is unavailable".to_owned())?
     .finish_start(generation, worker);
+  if let Some(stale) = stale {
+    cancel_off_thread(stale).await?;
+  }
   Ok(())
 }
 
+/// Camera teardown joins worker threads that can block for a while, so it must
+/// never run on the caller's thread: `stop_camera_preview` is invoked on the
+/// macOS main thread and would freeze the UI.
+async fn cancel_off_thread(worker: CameraPreviewWorker) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || worker.cancel())
+    .await
+    .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
-pub fn stop_camera_preview(state: tauri::State<'_, CameraPreviewState>) -> Result<(), String> {
-  state
+pub async fn stop_camera_preview(state: tauri::State<'_, CameraPreviewState>) -> Result<(), String> {
+  let worker = state
     .0
     .lock()
     .map_err(|_| "Camera preview state is unavailable".to_owned())?
-    .cancel();
+    .take_worker();
+  if let Some(worker) = worker {
+    cancel_off_thread(worker).await?;
+  }
   Ok(())
 }
 
@@ -328,5 +393,25 @@ mod tests {
     assert_eq!(preview_dimensions(3_840, 2_160), (384, 216));
     assert_eq!(preview_dimensions(1_080, 1_920), (135, 240));
     assert_eq!(preview_dimensions(320, 180), (320, 180));
+  }
+
+  #[test]
+  fn stops_delivery_while_a_leaked_sender_is_still_alive() {
+    let delivery =
+      PreviewDelivery::spawn_with_sink(|_: InvokeResponseBody| Ok::<(), ()>(())).unwrap();
+    // Stands in for the sender clone that a leaked nokhwa frame callback keeps
+    // alive: the channel never disconnects, so only the cancel flag can end
+    // the delivery thread.
+    let leaked = delivery.sender();
+    let (stopped_tx, stopped) = mpsc::channel();
+    std::thread::spawn(move || {
+      delivery.stop();
+      let _ = stopped_tx.send(());
+    });
+    assert!(
+      stopped.recv_timeout(Duration::from_secs(2)).is_ok(),
+      "the delivery thread did not exit while a sender clone was alive"
+    );
+    drop(leaked);
   }
 }

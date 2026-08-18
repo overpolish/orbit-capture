@@ -263,44 +263,88 @@ pub fn set_recording_preview_cursor_effects(
   Ok(())
 }
 
+/// Playback teardown kills the ffmpeg audio child, drops the CoreAudio output
+/// stream and joins the decode threads, which together take the better part of
+/// a second. Never do that on the caller's thread: these commands run on the
+/// macOS main thread, and WebKit's layer commits go through it, so the webview
+/// visibly freezes for as long as the join lasts.
+async fn cancel_off_thread(worker: PreviewPlayerWorker) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    // The position the caller already read from the atomic is at most one
+    // frame behind what the join reports, so the returned value is dropped.
+    worker.cancel();
+  })
+  .await
+  .map_err(|error| error.to_string())
+}
+
+// Async so the old worker's join stays off the main thread. It has to finish
+// before the new worker starts, though: two cpal output streams must not own
+// the audio device at once.
 #[tauri::command]
-pub fn play_recording_preview(
+pub async fn play_recording_preview(
   state: tauri::State<'_, RecordingPreviewPlayerState>,
   session_id: u64,
 ) -> Result<(), String> {
+  let worker = {
+    let mut manager = state
+      .0
+      .lock()
+      .map_err(|_| "The recording preview player is unavailable".to_owned())?;
+    manager.require_session(session_id)?;
+    manager.is_playing = true;
+    manager.take_worker()
+  };
+  if let Some(worker) = worker {
+    cancel_off_thread(worker).await?;
+  }
   let mut manager = state
     .0
     .lock()
     .map_err(|_| "The recording preview player is unavailable".to_owned())?;
   manager.require_session(session_id)?;
-  manager.is_playing = true;
+  if !manager.is_playing {
+    // A pause or a seek won the race while the old worker was being joined,
+    // and it already owns what the preview presents.
+    return Ok(());
+  }
   manager.restart(PlaybackMode::Playing)
 }
 
 #[tauri::command]
-pub fn pause_recording_preview(
+pub async fn pause_recording_preview(
   state: tauri::State<'_, RecordingPreviewPlayerState>,
   session_id: u64,
 ) -> Result<(), String> {
-  let mut manager = state
-    .0
-    .lock()
-    .map_err(|_| "The recording preview player is unavailable".to_owned())?;
-  manager.require_session(session_id)?;
-  manager.is_playing = false;
-  manager.cancel_worker();
-  let displayed_position_ms = manager.position_ms;
-  let duration_ms = manager
-    .sources
-    .as_ref()
-    .map_or(0, |sources| sources.duration_ms);
-  manager.position_ms = decodable_position(manager.position_ms, duration_ms);
-  if let Some(channel) = &manager.event_channel {
-    let _ = channel.send(RecordingPreviewPlayerEvent::Paused {
-      position_ms: displayed_position_ms,
-    });
+  let (worker, result) = {
+    let mut manager = state
+      .0
+      .lock()
+      .map_err(|_| "The recording preview player is unavailable".to_owned())?;
+    manager.require_session(session_id)?;
+    manager.is_playing = false;
+    // Taking the worker signals it - so it stops presenting frames before the
+    // still decoder starts - and records the position it displayed, without
+    // waiting for its threads. The still decoder is an independent reader, so
+    // the paused frame decodes in parallel with that teardown.
+    let worker = manager.take_worker();
+    let displayed_position_ms = manager.position_ms;
+    let duration_ms = manager
+      .sources
+      .as_ref()
+      .map_or(0, |sources| sources.duration_ms);
+    manager.position_ms = decodable_position(manager.position_ms, duration_ms);
+    if let Some(channel) = &manager.event_channel {
+      let _ = channel.send(RecordingPreviewPlayerEvent::Paused {
+        position_ms: displayed_position_ms,
+      });
+    }
+    (worker, manager.restart(PlaybackMode::InteractiveStill))
+  };
+  if let Some(worker) = worker {
+    cancel_off_thread(worker).await?;
   }
-  manager.restart(PlaybackMode::InteractiveStill)
+  result
 }
 
 fn decodable_position(position_ms: u64, duration_ms: u64) -> u64 {
@@ -320,7 +364,7 @@ mod tests {
 }
 
 #[tauri::command]
-pub fn seek_recording_preview(
+pub async fn seek_recording_preview(
   state: tauri::State<'_, RecordingPreviewPlayerState>,
   position_ms: u64,
   request_id: u64,
@@ -328,34 +372,43 @@ pub fn seek_recording_preview(
   selection_visible: Option<bool>,
   session_id: u64,
 ) -> Result<(), String> {
-  let mut manager = state
-    .0
-    .lock()
-    .map_err(|_| "The recording preview player is unavailable".to_owned())?;
-  manager.require_session(session_id)?;
-  if request_id < manager.latest_seek_request {
-    return Ok(());
-  }
-  #[cfg(any(target_os = "macos", target_os = "windows"))]
-  if let Some(visible) = selection_visible {
-    if let Some(surface) = manager
+  // The request-id guard and the restart stay in one lock scope, so two
+  // overlapping seeks still order correctly; only the joins - of separate,
+  // already signalled workers - happen afterwards and off this thread.
+  let (worker, result) = {
+    let mut manager = state
+      .0
+      .lock()
+      .map_err(|_| "The recording preview player is unavailable".to_owned())?;
+    manager.require_session(session_id)?;
+    if request_id < manager.latest_seek_request {
+      return Ok(());
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    if let Some(visible) = selection_visible {
+      if let Some(surface) = manager
+        .sources
+        .as_ref()
+        .and_then(|sources| sources.preview_surface.as_ref())
+      {
+        surface.set_selection_visible(visible);
+      }
+    }
+    manager.latest_seek_request = request_id;
+    manager.rough_seek = rough;
+    let worker = manager.take_worker();
+    let duration_ms = manager
       .sources
       .as_ref()
-      .and_then(|sources| sources.preview_surface.as_ref())
-    {
-      surface.set_selection_visible(visible);
-    }
+      .map_or(0, |value| value.duration_ms);
+    manager.position_ms = position_ms.min(duration_ms.saturating_sub(1));
+    manager.is_playing = false;
+    (worker, manager.restart(PlaybackMode::InteractiveStill))
+  };
+  if let Some(worker) = worker {
+    cancel_off_thread(worker).await?;
   }
-  manager.latest_seek_request = request_id;
-  manager.rough_seek = rough;
-  manager.cancel_worker();
-  let duration_ms = manager
-    .sources
-    .as_ref()
-    .map_or(0, |value| value.duration_ms);
-  manager.position_ms = position_ms.min(duration_ms.saturating_sub(1));
-  manager.is_playing = false;
-  manager.restart(PlaybackMode::InteractiveStill)
+  result
 }
 
 #[tauri::command]
@@ -395,16 +448,27 @@ pub fn set_recording_preview_audio_volumes(
 }
 
 #[tauri::command]
-pub fn stop_recording_preview_player(
+pub async fn stop_recording_preview_player(
   state: tauri::State<'_, RecordingPreviewPlayerState>,
   session_id: u64,
 ) -> Result<(), String> {
-  let mut manager = state
-    .0
-    .lock()
-    .map_err(|_| "The recording preview player is unavailable".to_owned())?;
-  if manager.session_id == Some(session_id) {
+  let worker = {
+    let mut manager = state
+      .0
+      .lock()
+      .map_err(|_| "The recording preview player is unavailable".to_owned())?;
+    if manager.session_id != Some(session_id) {
+      return Ok(());
+    }
+    // The rest of the teardown - hiding the surface, releasing the sources -
+    // has to stay under the lock so a later session cannot start on top of it;
+    // only the playback worker's join moves off this thread.
+    let worker = manager.take_worker();
     manager.stop();
+    worker
+  };
+  if let Some(worker) = worker {
+    cancel_off_thread(worker).await?;
   }
   Ok(())
 }
