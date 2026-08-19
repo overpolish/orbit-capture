@@ -962,6 +962,76 @@ fn redraw_stale_selection(inner: &SurfaceInner, state: &mut SurfaceState) {
   }
 }
 
+/// Size of the current selection in OUTPUT pixels, or `None` when the
+/// workspace has no pixel scale to convert with.
+///
+/// `workspace_natural_size` is the canvas size in output pixels and the pane
+/// canvas rects are pre-zoom points, so pixels-per-point is simply natural
+/// over the union of the SEEN panes' canvas rects - the same relation the
+/// Metal backend's `selection_pixel_size` relies on: the screenshot workspace
+/// has one pane whose canvas rect matches the output aspect (and a live Frame
+/// resize keeps natural current), and the recording workspace rebases natural
+/// by exactly the union ratio it rebases the pane rects with.
+///
+/// The screenshot workspace is laid out per pane on Windows and never records
+/// a natural size; there the pane's output settings are the canvas size and
+/// the pane's own canvas rect is the union.
+fn selection_pixel_size(state: &SurfaceState, selection: PreviewSelection) -> Option<(f64, f64)> {
+  let owns_geometry = state.frame_resize.is_some();
+  let pane = state
+    .panes
+    .get(selection.pane_index as usize)?
+    .as_ref()
+    .filter(|pane| pane.seen)?;
+  let pane_rect = pane_canvas_rect(pane, owns_geometry);
+  if let Some(settings) = pane.settings.as_ref() {
+    if settings.width == 0
+      || settings.height == 0
+      || pane_rect.width <= 0.0
+      || pane_rect.height <= 0.0
+    {
+      return None;
+    }
+    return Some((
+      selection.width * f64::from(settings.width),
+      selection.height * f64::from(settings.height),
+    ));
+  }
+  let (natural_width, natural_height) = state.workspace_natural_size?;
+  if natural_width == 0 || natural_height == 0 {
+    return None;
+  }
+  let mut bounds: Option<PreviewSurfaceRect> = None;
+  for pane in state.panes.iter().flatten().filter(|pane| pane.seen) {
+    let rect = pane_canvas_rect(pane, owns_geometry);
+    if rect.width <= 0.0 || rect.height <= 0.0 {
+      continue;
+    }
+    bounds = Some(match bounds {
+      None => rect,
+      Some(existing) => {
+        let left = existing.x.min(rect.x);
+        let top = existing.y.min(rect.y);
+        let right = (existing.x + existing.width).max(rect.x + rect.width);
+        let bottom = (existing.y + existing.height).max(rect.y + rect.height);
+        PreviewSurfaceRect {
+          x: left,
+          y: top,
+          width: right - left,
+          height: bottom - top,
+        }
+      }
+    });
+  }
+  let bounds = bounds.filter(|bounds| bounds.width > 0.0 && bounds.height > 0.0)?;
+  let per_point_x = f64::from(natural_width) / bounds.width;
+  let per_point_y = f64::from(natural_height) / bounds.height;
+  Some((
+    selection.width * pane_rect.width * per_point_x,
+    selection.height * pane_rect.height * per_point_y,
+  ))
+}
+
 fn draw_selection(inner: &SurfaceInner, state: &SurfaceState) {
   let scale = state.scale.max(0.1);
   let (viewport_x, viewport_right) =
@@ -1049,6 +1119,16 @@ fn draw_selection(inner: &SurfaceInner, state: &SurfaceState) {
         height * scale as f32,
       ]
     });
+  // The "W × H" readout under the box, in output pixels (the Metal backend's
+  // `selection_pixel_size` label).
+  let label_text = display.and_then(|_| {
+    let (width, height) = selection_pixel_size(state, state.selection?)?;
+    Some(format!(
+      "{} × {}",
+      (width.round() as i64).max(1),
+      (height.round() as i64).max(1)
+    ))
+  });
   if let Ok(mut overlay) = inner.gpu.selection.lock() {
     let _ = overlay.draw(
       &inner.gpu.device,
@@ -1062,6 +1142,8 @@ fn draw_selection(inner: &SurfaceInner, state: &SurfaceState) {
       crop_image,
       guides,
       magnifier_box,
+      label_text.as_deref(),
+      scale,
       luminance > 0.5,
     );
   }
