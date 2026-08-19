@@ -13,6 +13,7 @@ const EXPORT_CHANGED_EVENT = "export://artifact";
 
 export function ExportSync() {
   const setSnapshot = useExportStore((state) => state.setSnapshot);
+  const setSnapshots = useExportStore((state) => state.setSnapshots);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -33,7 +34,9 @@ export function ExportSync() {
         return;
       }
 
-      setSnapshot(await getExportSnapshot());
+      // Every workspace at once: a webview that has just come up missed
+      // whatever change events landed before it was listening.
+      setSnapshots(await getExportSnapshot());
     };
 
     void synchronize();
@@ -42,7 +45,7 @@ export function ExportSync() {
       disposed = true;
       unlisten?.();
     };
-  }, [setSnapshot]);
+  }, [setSnapshot, setSnapshots]);
 
   return null;
 }

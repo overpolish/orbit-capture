@@ -36,8 +36,8 @@ use super::preview_platform::RecordingPreviewSurface;
 use super::preview_platform::{SelectionGestureOperation, SelectionGesturePhase};
 use super::{
   cursor_effects::{CursorCompositor, CursorEffectSettings},
-  AudioTrackVolume, CameraOverlaySettings, ExportArtifact, ExportState, RecordingAudioTrack,
-  RecordingOutputSettings,
+  AudioTrackVolume, CameraOverlaySettings, ExportArtifact, ExportKind, ExportState,
+  RecordingAudioTrack, RecordingOutputSettings,
 };
 use crate::recording::PrimaryRecordingKind;
 pub use commands::stop_all;
@@ -654,6 +654,7 @@ fn sources(
   let state = app.state::<ExportState>();
   let (audio_tracks, camera, cursor_path, duration_ms, height, path, primary_kind, width) = {
     let artifact = state
+      .recording
       .artifact
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -697,7 +698,7 @@ fn sources(
   // mutex: the main thread may simultaneously be serving a snapshot request
   // that needs the same mutex, which deadlocks crash recovery on startup.
   let preview_surface = app
-    .get_webview_window("export")
+    .get_webview_window(ExportKind::Recording.window_label().as_str())
     .map(|window| RecordingPreviewSurface::from_window(&window).map(Arc::new))
     .transpose()?;
   let layout = preview_layout(primary_pane, camera_size, height);

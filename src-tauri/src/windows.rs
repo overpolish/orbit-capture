@@ -64,7 +64,10 @@ pub(crate) fn conceal_disposable_overlay(window: &WebviewWindow) -> tauri::Resul
 
 #[derive(Clone, Copy)]
 pub enum WindowLabel {
-  Export,
+  /// The recording workspace's window. Each export workspace has one of its
+  /// own so a recording can wait for a decision while a screenshot is edited.
+  ExportRecording,
+  ExportScreenshot,
   #[cfg(target_os = "macos")]
   Permissions,
   RecordingBar,
@@ -79,7 +82,8 @@ pub enum WindowLabel {
 impl WindowLabel {
   pub const fn as_str(self) -> &'static str {
     match self {
-      Self::Export => "export",
+      Self::ExportRecording => "export-recording",
+      Self::ExportScreenshot => "export-screenshot",
       #[cfg(target_os = "macos")]
       Self::Permissions => "permissions",
       Self::RecordingBar => "recording-bar",
@@ -632,8 +636,13 @@ pub fn hide_instead_of_close(app: &AppHandle, label: WindowLabel) {
           WindowLabel::RecordingOptions => {
             let _ = hide_recording_options(app.clone());
           }
-          // Closing export cancels its pending capture too.
-          WindowLabel::Export => crate::exports::discard(&app),
+          // Closing an export window cancels only its own pending capture.
+          WindowLabel::ExportRecording => {
+            crate::exports::discard(&app, crate::exports::ExportKind::Recording);
+          }
+          WindowLabel::ExportScreenshot => {
+            crate::exports::discard(&app, crate::exports::ExportKind::Screenshot);
+          }
           WindowLabel::Settings => {
             let _ = crate::settings::hide_settings(app.clone());
           }

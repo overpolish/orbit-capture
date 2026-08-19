@@ -176,8 +176,9 @@ impl EditorWindow {
 }
 
 impl Drop for EditorWindow {
-  // `DestroyWindow` only works on the creating thread; the surface lives in a
-  // static `OnceLock` and is never dropped in practice.
+  // `DestroyWindow` only works on the creating thread; the surface lives in the
+  // process-lifetime registry keyed by its host window and is never dropped in
+  // practice.
   fn drop(&mut self) {
     let _ = unsafe { DestroyWindow(self.hwnd) };
   }
@@ -236,50 +237,56 @@ unsafe extern "system" fn window_proc(
     WM_LBUTTONDOWN => {
       SetCapture(hwnd);
       let (x, y) = point(lparam);
-      dispatch(Input::Down {
-        centered: option_pressed(),
-        x,
-        y,
-        snapping: wparam.0 & MK_CONTROL_MASK != 0,
-      });
+      dispatch(
+        hwnd,
+        Input::Down {
+          centered: option_pressed(),
+          x,
+          y,
+          snapping: wparam.0 & MK_CONTROL_MASK != 0,
+        },
+      );
       LRESULT(0)
     }
     WM_LBUTTONDBLCLK => {
       let (x, y) = point(lparam);
-      dispatch(Input::DoubleClick { x, y });
+      dispatch(hwnd, Input::DoubleClick { x, y });
       LRESULT(0)
     }
     WM_MOUSEMOVE => {
       let (x, y) = point(lparam);
-      dispatch(Input::Move {
-        centered: option_pressed(),
-        x,
-        y,
-        pressed: wparam.0 & (MK_LBUTTON_MASK | MK_MBUTTON_MASK) != 0,
-        snapping: wparam.0 & MK_CONTROL_MASK != 0,
-      });
+      dispatch(
+        hwnd,
+        Input::Move {
+          centered: option_pressed(),
+          x,
+          y,
+          pressed: wparam.0 & (MK_LBUTTON_MASK | MK_MBUTTON_MASK) != 0,
+          snapping: wparam.0 & MK_CONTROL_MASK != 0,
+        },
+      );
       LRESULT(0)
     }
     WM_LBUTTONUP => {
       let (x, y) = point(lparam);
-      dispatch(Input::Up { x, y });
+      dispatch(hwnd, Input::Up { x, y });
       let _ = ReleaseCapture();
       LRESULT(0)
     }
     WM_MBUTTONDOWN => {
       SetCapture(hwnd);
       let (x, y) = point(lparam);
-      dispatch(Input::PanDown { x, y });
+      dispatch(hwnd, Input::PanDown { x, y });
       LRESULT(0)
     }
     WM_MBUTTONUP => {
       let (x, y) = point(lparam);
-      dispatch(Input::PanUp { x, y });
+      dispatch(hwnd, Input::PanUp { x, y });
       let _ = ReleaseCapture();
       LRESULT(0)
     }
     WM_CANCELMODE | WM_CAPTURECHANGED => {
-      dispatch(Input::Cancel);
+      dispatch(hwnd, Input::Cancel);
       LRESULT(0)
     }
     WM_MOUSEWHEEL => {
@@ -290,15 +297,18 @@ unsafe extern "system" fn window_proc(
       };
       let _ = ScreenToClient(hwnd, &mut local);
       let delta = ((wparam.0 >> 16) as u16 as i16) as f64 / 120.0;
-      dispatch(Input::Wheel {
-        x: f64::from(local.x),
-        y: f64::from(local.y),
-        delta,
-      });
+      dispatch(
+        hwnd,
+        Input::Wheel {
+          x: f64::from(local.x),
+          y: f64::from(local.y),
+          delta,
+        },
+      );
       LRESULT(0)
     }
     WM_SETCURSOR => {
-      guard(super::refresh_editor_cursor);
+      guard(|| super::refresh_editor_cursor(hwnd));
       LRESULT(1)
     }
     _ => DefWindowProcW(hwnd, message, wparam, lparam),
@@ -314,6 +324,6 @@ fn guard(work: impl FnOnce()) {
   }
 }
 
-fn dispatch(input: Input) {
-  guard(|| super::handle_editor_input(input));
+fn dispatch(hwnd: HWND, input: Input) {
+  guard(|| super::handle_editor_input(hwnd, input));
 }

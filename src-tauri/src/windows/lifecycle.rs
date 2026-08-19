@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashSet;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow, WindowEvent};
@@ -12,7 +13,29 @@ use super::{
   platform, WindowLabel,
 };
 
-static EXPORT_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// The export windows currently being dragged, by label. Per window rather
+/// than one flag for all of them: two export workspaces can be open at once,
+/// and a drag of one must not swallow the containment pass of the other.
+static EXPORT_DRAGS_ACTIVE: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Claims the drag watch for `label`, reporting whether one was already running.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+fn export_drag_begin(label: &str) -> bool {
+  !EXPORT_DRAGS_ACTIVE
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .get_or_insert_with(HashSet::new)
+    .insert(label.to_owned())
+}
+
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+fn export_drag_end(label: &str) {
+  EXPORT_DRAGS_ACTIVE
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .get_or_insert_with(HashSet::new)
+    .remove(label);
+}
 
 #[cfg(target_os = "macos")]
 pub fn get_or_create<F>(
@@ -139,7 +162,8 @@ pub fn initialize_normal_window(window: &WebviewWindow) -> tauri::Result<()> {
 fn watch_for_export_mouse_up(app: AppHandle, export: WebviewWindow) {
   use cidre::cg::{EventSrcState, MouseButton};
 
-  if EXPORT_DRAG_ACTIVE.swap(true, Ordering::Relaxed) {
+  let label = export.label().to_owned();
+  if export_drag_begin(&label) {
     return;
   }
   tauri::async_runtime::spawn_blocking(move || {
@@ -147,7 +171,7 @@ fn watch_for_export_mouse_up(app: AppHandle, export: WebviewWindow) {
       std::thread::sleep(Duration::from_millis(8));
     }
     let _ = contain_window_in_work_area(&app, &export);
-    EXPORT_DRAG_ACTIVE.store(false, Ordering::Relaxed);
+    export_drag_end(&label);
   });
 }
 
@@ -155,7 +179,8 @@ fn watch_for_export_mouse_up(app: AppHandle, export: WebviewWindow) {
 fn watch_for_export_mouse_up(app: AppHandle, export: WebviewWindow) {
   use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
 
-  if EXPORT_DRAG_ACTIVE.swap(true, Ordering::Relaxed) {
+  let label = export.label().to_owned();
+  if export_drag_begin(&label) {
     return;
   }
   tauri::async_runtime::spawn_blocking(move || {
@@ -167,7 +192,7 @@ fn watch_for_export_mouse_up(app: AppHandle, export: WebviewWindow) {
       std::thread::sleep(Duration::from_millis(8));
     }
     let _ = contain_window_in_work_area(&app, &export);
-    EXPORT_DRAG_ACTIVE.store(false, Ordering::Relaxed);
+    export_drag_end(&label);
   });
 }
 
@@ -187,10 +212,14 @@ pub fn contain_normal_window(app: &AppHandle, window: &WebviewWindow) -> tauri::
 pub fn sync_dock_visibility(_app: &AppHandle) -> tauri::Result<()> {
   #[cfg(target_os = "macos")]
   {
-    let visible = [WindowLabel::Export, WindowLabel::Settings]
-      .iter()
-      .filter_map(|label| _app.get_webview_window(label.as_str()))
-      .any(|window| window.is_visible().unwrap_or(false));
+    let visible = [
+      WindowLabel::ExportRecording,
+      WindowLabel::ExportScreenshot,
+      WindowLabel::Settings,
+    ]
+    .iter()
+    .filter_map(|label| _app.get_webview_window(label.as_str()))
+    .any(|window| window.is_visible().unwrap_or(false));
     _app.set_dock_visibility(visible)?;
   }
 

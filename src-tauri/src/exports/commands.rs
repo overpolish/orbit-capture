@@ -4,18 +4,20 @@
 use super::*;
 
 #[tauri::command]
-pub fn cancel_export(app: AppHandle) {
-  discard(&app);
+pub fn cancel_export(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+  discard(&app, kind_of_window(&window)?);
+  Ok(())
 }
 
-/// Brings the window holding the pending artifact to the front.
+/// Brings the window holding a pending artifact to the front.
 ///
 /// The recording bar keeps its capture buttons enabled while an export is
 /// waiting, so pressing one has to lead somewhere: the same focus the global
-/// shortcuts already fall back to.
+/// shortcuts already fall back to. It names the workspace explicitly because
+/// it is asking on another window's behalf, not its own.
 #[tauri::command]
-pub fn focus_export_window(app: AppHandle) {
-  super::workspace::focus_pending(&app);
+pub fn focus_export_window(app: AppHandle, kind: ExportKind) {
+  super::workspace::focus_pending(&app, kind);
 }
 
 /// Requests cancellation of the save currently processing, if there is one.
@@ -24,9 +26,13 @@ pub fn focus_export_window(app: AppHandle) {
 /// command only flips its token, so it never blocks the window thread or races
 /// another thread for mutable access to the process.
 #[tauri::command]
-pub fn cancel_export_job(app: AppHandle) -> bool {
+pub fn cancel_export_job(app: AppHandle, window: tauri::WebviewWindow) -> bool {
+  let Ok(kind) = kind_of_window(&window) else {
+    return false;
+  };
   let state = app.state::<ExportState>();
   let active = state
+    .slot(kind)
     .active_export
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -41,8 +47,10 @@ pub fn cancel_export_job(app: AppHandle) -> bool {
 #[tauri::command]
 pub fn copy_export_to_clipboard(
   app: AppHandle,
+  window: tauri::WebviewWindow,
   screenshot_output: ScreenshotWorkspaceOutputSettings,
 ) -> Result<(), String> {
+  let kind = kind_of_window(&window)?;
   // Refused before the artifact is taken, not after: the clipboard cannot hold
   // a movie, and taking one only to put it back is pointless churn. The window
   // hides the button, so this is for callers that are out of date rather than
@@ -50,6 +58,7 @@ pub fn copy_export_to_clipboard(
   if matches!(
     app
       .state::<ExportState>()
+      .slot(kind)
       .artifact
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -59,7 +68,7 @@ pub fn copy_export_to_clipboard(
     return Err("A recording cannot be copied to the clipboard".to_owned());
   }
 
-  let artifact = take_artifact(&app).ok_or_else(|| "There is nothing to copy".to_owned())?;
+  let artifact = take_artifact(&app, kind).ok_or_else(|| "There is nothing to copy".to_owned())?;
   let ExportArtifact::Screenshot { items, .. } = artifact else {
     return Err("There is nothing to copy".to_owned());
   };
@@ -73,8 +82,8 @@ pub fn copy_export_to_clipboard(
     eprintln!("Could not remember screenshot export settings: {error}");
   }
 
-  let _ = window::hide(&app);
-  emit_snapshot(&app);
+  let _ = window::hide(&app, kind);
+  emit_snapshot(&app, kind);
 
   Ok(())
 }
@@ -90,13 +99,16 @@ pub fn set_screenshot_background_radius(app: AppHandle, radius_percent: f64) -> 
 }
 
 #[tauri::command]
-pub async fn browse_export_directory(app: AppHandle) -> Result<Option<PathBuf>, String> {
-  let start = current_directory(&app);
-  // Parented to the export window on purpose: left to itself the picker
+pub async fn browse_export_directory(
+  app: AppHandle,
+  window: tauri::WebviewWindow,
+) -> Result<Option<PathBuf>, String> {
+  let start = current_directory(&app, kind_of_window(&window)?);
+  // Parented to the asking window on purpose: left to itself the picker
   // attaches as a sheet to whichever window happens to be first, which for an
   // accessory app is usually one of the hidden overlay panels - and a sheet on
   // a hidden window is an invisible dialog.
-  let parent = app.get_webview_window(crate::windows::WindowLabel::Export.as_str());
+  let parent = Some(window);
   let picked = tauri::async_runtime::spawn_blocking(move || {
     use tauri_plugin_dialog::DialogExt;
 
@@ -116,17 +128,32 @@ pub async fn browse_export_directory(app: AppHandle) -> Result<Option<PathBuf>, 
 }
 
 #[tauri::command]
-pub fn set_export_directory(app: AppHandle, directory: PathBuf) -> Result<(), String> {
+pub fn set_export_directory(
+  app: AppHandle,
+  window: tauri::WebviewWindow,
+  directory: PathBuf,
+) -> Result<(), String> {
+  store_export_directory(&app, kind_of_window(&window)?, directory)
+}
+
+/// Remembers where one workspace saves. Split out of the command so a finished
+/// save can record its own destination without a window to derive it from.
+pub(super) fn store_export_directory(
+  app: &AppHandle,
+  kind: ExportKind,
+  directory: PathBuf,
+) -> Result<(), String> {
   if !directory.is_dir() {
     return Err("That folder is no longer available".to_owned());
   }
 
   *app
     .state::<ExportState>()
+    .slot(kind)
     .directory
     .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(directory.clone());
-  emit_snapshot(&app);
+    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(directory);
+  emit_snapshot(app, kind);
 
   Ok(())
 }

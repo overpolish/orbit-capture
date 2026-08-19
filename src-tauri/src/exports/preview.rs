@@ -3,9 +3,11 @@
 
 use super::*;
 
+/// Every workspace at once: a webview that has just loaded has to render the
+/// right one and cannot know which change events it missed.
 #[tauri::command]
-pub fn get_export_snapshot(app: AppHandle) -> ExportSnapshot {
-  snapshot(&app)
+pub fn get_export_snapshot(app: AppHandle) -> ExportSnapshots {
+  snapshots(&app)
 }
 
 /// A sampled estimate of the file the current export choices would produce.
@@ -54,6 +56,7 @@ pub async fn estimate_recording_export(
       has_cursor,
     ) = {
       let artifact = state
+        .recording
         .artifact
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());

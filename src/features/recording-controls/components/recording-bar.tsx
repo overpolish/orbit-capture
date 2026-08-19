@@ -62,7 +62,11 @@ type RecordingBarProps = {
   onRecord?: () => void;
   onScreenshot?: () => void;
   onScreenshotToClipboard?: () => void;
-  pendingExportKind?: "recording" | "screenshot" | null;
+  /**
+   * Which workspaces are holding unsaved work. Each has a window of its own,
+   * so only a pending recording stands in the way of starting another.
+   */
+  pendingExports?: { recording: boolean; screenshot: boolean };
   screenshotAction?: ScreenshotAction;
   screenshotState?: ScreenshotState;
   status?: RecordingStatus;
@@ -104,7 +108,7 @@ export function RecordingBar({
   onRecord,
   onScreenshot,
   onScreenshotToClipboard,
-  pendingExportKind = null,
+  pendingExports = { recording: false, screenshot: false },
   screenshotAction = "export",
   screenshotState = "idle",
   status = "idle",
@@ -140,7 +144,7 @@ export function RecordingBar({
   // The bar is hidden by Rust while a recording runs; disabling it as well
   // keeps a stale window from starting a second one.
   const isRecordingActive = status !== "idle";
-  const isRecordingWorkspaceOpen = pendingExportKind === "recording";
+  const isRecordingWorkspaceOpen = pendingExports.recording;
   const isCapturingStill = screenshotState === "pending";
   const exportScreenshotState =
     screenshotAction === "export" ? screenshotState : "idle";
@@ -148,13 +152,10 @@ export function RecordingBar({
     screenshotAction === "clipboard" ? screenshotState : "idle";
   const canCaptureStill =
     isScreenCapture && !isScreenshotLocked && !isRecordingActive;
-  const canExportScreenshot = canCaptureStill && !isRecordingWorkspaceOpen;
+  // A pending recording no longer stands in a screenshot's way: it waits in
+  // its own window while the screenshot workspace opens beside it.
+  const canExportScreenshot = canCaptureStill;
   const canCopyScreenshot = canCaptureStill;
-  // Capture that only a pending export stands in the way of: the button stays
-  // pressable and brings that export forward rather than going dead, which is
-  // the same escape hatch the global shortcuts take.
-  const isScreenshotBlockedByExport =
-    canCaptureStill && isRecordingWorkspaceOpen;
   const canRecordIgnoringExport =
     !isRecordingActive &&
     canStartRecording({
@@ -169,9 +170,12 @@ export function RecordingBar({
       isScreenLocked: Boolean(isLocked),
       mode,
     });
-  const canRecord = canRecordIgnoringExport && pendingExportKind === null;
+  const canRecord = canRecordIgnoringExport && !isRecordingWorkspaceOpen;
+  // Recording that only the pending recording stands in the way of: the button
+  // stays pressable and brings that export forward rather than going dead,
+  // which is the same escape hatch the global shortcuts take.
   const isRecordBlockedByExport =
-    canRecordIgnoringExport && pendingExportKind !== null;
+    canRecordIgnoringExport && isRecordingWorkspaceOpen;
 
   return (
     <main
@@ -304,19 +308,10 @@ export function RecordingBar({
           toggle each underneath them - need air between them. */}
       <div className="mr-3 flex flex-col items-center justify-center self-stretch">
         <Button
-          aria-label={
-            isScreenshotBlockedByExport
-              ? "Show export window"
-              : "Take screenshot"
-          }
+          aria-label="Take screenshot"
           className="group cursor-default p-1"
-          isDisabled={
-            (!canExportScreenshot && !isScreenshotBlockedByExport) ||
-            isCapturingStill
-          }
-          onPress={
-            isScreenshotBlockedByExport ? onFocusPendingExport : onScreenshot
-          }
+          isDisabled={!canExportScreenshot || isCapturingStill}
+          onPress={onScreenshot}
           showFocus={false}
           variant="ghost"
         >
@@ -325,16 +320,8 @@ export function RecordingBar({
           ) : (
             <ImageDown
               className={cn(
-                "origin-center transform-gpu backface-hidden will-change-transform transition-[color,transform,scale]",
-                !isScreenshotBlockedByExport &&
-                  "group-data-[hovered]:scale-110",
+                "origin-center transform-gpu backface-hidden will-change-transform transition-[color,transform,scale] group-data-[hovered]:scale-110",
                 isCapturingStill && "animate-pulse text-muted",
-                // Reads as inactive, like an unselected mode, while a pending
-                // export redirects the press to that window instead. No hover
-                // scale here: the press moves focus away, so the bar never sees
-                // the pointer leave and the grown icon would stick.
-                isScreenshotBlockedByExport &&
-                  "text-muted group-data-[hovered]:text-content-fg/75",
                 exportScreenshotState === "failed" && "text-error",
               )}
               size={40}

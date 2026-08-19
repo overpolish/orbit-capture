@@ -5,7 +5,11 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 
 import { focusExportWindow } from "../../exports/api";
-import { selectArtifact, useExportStore } from "../../exports/store";
+import {
+  selectHasPendingRecording,
+  selectHasPendingScreenshot,
+  useExportStore,
+} from "../../exports/store";
 import {
   openPermissionSettings,
   requestPermission,
@@ -112,7 +116,8 @@ const grantPermission = (
 };
 
 export function RecordingBarWindow() {
-  const pendingExportKind = useExportStore(selectArtifact)?.kind ?? null;
+  const hasPendingRecording = useExportStore(selectHasPendingRecording);
+  const hasPendingScreenshot = useExportStore(selectHasPendingScreenshot);
   const canRecordCamera = usePermissionStore(selectCanRecordCamera);
   const canRecordMicrophone = usePermissionStore(selectCanRecordMicrophone);
   const canRecordScreen = usePermissionStore(selectCanRecordScreen);
@@ -363,7 +368,9 @@ export function RecordingBarWindow() {
         void hideRecordingUi();
       }}
       onFocusPendingExport={() => {
-        focusExportWindow().catch((error: unknown) => {
+        // Only a pending recording routes here now; a screenshot workspace
+        // never blocks a capture.
+        focusExportWindow("recording").catch((error: unknown) => {
           console.error("Could not focus the export window", error);
         });
       }}
@@ -402,7 +409,10 @@ export function RecordingBarWindow() {
       onScreenshotToClipboard={() => {
         takeScreenshot("clipboard");
       }}
-      pendingExportKind={pendingExportKind}
+      pendingExports={{
+        recording: hasPendingRecording,
+        screenshot: hasPendingScreenshot,
+      }}
       screenshotAction={screenshotFeedback.action}
       screenshotState={screenshotFeedback.state}
       status={status}

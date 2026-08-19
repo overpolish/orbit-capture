@@ -46,16 +46,19 @@ export const ScreenshotFailed: Story = {
 };
 
 /**
- * An open screenshot workspace accepts another screenshot but not a recording:
- * the record button stays pressable and shows the export instead.
+ * An open screenshot workspace has a window of its own and blocks nothing:
+ * both capture buttons stay live.
  */
 export const ScreenshotWorkspaceOpen: Story = {
-  args: { pendingExportKind: "screenshot" },
+  args: { pendingExports: { recording: false, screenshot: true } },
 };
 
-/** A recording waiting for export: both capture buttons show it instead. */
+/**
+ * A recording waiting for export: the record button stays pressable and shows
+ * that window instead, while screenshots go on being taken beside it.
+ */
 export const RecordingWorkspaceOpen: Story = {
-  args: { pendingExportKind: "recording" },
+  args: { pendingExports: { recording: true, screenshot: false } },
 };
 
 export const ClipboardScreenshotPending: Story = {

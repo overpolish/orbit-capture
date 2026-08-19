@@ -38,7 +38,12 @@ import {
   restoredRecordingOutput,
   ScreenshotWorkspaceOutputSettings,
 } from "./screenshot-output";
-import { selectArtifact, selectDirectory, useExportStore } from "./store";
+import {
+  selectArtifact,
+  selectDirectory,
+  selectSnapshot,
+  useExportStore,
+} from "./store";
 import {
   AudioTrackVolume,
   recordingAudioStreamIndex,
@@ -54,19 +59,23 @@ import {
 import { useExportProgress } from "./use-export-progress";
 import { useRecordingExportEstimate } from "./use-recording-export-estimate";
 import { useRecordingExportPreview } from "./use-recording-export-preview";
+import { currentExportKind } from "./window-kind";
 
 const EMPTY_AUDIO_TRACK_VOLUMES: AudioTrackVolume[] = [];
 
 export function ExportWindow() {
-  const artifact = useExportStore(selectArtifact);
-  const directory = useExportStore(selectDirectory);
+  // This webview is one workspace's window and only ever renders that one.
+  // Its label is what says which, so nothing has to be passed in or invoked.
+  const kind = currentExportKind() ?? "recording";
+  const artifact = useExportStore(selectArtifact(kind));
+  const directory = useExportStore(selectDirectory(kind));
   const {
     cursorEffects: persistedCursorEffects,
     recordingOutput: persistedRecordingOutput,
     screenshotBackgroundRadiusPercent: persistedScreenshotBackgroundRadius,
     screenshotOutput: persistedScreenshotOutput,
     screenshotRadiusPercent: persistedScreenshotRadius,
-  } = useExportStore((state) => state.snapshot);
+  } = useExportStore(selectSnapshot(kind));
   const [fileStem, setFileStem] = useState("");
   const [collapseAudio, setCollapseAudio] = useState(false);
   const [compression, setCompression] = useState(DEFAULT_COMPRESSION);

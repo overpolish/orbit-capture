@@ -13,7 +13,29 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "label": "export",
+        "label": "export-recording",
+        "title": "Screenwide",
+        "url": "/export",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "acceptFirstMouse": true,
+        "alwaysOnTop": false,
+        "decorations": false,
+        "resizable": true,
+        "shadow": true,
+        "skipTaskbar": false,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["underWindowBackground", "mica"],
+          "radius": 10,
+          "state": "active"
+        },
+        "visible": false
+      },
+      {
+        "label": "export-screenshot",
         "title": "Screenwide",
         "url": "/export",
         "width": 1200,

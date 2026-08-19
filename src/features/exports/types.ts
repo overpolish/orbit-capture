@@ -137,6 +137,12 @@ export type ExportArtifact =
       kind: "screenshot";
     });
 
+/**
+ * Which export workspace something belongs to. Each has a window of its own, so
+ * a recording can wait for a decision while a screenshot is being edited.
+ */
+export type ExportKind = "recording" | "screenshot";
+
 export type ExportSnapshot = {
   artifact: ExportArtifact | null;
   cursorEffects: CursorEffectSettings;
@@ -145,9 +151,15 @@ export type ExportSnapshot = {
   screenshotBackgroundRadiusPercent: number;
   screenshotOutput: ScreenshotOutputSettings | null;
   screenshotRadiusPercent: number;
+  /** The workspace this describes: the change event is app-wide. */
+  workspace: ExportKind;
 };
 
-export const initialExportSnapshot: ExportSnapshot = {
+export type ExportSnapshots = Record<ExportKind, ExportSnapshot>;
+
+export const initialExportSnapshot = (
+  workspace: ExportKind,
+): ExportSnapshot => ({
   artifact: null,
   cursorEffects: {
     bake: true,
@@ -162,4 +174,5 @@ export const initialExportSnapshot: ExportSnapshot = {
   screenshotBackgroundRadiusPercent: 0,
   screenshotOutput: null,
   screenshotRadiusPercent: 0,
-};
+  workspace,
+});

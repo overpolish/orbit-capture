@@ -190,8 +190,13 @@ pub fn run() {
       if let Some(window) = app.get_webview_window(windows::WindowLabel::Settings.as_str()) {
         windows::initialize_normal_window(&window)?;
       }
-      if let Some(window) = app.get_webview_window(windows::WindowLabel::Export.as_str()) {
-        windows::initialize_export(&window)?;
+      for label in [
+        windows::WindowLabel::ExportRecording,
+        windows::WindowLabel::ExportScreenshot,
+      ] {
+        if let Some(window) = app.get_webview_window(label.as_str()) {
+          windows::initialize_export(&window)?;
+        }
       }
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingBar);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingSourceSelector);
@@ -199,7 +204,8 @@ pub fn run() {
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingOptions);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::StandaloneListbox);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::RecordingDock);
-      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::Export);
+      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::ExportRecording);
+      windows::hide_instead_of_close(app.handle(), windows::WindowLabel::ExportScreenshot);
       windows::hide_instead_of_close(app.handle(), windows::WindowLabel::Settings);
       windows::initialize_recording_bar_position(app.handle())?;
       windows::manage_recording_bar_movement(app.handle());
@@ -231,16 +237,17 @@ pub fn run() {
         // Native effects can order ordinary app windows during setup. Their
         // first presentation always belongs to an explicit user action.
         let app_handle = app.handle().clone();
+        // Recovery may have put an artifact in one workspace; that window is
+        // the one presentation the user did ask for, so it alone is spared.
+        let mut labels = vec![windows::WindowLabel::Settings];
+        labels.extend(
+          exports::ExportKind::ALL
+            .into_iter()
+            .filter(|kind| !exports::has_pending_workspace_kind(app.handle(), *kind))
+            .map(exports::ExportKind::window_label),
+        );
         app.handle().run_on_main_thread(move || {
-          let labels = if has_pending_export {
-            &[windows::WindowLabel::Settings][..]
-          } else {
-            &[
-              windows::WindowLabel::Export,
-              windows::WindowLabel::Settings,
-            ][..]
-          };
-          for label in labels {
+          for label in &labels {
             if let Some(window) = app_handle.get_webview_window(label.as_str()) {
               let _ = window.hide();
             }

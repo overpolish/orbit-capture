@@ -378,7 +378,47 @@ pub(crate) struct WindowsExportCompositor {
   source: compositor::SourceTexture,
 }
 
-static PREVIEW_SURFACE: OnceLock<Result<std::sync::Arc<SurfaceInner>, String>> = OnceLock::new();
+/// One compositor per export window: a DirectComposition target belongs to the
+/// host HWND it was created for, so a process-wide surface would make the
+/// second export window composite into the first one's window.
+///
+/// The per-window slot is an inner `OnceLock` handed out from under the map
+/// lock rather than a `Result` stored in the map, because creating a surface
+/// round-trips to the window's event-loop thread
+/// ([`create_editor_on_owning_thread`]) and must not run while a lock that
+/// thread could also want is held. The slot keeps the original semantics:
+/// created at most once per window, and a failure cached so a broken GPU is not
+/// retried forever.
+type SurfaceSlot = std::sync::Arc<OnceLock<Result<std::sync::Arc<SurfaceInner>, String>>>;
+
+static PREVIEW_SURFACES: OnceLock<Mutex<HashMap<isize, SurfaceSlot>>> = OnceLock::new();
+
+/// Reverse lookups, filled once a surface exists. The editor `window_proc` is
+/// handed only its own HWND, and the recording export knows only which
+/// workspace it is saving; neither can name the host window.
+#[derive(Default)]
+struct SurfaceIndex {
+  by_editor: HashMap<isize, std::sync::Arc<SurfaceInner>>,
+  by_kind: HashMap<crate::exports::ExportKind, std::sync::Arc<SurfaceInner>>,
+}
+
+static SURFACE_INDEX: OnceLock<Mutex<SurfaceIndex>> = OnceLock::new();
+
+fn preview_surfaces() -> &'static Mutex<HashMap<isize, SurfaceSlot>> {
+  PREVIEW_SURFACES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn surface_index() -> &'static Mutex<SurfaceIndex> {
+  SURFACE_INDEX.get_or_init(|| Mutex::new(SurfaceIndex::default()))
+}
+
+fn surface_for_editor(hwnd: HWND) -> Option<std::sync::Arc<SurfaceInner>> {
+  let index = surface_index().lock().ok()?;
+  index
+    .by_editor
+    .get(&(hwnd.0 as isize))
+    .map(std::sync::Arc::clone)
+}
 
 unsafe impl Send for RecordingPreviewSurface {}
 unsafe impl Sync for RecordingPreviewSurface {}
@@ -1436,10 +1476,14 @@ fn emit_gesture(inner: &SurfaceInner, phase: SelectionGesturePhase, gesture: Edi
   }
 }
 
-pub(super) fn refresh_editor_cursor() {
-  let Some(Ok(inner)) = PREVIEW_SURFACE.get() else {
+pub(super) fn refresh_editor_cursor(editor_hwnd: HWND) {
+  let Some(inner) = surface_for_editor(editor_hwnd) else {
     return;
   };
+  refresh_cursor_for(&inner);
+}
+
+fn refresh_cursor_for(inner: &SurfaceInner) {
   let kind = inner
     .state
     .lock()
@@ -1477,10 +1521,11 @@ pub(super) fn refresh_editor_cursor() {
   editor::EditorWindow::set_cursor(kind);
 }
 
-fn handle_editor_input(input: editor::Input) {
-  let Some(Ok(inner)) = PREVIEW_SURFACE.get() else {
+fn handle_editor_input(editor_hwnd: HWND, input: editor::Input) {
+  let Some(inner) = surface_for_editor(editor_hwnd) else {
     return;
   };
+  let inner = &inner;
   let scale = inner
     .state
     .lock()
@@ -1666,7 +1711,7 @@ fn handle_editor_input(input: editor::Input) {
       if let Some(gesture) = began {
         emit_gesture(inner, SelectionGesturePhase::Begin, gesture);
       }
-      refresh_editor_cursor();
+      refresh_cursor_for(inner);
     }
     editor::Input::Move {
       centered,
@@ -2207,7 +2252,7 @@ fn handle_editor_input(input: editor::Input) {
           });
         }
       }
-      refresh_editor_cursor();
+      refresh_cursor_for(inner);
     }
     editor::Input::PanUp { x, y } => {
       let point = logical(x, y);
@@ -2491,25 +2536,39 @@ impl RecordingPreviewSurface {
     Ok(true)
   }
 
-  pub(crate) fn existing() -> Result<std::sync::Arc<Self>, String> {
-    let inner = PREVIEW_SURFACE
-      .get()
-      .ok_or_else(|| "The Windows GPU compositor has not been opened".to_owned())?
-      .as_ref()
-      .map_err(Clone::clone)?;
-    Ok(std::sync::Arc::new(Self {
-      inner: std::sync::Arc::clone(inner),
-    }))
+  /// The compositor already open for one export workspace's window, without
+  /// creating one: the export path renders offscreen on the surface the window
+  /// it is saving for has, and never opens a GPU device of its own.
+  pub(crate) fn existing_for(
+    kind: crate::exports::ExportKind,
+  ) -> Result<std::sync::Arc<Self>, String> {
+    let inner = surface_index()
+      .lock()
+      .map_err(|_| "The Windows GPU compositor registry is unusable".to_owned())?
+      .by_kind
+      .get(&kind)
+      .map(std::sync::Arc::clone)
+      .ok_or_else(|| "The Windows GPU compositor has not been opened".to_owned())?;
+    Ok(std::sync::Arc::new(Self { inner }))
   }
 
   pub(crate) fn from_window(window: &WebviewWindow) -> Result<Self, String> {
-    let inner = PREVIEW_SURFACE
+    let host = window.hwnd().map_err(|error| error.to_string())?;
+    let host = HWND(host.0);
+    // The window's own workspace: an export window is the only window a surface
+    // is ever created for, and its label is what `existing_for` looks up later.
+    let kind = crate::exports::ExportKind::from_window_label(window.label());
+    let slot = {
+      let mut surfaces = preview_surfaces()
+        .lock()
+        .map_err(|_| "The Windows GPU compositor registry is unusable".to_owned())?;
+      std::sync::Arc::clone(surfaces.entry(host.0 as isize).or_default())
+    };
+    let inner = slot
       .get_or_init(|| {
-        let host = window.hwnd().map_err(|error| error.to_string())?;
-        let host = HWND(host.0);
         let editor = create_editor_on_owning_thread(window, host)?;
         let gpu = Gpu::new(host, editor.hwnd())?;
-        Ok(std::sync::Arc::new(SurfaceInner {
+        let inner = std::sync::Arc::new(SurfaceInner {
           batch_depth: AtomicU32::new(0),
           callbacks: Mutex::new(EditorCallbacks::default()),
           editor,
@@ -2542,7 +2601,20 @@ impl RecordingPreviewSurface {
             workspace_natural_size: None,
             workspace_transforms: HashMap::new(),
           }),
-        }))
+        });
+        // Published only once the surface is whole: the editor `window_proc`
+        // and the export path both find it through these, and both no-op
+        // while a window is still opening its compositor.
+        if let Ok(mut index) = surface_index().lock() {
+          index.by_editor.insert(
+            inner.editor.hwnd().0 as isize,
+            std::sync::Arc::clone(&inner),
+          );
+          if let Some(kind) = kind {
+            index.by_kind.insert(kind, std::sync::Arc::clone(&inner));
+          }
+        }
+        Ok(inner)
       })
       .as_ref()
       .map_err(Clone::clone)?;

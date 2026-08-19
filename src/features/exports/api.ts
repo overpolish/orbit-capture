@@ -12,7 +12,8 @@ import {
 import {
   CameraOverlaySettings,
   AudioTrackVolume,
-  ExportSnapshot,
+  ExportKind,
+  ExportSnapshots,
   RecordingPreview,
   RecordingPreviewLayout,
   CursorEffectSettings,
@@ -62,7 +63,7 @@ export type RecordingPreviewPlayerInfo = {
 };
 
 export const getExportSnapshot = () =>
-  invoke<ExportSnapshot>("get_export_snapshot");
+  invoke<ExportSnapshots>("get_export_snapshot");
 
 export const getRecordingPreview = (artifactId: number) =>
   invoke<RecordingPreview>("get_recording_preview", { artifactId });
@@ -514,8 +515,9 @@ export const cancelExport = async () => {
 
 export const cancelExportJob = () => invoke<boolean>("cancel_export_job");
 
-export const focusExportWindow = async () => {
-  await invoke<null>("focus_export_window");
+/** Named explicitly: the recording bar asks on another window's behalf. */
+export const focusExportWindow = async (kind: ExportKind) => {
+  await invoke<null>("focus_export_window", { kind });
 };
 
 export const browseExportDirectory = () =>

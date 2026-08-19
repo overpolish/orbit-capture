@@ -3,11 +3,12 @@
 
 use tauri::{AppHandle, Manager};
 
-use crate::windows::{self, WindowLabel};
+use super::ExportKind;
+use crate::windows;
 
-pub fn show(app: &AppHandle) -> tauri::Result<()> {
+pub fn show(app: &AppHandle, kind: ExportKind) -> tauri::Result<()> {
   let window = app
-    .get_webview_window(WindowLabel::Export.as_str())
+    .get_webview_window(kind.window_label().as_str())
     .ok_or(tauri::Error::WindowNotFound)?;
 
   #[cfg(target_os = "macos")]
@@ -19,8 +20,8 @@ pub fn show(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
-pub fn hide(app: &AppHandle) -> tauri::Result<()> {
-  if let Some(window) = app.get_webview_window(WindowLabel::Export.as_str()) {
+pub fn hide(app: &AppHandle, kind: ExportKind) -> tauri::Result<()> {
+  if let Some(window) = app.get_webview_window(kind.window_label().as_str()) {
     window.hide()?;
   }
 

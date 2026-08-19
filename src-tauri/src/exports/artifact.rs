@@ -3,9 +3,10 @@
 
 use super::*;
 
-pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
+pub(super) fn snapshot(app: &AppHandle, kind: ExportKind) -> ExportSnapshot {
   let state = app.state::<ExportState>();
   let artifact = state
+    .slot(kind)
     .artifact
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -99,16 +100,26 @@ pub(super) fn snapshot(app: &AppHandle) -> ExportSnapshot {
   ExportSnapshot {
     artifact,
     cursor_effects,
-    directory: current_directory(app),
+    directory: current_directory(app, kind),
     recording_output,
     screenshot_radius_percent,
     screenshot_background_radius_percent,
     screenshot_output,
+    workspace: kind,
   }
 }
 
-pub(super) fn emit_snapshot(app: &AppHandle) {
-  let _ = app.emit(EXPORT_CHANGED_EVENT, snapshot(app));
+pub(super) fn snapshots(app: &AppHandle) -> ExportSnapshots {
+  ExportSnapshots {
+    recording: snapshot(app, ExportKind::Recording),
+    screenshot: snapshot(app, ExportKind::Screenshot),
+  }
+}
+
+/// Broadcast rather than sent to the owning window: the recording bar tracks
+/// what is waiting too. Receivers route the payload by its `workspace`.
+pub(super) fn emit_snapshot(app: &AppHandle, kind: ExportKind) {
+  let _ = app.emit(EXPORT_CHANGED_EVENT, snapshot(app, kind));
 }
 
 pub(super) fn delete_working_file(artifact: &ExportArtifact) {
@@ -162,15 +173,22 @@ pub(super) fn next_id(app: &AppHandle) -> u64 {
 /// Puts a new artifact in front of the user. Admission is checked before any
 /// state is changed, so this path can never silently replace unsaved work.
 pub(super) fn present_new(app: &AppHandle, artifact: ExportArtifact) -> Result<(), String> {
-  clear_recording_preview(app);
+  let kind = ExportKind::of(&artifact);
+  // Only the recording workspace owns a preview, and only its own arrival
+  // retires one: a screenshot must not tear down a recording waiting next door.
+  if kind == ExportKind::Recording {
+    clear_recording_preview(app);
+  }
   {
     let state = app.state::<ExportState>();
-    let mut artifact_slot = state
+    let slot = state.slot(kind);
+    let mut artifact_slot = slot
       .artifact
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());
     if artifact_slot.is_some() {
-      workspace::focus_pending(app);
+      drop(artifact_slot);
+      workspace::focus_pending(app, kind);
       return Err("An export workspace is already open".to_owned());
     }
     let mut reservation = state
@@ -183,7 +201,7 @@ pub(super) fn present_new(app: &AppHandle, artifact: ExportArtifact) -> Result<(
       ExportArtifact::Recording { .. } => defaults.recording_directory,
     }
     .or_else(|| crate::screenshots::screenshot_directory(app).ok());
-    *state
+    *slot
       .directory
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner()) = default_directory;
@@ -191,12 +209,13 @@ pub(super) fn present_new(app: &AppHandle, artifact: ExportArtifact) -> Result<(
     *reservation = None;
   }
 
-  if let Err(error) = window::show(app) {
+  if let Err(error) = window::show(app, kind) {
     // A hidden artifact is a deadlocked workspace. Keep a recording's file on
     // disk so startup recovery can offer it again, but release the in-memory
     // admission state so the current app remains usable.
     let state = app.state::<ExportState>();
     *state
+      .slot(kind)
       .artifact
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
@@ -204,7 +223,7 @@ pub(super) fn present_new(app: &AppHandle, artifact: ExportArtifact) -> Result<(
       .capture_reservation
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    emit_snapshot(app);
+    emit_snapshot(app, kind);
     return Err(error.to_string());
   }
   // Once an artifact is safely in front of the user, the capture controls
@@ -212,7 +231,7 @@ pub(super) fn present_new(app: &AppHandle, artifact: ExportArtifact) -> Result<(
   // gives screenshots and recordings the same handoff without affecting
   // clipboard-only screenshots, which never open the export window.
   let _ = crate::windows::hide_recording_ui(app.clone());
-  emit_snapshot(app);
+  emit_snapshot(app, kind);
 
   Ok(())
 }
@@ -231,6 +250,7 @@ pub fn present_screenshot(
   {
     let state = app.state::<ExportState>();
     let mut artifact = state
+      .screenshot
       .artifact
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -241,9 +261,9 @@ pub fn present_screenshot(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
       drop(artifact);
-      window::show(app).map_err(|error| error.to_string())?;
+      window::show(app, ExportKind::Screenshot).map_err(|error| error.to_string())?;
       let _ = crate::windows::hide_recording_ui(app.clone());
-      emit_snapshot(app);
+      emit_snapshot(app, ExportKind::Screenshot);
       return Ok(());
     }
   }
@@ -318,9 +338,10 @@ pub fn present_recording(
   )
 }
 
-pub(super) fn take_artifact(app: &AppHandle) -> Option<ExportArtifact> {
+pub(super) fn take_artifact(app: &AppHandle, kind: ExportKind) -> Option<ExportArtifact> {
   let state = app.state::<ExportState>();
   let artifact = state
+    .slot(kind)
     .artifact
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -329,13 +350,15 @@ pub(super) fn take_artifact(app: &AppHandle) -> Option<ExportArtifact> {
   artifact
 }
 
-/// Drops the pending artifact and puts the window away. Cancelling and closing
-/// the window are the same act.
-pub fn discard(app: &AppHandle) {
-  clear_recording_preview(app);
-  if let Some(artifact) = take_artifact(app) {
+/// Drops one workspace's pending artifact and puts its window away. Cancelling
+/// and closing that window are the same act; the other workspace is untouched.
+pub fn discard(app: &AppHandle, kind: ExportKind) {
+  if kind == ExportKind::Recording {
+    clear_recording_preview(app);
+  }
+  if let Some(artifact) = take_artifact(app, kind) {
     delete_working_file(&artifact);
   }
-  let _ = window::hide(app);
-  emit_snapshot(app);
+  let _ = window::hide(app, kind);
+  emit_snapshot(app, kind);
 }

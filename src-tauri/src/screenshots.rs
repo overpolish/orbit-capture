@@ -231,10 +231,7 @@ pub async fn capture_still(
   if !crate::recording::is_idle(&app) {
     return Err("A screenshot cannot be taken while a recording is active".to_owned());
   }
-  crate::exports::reserve_screenshot_workspace(
-    &app,
-    matches!(destination, ScreenshotDestination::Clipboard),
-  )?;
+  crate::exports::reserve_screenshot_workspace(&app)?;
   crate::text_recognition::dismiss(&app);
   let image = match capture(&app, target, show_cursor).await {
     Ok(image) => image,

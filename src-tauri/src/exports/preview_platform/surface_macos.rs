@@ -159,6 +159,25 @@ fn release_callback_on_main<T>(callback: Option<Box<T>>) {
   }
 }
 
+unsafe extern "C" fn run_boxed_closure(context: *mut std::ffi::c_void) {
+  let work = unsafe { Box::from_raw(context.cast::<Box<dyn FnOnce() + Send>>()) };
+  work();
+}
+
+/// Runs `work` on the main thread *behind* every block the surface has already
+/// queued there. Tauri's `run_on_main_thread` goes through the event-loop
+/// proxy, a different queue from the dispatch main queue the native layout
+/// blocks use, so it gives no ordering against them: a caller waiting for a
+/// layout block to run can spin through its whole retry budget on the proxy
+/// before the block gets a turn, which is what happens whenever another
+/// surface keeps the main queue busy. This hops through the main queue itself.
+pub(crate) fn run_on_main_queue(work: Box<dyn FnOnce() + Send>) {
+  let context = Box::into_raw(Box::new(work)).cast::<std::ffi::c_void>();
+  unsafe {
+    screenwide_preview_surface_release_context_on_main(run_boxed_closure, context);
+  }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct NativeWorkspacePlacement {

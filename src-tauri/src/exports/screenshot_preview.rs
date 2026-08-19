@@ -20,7 +20,7 @@ use super::preview_platform::{
   PreviewSelection, PreviewSurfaceRect, RecordingPreviewSurface, SelectionGestureOperation,
   SelectionGesturePhase,
 };
-use super::{ExportArtifact, ExportState, ScreenshotWorkspaceOutputSettings};
+use super::{ExportArtifact, ExportKind, ExportState, ScreenshotWorkspaceOutputSettings};
 use crate::screenshots::{CapturedImage, ScreenshotOutputSettings};
 
 const AUTO_FIT_MOVE_EDGE: u32 = 1 << 17;
@@ -193,10 +193,17 @@ impl PreviewManager {
   /// and be dropped - nothing draws until the user's next interaction. Each
   /// attempt here is a separate main-thread turn, so the queued layout blocks
   /// run in between; attempts stop once the present lands or the session ends.
+  ///
+  /// On macOS the attempt is queued on the dispatch main queue, behind the
+  /// layout blocks themselves. Tauri's event-loop proxy is a separate queue
+  /// with no ordering against them, and with a second export window's player
+  /// keeping the main queue busy all thirty proxy turns can come and go before
+  /// the pane's layout block ever runs - the screenshot then stays blank until
+  /// the first gesture.
   fn present_once_pane_exists(app: &AppHandle, session_id: u64, attempt: u32) {
     const ATTEMPT_LIMIT: u32 = 30;
     let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
+    let work = move || {
       let presentation = {
         let state = handle.state::<ScreenshotPreviewState>();
         let Ok(manager) = state.0.lock() else { return };
@@ -215,8 +222,16 @@ impl PreviewManager {
       let staged = Self::present_snapshot(&surface, &output, &sources).unwrap_or(true);
       if !staged && attempt + 1 < ATTEMPT_LIMIT {
         Self::present_once_pane_exists(&handle, session_id, attempt + 1);
+      } else if !staged {
+        eprintln!(
+          "Screenshot preview gave up waiting for its pane (session {session_id}); the next gesture will draw it"
+        );
       }
-    });
+    };
+    #[cfg(target_os = "macos")]
+    super::preview_platform::run_on_main_queue(Box::new(work));
+    #[cfg(not(target_os = "macos"))]
+    let _ = app.run_on_main_thread(work);
   }
 
   fn handle_selection_gesture(
@@ -520,6 +535,7 @@ pub fn start_screenshot_preview(
   let sources = {
     let export_state = app.state::<ExportState>();
     let artifact = export_state
+      .screenshot
       .artifact
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -535,7 +551,7 @@ pub fn start_screenshot_preview(
       .collect::<Vec<_>>()
   };
   let surface = app
-    .get_webview_window("export")
+    .get_webview_window(ExportKind::Screenshot.window_label().as_str())
     .map(|window| {
       let mut surface = RecordingPreviewSurface::from_window(&window)?;
       #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -661,6 +677,7 @@ pub async fn refresh_screenshot_preview_sources(
   let sources = {
     let export_state = app.state::<ExportState>();
     let artifact = export_state
+      .screenshot
       .artifact
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());

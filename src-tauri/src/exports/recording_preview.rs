@@ -56,6 +56,7 @@ fn recording_sources(
   artifact_id: u64,
 ) -> Result<RecordingPreviewSources, String> {
   let artifact = state
+    .recording
     .artifact
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -81,6 +82,7 @@ fn recording_sources(
 
 fn ensure_current(state: &ExportState, artifact_id: u64) -> Result<(), String> {
   let current = state
+    .recording
     .artifact
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner())

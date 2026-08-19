@@ -24,9 +24,9 @@ mod validation;
 mod workspace;
 
 pub use artifact::{discard, present_recording, present_screenshot};
-use artifact::{emit_snapshot, snapshot, take_artifact};
+use artifact::{emit_snapshot, snapshots, take_artifact};
 use camera_save::validate_camera_overlay;
-use commands::set_export_directory;
+use commands::store_export_directory;
 use directory::current_directory;
 #[cfg(target_os = "windows")]
 pub(crate) use media_preview::ffmpeg_path;
@@ -44,7 +44,8 @@ use validation::{validate_camera_resolution_scale, validate_primary_resolution_s
 pub use workspace::{
   focus_if_pending as focus_pending_workspace,
   focus_if_screenshot_blocked as focus_if_screenshot_workspace_blocked,
-  has_pending as has_pending_workspace, release_recording as release_recording_workspace,
+  has_pending as has_pending_workspace, has_pending_kind as has_pending_workspace_kind,
+  release_recording as release_recording_workspace,
   release_screenshot as release_screenshot_workspace,
   reserve_recording as reserve_recording_workspace,
   reserve_screenshot as reserve_screenshot_workspace,
@@ -94,6 +95,53 @@ const WORKING_RECORDING_EXTENSIONS: &[&str] = &["mov", "mp4"];
 /// not sit in the app's data directory forever.
 const ORPHAN_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const MAX_FILE_STEM: usize = 200;
+
+/// Which export workspace something belongs to.
+///
+/// A recording and a screenshot are held apart, each in its own workspace with
+/// its own window, so one can sit waiting for a decision while the other is
+/// being made. The enum is what keys them; growing past two is a matter of
+/// widening it and the slot lookup, not of unpicking the callers.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExportKind {
+  Recording,
+  Screenshot,
+}
+
+impl ExportKind {
+  pub const ALL: [Self; 2] = [Self::Recording, Self::Screenshot];
+
+  pub const fn window_label(self) -> crate::windows::WindowLabel {
+    match self {
+      Self::Recording => crate::windows::WindowLabel::ExportRecording,
+      Self::Screenshot => crate::windows::WindowLabel::ExportScreenshot,
+    }
+  }
+
+  fn from_window_label(label: &str) -> Option<Self> {
+    Self::ALL
+      .into_iter()
+      .find(|kind| kind.window_label().as_str() == label)
+  }
+
+  fn of(artifact: &ExportArtifact) -> Self {
+    match artifact {
+      ExportArtifact::Recording { .. } => Self::Recording,
+      ExportArtifact::Screenshot { .. } => Self::Screenshot,
+    }
+  }
+}
+
+/// The workspace a command is addressed to, read off the window it came from.
+///
+/// Tauri injects the calling window, so the webview never has to name its own
+/// workspace and no `invoke` carries an argument that could disagree with the
+/// window it was sent from.
+fn kind_of_window(window: &tauri::WebviewWindow) -> Result<ExportKind, String> {
+  ExportKind::from_window_label(window.label())
+    .ok_or_else(|| "That window has no export workspace".to_owned())
+}
 
 /// A capture waiting to be saved.
 ///
@@ -229,7 +277,7 @@ fn compose_screenshot_workspace(
   #[cfg(target_os = "windows")]
   {
     let window = app
-      .get_webview_window(crate::windows::WindowLabel::Export.as_str())
+      .get_webview_window(ExportKind::Screenshot.window_label().as_str())
       .ok_or_else(|| "The export window is unavailable".to_owned())?;
     let surface = preview_platform::RecordingPreviewSurface::from_window(&window)?;
     let layers = ordered_items
@@ -396,7 +444,7 @@ fn recording_audio_tracks(
   tracks
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportSnapshot {
   pub artifact: Option<ExportArtifactSnapshot>,
@@ -406,6 +454,19 @@ pub struct ExportSnapshot {
   pub screenshot_radius_percent: f64,
   pub screenshot_background_radius_percent: f64,
   pub screenshot_output: Option<ScreenshotOutputSettings>,
+  /// Which workspace this describes. The change event is app-wide because the
+  /// recording bar listens to it too, so every receiver needs to know which of
+  /// its snapshots the payload replaces.
+  pub workspace: ExportKind,
+}
+
+/// Every workspace at once, for a webview that has just come up and has no
+/// event history to reconstruct them from.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportSnapshots {
+  pub recording: ExportSnapshot,
+  pub screenshot: ExportSnapshot,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -422,13 +483,24 @@ struct ActiveExportJob {
   cancelled: Arc<AtomicBool>,
 }
 
+/// One export workspace's own state: what is waiting in it, where it will be
+/// saved, and the save running from it. Kept as separate mutexes per field, as
+/// the rest of this state is, so a long-running save never blocks a snapshot.
 #[derive(Default)]
-pub struct ExportState {
+struct ExportWorkspaceSlot {
   active_export: Mutex<Option<ActiveExportJob>>,
   artifact: Mutex<Option<ExportArtifact>>,
-  capture_reservation: Mutex<Option<workspace::CaptureWorkspaceReservation>>,
-  generation: AtomicU64,
   directory: Mutex<Option<PathBuf>>,
+}
+
+#[derive(Default)]
+pub struct ExportState {
+  recording: ExportWorkspaceSlot,
+  screenshot: ExportWorkspaceSlot,
+  /// A capture being set up. Any in-flight capture blocks any other, of either
+  /// kind, because the machine can only point its camera at one thing at once.
+  capture_reservation: Mutex<Option<ExportKind>>,
+  generation: AtomicU64,
   cursor_effects: Mutex<cursor_effects::CursorEffectSettings>,
   recording_output: Mutex<Option<RecordingOutputSettings>>,
   screenshot_radius_percent: Mutex<f64>,
@@ -439,6 +511,15 @@ pub struct ExportState {
   /// Cached by artifact, stream kind (screen/camera/baked), quality and scale.
   compression_estimates: Mutex<HashMap<(u64, u8, u8, u16), u64>>,
   compression_estimate_preparation: Mutex<()>,
+}
+
+impl ExportState {
+  fn slot(&self, kind: ExportKind) -> &ExportWorkspaceSlot {
+    match kind {
+      ExportKind::Recording => &self.recording,
+      ExportKind::Screenshot => &self.screenshot,
+    }
+  }
 }
 
 #[cfg(test)]

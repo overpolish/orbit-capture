@@ -18,9 +18,11 @@ pub(super) use recording_file::{save_recording, save_selected_recording};
 #[tauri::command]
 pub async fn save_export(
   app: AppHandle,
+  window: tauri::WebviewWindow,
   file_stem: String,
   options: RecordingExportOptions,
 ) -> Result<Option<PathBuf>, String> {
+  let kind = kind_of_window(&window)?;
   let RecordingExportOptions {
     audio_track_volumes,
     bake_camera,
@@ -43,8 +45,8 @@ pub async fn save_export(
   let stem =
     sanitize_file_stem(&file_stem).ok_or_else(|| "That file name cannot be used".to_owned())?;
   let directory =
-    current_directory(&app).ok_or_else(|| "There is nowhere to save this".to_owned())?;
-  let artifact = take_artifact(&app).ok_or_else(|| "There is nothing to save".to_owned())?;
+    current_directory(&app, kind).ok_or_else(|| "There is nowhere to save this".to_owned())?;
+  let artifact = take_artifact(&app, kind).ok_or_else(|| "There is nothing to save".to_owned())?;
   let artifact_id = match &artifact {
     ExportArtifact::Screenshot { id, .. } | ExportArtifact::Recording { id, .. } => *id,
   };
@@ -56,16 +58,20 @@ pub async fn save_export(
   {
     let state = app.state::<ExportState>();
     let mut active = state
+      .slot(kind)
       .active_export
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Per workspace: a recording encode and a screenshot save are independent
+    // jobs, and only a second save of the same workspace is a contradiction.
     if active.is_some() {
-      *app
-        .state::<ExportState>()
+      *state
+        .slot(kind)
         .artifact
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(artifact);
-      emit_snapshot(&app);
+      drop(active);
+      emit_snapshot(&app, kind);
       return Err("Another export is already running".to_owned());
     }
     *active = Some(ActiveExportJob {
@@ -343,6 +349,7 @@ pub async fn save_export(
   {
     let state = app.state::<ExportState>();
     let mut active = state
+      .slot(kind)
       .active_export
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -359,24 +366,26 @@ pub async fn save_export(
     Ok(None) => {
       *app
         .state::<ExportState>()
+        .slot(kind)
         .artifact
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(artifact);
-      emit_snapshot(&app);
+      emit_snapshot(&app, kind);
       return Ok(None);
     }
     Err(error) => {
       *app
         .state::<ExportState>()
+        .slot(kind)
         .artifact
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(artifact);
-      emit_snapshot(&app);
+      emit_snapshot(&app, kind);
       return Err(error);
     }
   };
 
-  set_export_directory(app.clone(), directory)?;
+  store_export_directory(&app, kind, directory)?;
   remember_completed_export(
     &app,
     cursor_effects,
@@ -386,9 +395,11 @@ pub async fn save_export(
   // Saving is transactional: keep the native player alive while the artifact
   // may still be restored by Cancel or an export error, then retire it only
   // once the finished files have been published.
-  artifact::clear_recording_preview(&app);
-  let _ = window::hide(&app);
-  emit_snapshot(&app);
+  if kind == ExportKind::Recording {
+    artifact::clear_recording_preview(&app);
+  }
+  let _ = window::hide(&app, kind);
+  emit_snapshot(&app, kind);
 
   if crate::settings::current(&app).open_location_after_export {
     if let Err(error) = location::open_containing_folder(&path) {

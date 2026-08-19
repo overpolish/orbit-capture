@@ -3,7 +3,8 @@
   "identifier": "macos-permissions",
   "description": "macOS permission access for Screenwide",
   "windows": [
-    "export",
+    "export-recording",
+    "export-screenshot",
     "recording-bar",
     "recording-dock",
     "recording-source-selector",

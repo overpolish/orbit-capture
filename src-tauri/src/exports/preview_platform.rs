@@ -79,7 +79,7 @@ mod surface;
 pub(crate) use surface::ComposedFrame;
 pub(crate) use surface::RecordingPreviewSurface;
 #[cfg(target_os = "macos")]
-pub(crate) use surface::{NativeWorkspacePlacement, RecordingWorkspaceLayer};
+pub(crate) use surface::{run_on_main_queue, NativeWorkspacePlacement, RecordingWorkspaceLayer};
 
 pub(crate) type TransformCallback = Box<dyn FnMut(f64) + Send + 'static>;
 pub(crate) type SelectionCallback = Box<dyn FnMut(Option<u32>) + Send + 'static>;

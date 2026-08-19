@@ -174,7 +174,9 @@ fn render_video(
   path: &Path,
 ) -> Result<ExportRunResult, String> {
   crate::screenshots::validate_output_settings(request.width, request.height, request.output)?;
-  let surface = RecordingPreviewSurface::existing()?;
+  // The recording workspace's own window owns the GPU device this export
+  // composites on; the screenshot window has a separate one.
+  let surface = RecordingPreviewSurface::existing_for(crate::exports::ExportKind::Recording)?;
   let mut reader = GpuVideoReader::open(request.screen, 0, surface.clone())?;
   let mut camera_reader = request
     .camera

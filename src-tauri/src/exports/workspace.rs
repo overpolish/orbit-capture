@@ -3,66 +3,67 @@
 
 use tauri::{AppHandle, Manager};
 
-use super::{window, ExportArtifact, ExportState};
+use super::{window, ExportKind, ExportState};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CaptureWorkspaceReservation {
-  Recording,
-  Screenshot,
+pub(super) fn focus_pending(app: &AppHandle, kind: ExportKind) {
+  let _ = window::show(app, kind);
 }
 
-pub(super) fn focus_pending(app: &AppHandle) {
-  let _ = window::show(app);
-}
-
-pub fn has_pending(app: &AppHandle) -> bool {
+pub fn has_pending_kind(app: &AppHandle, kind: ExportKind) -> bool {
   app
     .state::<ExportState>()
+    .slot(kind)
     .artifact
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner())
     .is_some()
 }
 
-/// Focuses pending work and reports whether the requested capture should stop.
+/// Whether any workspace is holding unsaved work.
+pub fn has_pending(app: &AppHandle) -> bool {
+  ExportKind::ALL
+    .into_iter()
+    .any(|kind| has_pending_kind(app, kind))
+}
+
+/// Focuses a pending recording and reports whether the requested action should
+/// stop. Only the recording workspace is consulted: an open screenshot never
+/// stood in the way of the recording controls, and now it has its own window
+/// that would be the wrong one to raise.
 pub fn focus_if_pending(app: &AppHandle) -> bool {
-  let pending = has_pending(app);
+  let pending = has_pending_kind(app, ExportKind::Recording);
   if pending {
-    focus_pending(app);
+    focus_pending(app, ExportKind::Recording);
   }
   pending
 }
 
-/// Screenshot tools may open over an existing screenshot canvas. Only a
-/// recording waiting for export, or a capture already in flight, blocks a new
-/// screenshot interaction.
+/// Screenshot tools open over whatever else is waiting: each workspace has its
+/// own window, so only a capture already in flight blocks a new one.
 pub fn focus_if_screenshot_blocked(app: &AppHandle) -> bool {
   let state = app.state::<ExportState>();
-  let recording_waits = matches!(
-    state
-      .artifact
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner())
-      .as_ref(),
-    Some(ExportArtifact::Recording { .. })
-  );
-  let capture_waits = state
+  let reservation = *state
     .capture_reservation
     .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner())
-    .is_some();
-  let blocked = recording_waits || capture_waits;
-  if blocked {
-    focus_pending(app);
+    .unwrap_or_else(|poisoned| poisoned.into_inner());
+  let Some(kind) = reservation else {
+    return false;
+  };
+  // A reservation of its own has nothing to show yet; raise its window only if
+  // that workspace already holds something the user can act on.
+  if has_pending_kind(app, kind) {
+    focus_pending(app, kind);
   }
-  blocked
+  true
 }
 
-/// Reserves the empty workspace before countdown and stream initialization.
-/// Every recording entry point therefore sees the same pending-work rule.
+/// Reserves the empty recording workspace before countdown and stream
+/// initialization. Every recording entry point therefore sees the same
+/// pending-work rule.
 pub fn reserve_recording(app: &AppHandle) -> Result<(), String> {
   let state = app.state::<ExportState>();
   let artifact = state
+    .recording
     .artifact
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -70,46 +71,37 @@ pub fn reserve_recording(app: &AppHandle) -> Result<(), String> {
     .capture_reservation
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner());
-  if artifact.is_some() || reservation.is_some() {
-    focus_pending(app);
-    Err("Finish or discard the open export before starting another recording".to_owned())
+  if artifact.is_some() {
+    drop(reservation);
+    drop(artifact);
+    focus_pending(app, ExportKind::Recording);
+    Err("Finish or discard the open recording before starting another".to_owned())
+  } else if reservation.is_some() {
+    Err("Another capture is already starting".to_owned())
   } else {
-    *reservation = Some(CaptureWorkspaceReservation::Recording);
+    *reservation = Some(ExportKind::Recording);
     Ok(())
   }
 }
 
-/// Screenshots append to an open screenshot workspace, but never replace an
-/// unsaved recording.
-pub fn reserve_screenshot(app: &AppHandle, clipboard_only: bool) -> Result<(), String> {
+/// Screenshots append to an open screenshot workspace and are indifferent to a
+/// recording waiting in its own window. Only a capture already being set up
+/// stands in the way.
+pub fn reserve_screenshot(app: &AppHandle) -> Result<(), String> {
   let state = app.state::<ExportState>();
-  let artifact = state
-    .artifact
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner());
   let mut reservation = state
     .capture_reservation
     .lock()
     .unwrap_or_else(|poisoned| poisoned.into_inner());
-  let recording_waits = matches!(artifact.as_ref(), Some(ExportArtifact::Recording { .. }));
-  let capture_waits = reservation.is_some();
-  let pending_export_blocks = !clipboard_only && recording_waits;
-  if pending_export_blocks || capture_waits {
-    focus_pending(app);
-    Err(if capture_waits {
-      "Another capture is already starting".to_owned()
-    } else if recording_waits {
-      "Finish or discard the open recording before taking a screenshot".to_owned()
-    } else {
-      unreachable!("a blocked screenshot has a reservation or pending export")
-    })
+  if reservation.is_some() {
+    Err("Another capture is already starting".to_owned())
   } else {
-    *reservation = Some(CaptureWorkspaceReservation::Screenshot);
+    *reservation = Some(ExportKind::Screenshot);
     Ok(())
   }
 }
 
-fn release(app: &AppHandle, expected: CaptureWorkspaceReservation) {
+fn release(app: &AppHandle, expected: ExportKind) {
   let state = app.state::<ExportState>();
   let mut reservation = state
     .capture_reservation
@@ -121,9 +113,9 @@ fn release(app: &AppHandle, expected: CaptureWorkspaceReservation) {
 }
 
 pub fn release_recording(app: &AppHandle) {
-  release(app, CaptureWorkspaceReservation::Recording);
+  release(app, ExportKind::Recording);
 }
 
 pub fn release_screenshot(app: &AppHandle) {
-  release(app, CaptureWorkspaceReservation::Screenshot);
+  release(app, ExportKind::Screenshot);
 }
