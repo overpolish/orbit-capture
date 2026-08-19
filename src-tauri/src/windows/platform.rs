@@ -14,9 +14,37 @@ use tauri_nspanel::{
 
 #[cfg(target_os = "macos")]
 tauri_panel! {
+  // The recording bar, the source selector, the standalone listbox and the
+  // region selector all take typed input at some point, so they have to be
+  // able to become key - `becomes_key_only_if_needed` keeps that to the moments
+  // a text field actually asks for it.
   panel!(RecordingBarPanel {
     config: {
       can_become_key_window: true,
+      can_become_main_window: false,
+      becomes_key_only_if_needed: true,
+      hides_on_deactivate: false,
+      is_floating_panel: true,
+      works_when_modal: true
+    }
+    with: {
+      tracking_area: {
+        options: TrackingAreaOptions::new()
+          .active_always()
+          .mouse_entered_and_exited()
+          .mouse_moved()
+          .cursor_update(),
+        auto_resize: true
+      }
+    }
+  })
+
+  // The dock is buttons only: it never needs the keyboard, so it refuses key
+  // status outright. That way nothing it does can pull keyboard focus off the
+  // app the user is recording.
+  panel!(RecordingDockPanel {
+    config: {
+      can_become_key_window: false,
       can_become_main_window: false,
       becomes_key_only_if_needed: true,
       hides_on_deactivate: false,
@@ -92,7 +120,11 @@ fn ensure_recording_panel(window: &WebviewWindow) -> tauri::Result<PanelHandle<t
   }
 
   let level = recording_panel_level(window).ok_or(tauri::Error::WindowNotFound)?;
-  configure_panel::<RecordingBarPanel>(window, level)?;
+  if window.label() == "recording-dock" {
+    configure_panel::<RecordingDockPanel>(window, level)?;
+  } else {
+    configure_panel::<RecordingBarPanel>(window, level)?;
+  }
   registered_panel(window)
 }
 
@@ -112,11 +144,33 @@ pub fn set_opacity(window: &WebviewWindow, opacity: f64) -> tauri::Result<()> {
   app.run_on_main_thread(move || panel.set_alpha_value(opacity))
 }
 
+/// Hands keyboard focus back to whatever app owned it before this panel took
+/// key status, without hiding the overlay.
+///
+/// `resignKeyWindow` is a notification AppKit sends itself; calling it directly
+/// tells the window it lost focus while WindowServer still routes keystrokes
+/// here. For a non-activating panel the only public way to actually give focus
+/// up is to leave the window list and come back: ordering the key panel out
+/// makes AppKit pick a new key window - the frontmost app's, since this process
+/// is not active - and `orderFrontRegardless` then puts the overlay back on
+/// screen without asking for key again.
+///
+/// A panel that is not key is left alone; ordering it out and in would be a
+/// pointless flicker.
 #[cfg(target_os = "macos")]
-pub fn resign_key(window: &WebviewWindow) -> tauri::Result<()> {
+pub fn release_key_focus(window: &WebviewWindow) -> tauri::Result<()> {
   let panel = ensure_recording_panel(window)?;
-  panel.resign_key_window();
-  Ok(())
+  let app = window.app_handle().clone();
+  app.run_on_main_thread(move || {
+    if !panel.as_panel().isKeyWindow() {
+      return;
+    }
+    // `Panel::hide` is `orderOut:nil` and `Panel::show` is
+    // `orderFrontRegardless`; neither touches alpha, so the overlay stays as
+    // visible as it was.
+    panel.hide();
+    panel.show();
+  })
 }
 
 #[cfg(target_os = "macos")]
@@ -150,11 +204,22 @@ pub fn hide(window: &WebviewWindow) -> tauri::Result<()> {
   })
 }
 
+/// Orders a recording panel onscreen without disturbing keyboard focus.
+///
+/// Tauri's `WebviewWindow::show` is `makeKeyAndOrderFront:` underneath. On a
+/// non-activating panel that is the worst of both worlds: the app never
+/// activates, but WindowServer still moves keyboard focus off whatever the user
+/// was working in - Final Cut, a browser - every time recording starts. So this
+/// never calls it. `Panel::show` is `orderFrontRegardless`, which puts the
+/// panel on screen and leaves key status where it is.
+///
+/// Nothing depends on the Tauri-side call: tao's `is_visible` asks the NSWindow
+/// (`isVisible`), so every `window.is_visible()` caller sees the panel the
+/// moment it is ordered front.
 #[cfg(target_os = "macos")]
 pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
   window.set_ignore_cursor_events(false)?;
   let panel = ensure_recording_panel(window)?;
-  window.show()?;
   let app = window.app_handle().clone();
   app.run_on_main_thread(move || {
     panel.set_alpha_value(1.0);

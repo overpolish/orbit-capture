@@ -176,8 +176,11 @@ fn apply_region_selector_interactivity(app: &AppHandle) -> tauri::Result<()> {
   if is_interactive {
     region.set_focus()?;
   } else {
+    // Going passthrough while still holding key status would leave the user
+    // typing into an invisible overlay instead of the app they are recording,
+    // so the overlay gives keyboard focus back as it stops taking clicks.
     #[cfg(target_os = "macos")]
-    platform::resign_key(&region)?;
+    platform::release_key_focus(&region)?;
     raise_recording_controls(app)?;
   }
 
