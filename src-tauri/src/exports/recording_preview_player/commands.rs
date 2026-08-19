@@ -71,15 +71,18 @@ pub async fn start_recording_preview_player(
           let updated = manager
             .handle_selection_gesture(phase, pane_index, operation, edges, scale, delta_x, delta_y)
             .is_ok();
-          // A canvas resize moves the pane box on every pointer move, so the
-          // composition has to follow it in the same input. macOS recomposes
-          // its retained workspace natively; Windows redraws the paused still
-          // from its cached sources here, which also publishes the geometry
-          // the drag deferred. Without this the pane would show the previous
-          // canvas letterboxed into the new box until mouse-up.
+          // A canvas resize - a Frame drag, or an Alt-drag Move growing the
+          // canvas around its layer - moves the pane box on every pointer
+          // move, so the composition has to follow it in the same input. macOS
+          // recomposes its retained workspace natively; Windows redraws the
+          // paused still from its cached sources here, which also publishes
+          // the geometry the drag deferred. Without this the pane would show
+          // the previous canvas letterboxed into the new box until mouse-up.
           #[cfg(target_os = "windows")]
           if updated
-            && operation == super::super::preview_platform::SelectionGestureOperation::FrameResize
+            && (operation == super::super::preview_platform::SelectionGestureOperation::FrameResize
+              || (operation == super::super::preview_platform::SelectionGestureOperation::Move
+                && edges & super::AUTO_FIT_MOVE_EDGE != 0))
             && !matches!(
               phase,
               super::super::preview_platform::SelectionGesturePhase::Begin

@@ -42,7 +42,7 @@ use super::{
 use crate::recording::PrimaryRecordingKind;
 pub use commands::stop_all;
 
-const AUTO_FIT_MOVE_EDGE: u32 = 1 << 17;
+pub(super) const AUTO_FIT_MOVE_EDGE: u32 = 1 << 17;
 const AUTO_FIT_COMMIT_EDGE: u32 = 1 << 18;
 
 #[derive(Clone)]

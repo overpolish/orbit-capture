@@ -109,6 +109,10 @@ typedef struct {
 @property(nonatomic) double selectionMoveDeltaX;
 @property(nonatomic) double selectionMoveDeltaY;
 @property(nonatomic) BOOL selectionMoveAutoFitActive;
+/// The bounds (in mouse-down canvas units) the last auto-fit sample grew the
+/// canvas to, so an Option release can re-express the move's starts in the
+/// committed canvas and let Option grow it again from there.
+@property(nonatomic) NSRect selectionMoveAutoFitBounds;
 @property(nonatomic, strong) NSArray<NSValue *> *selectionMoveTargetsStart;
 @property(nonatomic) ScreenwidePreviewSelection selectionDragStart;
 @property(nonatomic) BOOL selectionDragActive;
@@ -1424,6 +1428,7 @@ static void set_editor_zoom(ScreenwidePreviewSurface *surface,
   self.selectionMoveDeltaX = 0.0;
   self.selectionMoveDeltaY = 0.0;
   self.selectionMoveAutoFitActive = NO;
+  self.selectionMoveAutoFitBounds = NSZeroRect;
   self.selectionMoveTargetsStart = [self.surface.selectionTargets copy];
   self.selectionMoveZoomStart = self.surface.editorZoom;
   self.selectionMovePanStart =
@@ -1982,9 +1987,38 @@ static void set_editor_zoom(ScreenwidePreviewSurface *surface,
         self.selectionDragOrigin = point;
         self.selectionMoveDeltaX = 0.0;
         self.selectionMoveDeltaY = 0.0;
-        self.selectionMoveFrameStart = NSZeroRect;
+        // The committed canvas becomes the move's new starting point, so
+        // Option can grow it again later in this same gesture: re-express
+        // the mouse-down targets in it and re-snapshot the workspace exactly
+        // as beginWorkspaceMove did at mouse-down.
+        NSRect bounds = self.selectionMoveAutoFitBounds;
+        if (bounds.size.width > 0.0 && bounds.size.height > 0.0) {
+          NSMutableArray<NSValue *> *rebased = [NSMutableArray
+              arrayWithCapacity:self.selectionMoveTargetsStart.count];
+          for (NSValue *value in self.selectionMoveTargetsStart) {
+            ScreenwidePreviewSelection target;
+            [value getValue:&target size:sizeof(target)];
+            target.x = (target.x - bounds.origin.x) / bounds.size.width;
+            target.y = (target.y - bounds.origin.y) / bounds.size.height;
+            target.width /= bounds.size.width;
+            target.height /= bounds.size.height;
+            [rebased addObject:[NSValue valueWithBytes:&target
+                                              objCType:@encode(ScreenwidePreviewSelection)]];
+          }
+          self.selectionMoveTargetsStart = rebased;
+        }
+        self.selectionMoveAutoFitBounds = NSZeroRect;
         self.selectionMoveAutoFitActive = NO;
-        self.selectionMoveTargetsStart = nil;
+        self.selectionMoveZoomStart = self.surface.editorZoom;
+        self.selectionMovePanStart =
+            NSMakePoint(self.surface.editorPanX, self.surface.editorPanY);
+        self.selectionFramePaneStarts = [self.surface.editorBaseRects copy];
+        NSUInteger movePaneIndex = self.selectionDragStart.pane_index;
+        self.selectionMoveFrameStart =
+            movePaneIndex < self.surface.editorBaseRects.count
+                ? self.surface.editorBaseRects[movePaneIndex].rectValue
+                : NSZeroRect;
+        begin_workspace_frame_resize(self.surface);
         self.selectionDragEdges = ScreenwideAutoFitCommitEdge;
         clear_selection_snap_guides(self.surface);
         emit_selection_gesture(self.surface, 1, 0,
@@ -2021,6 +2055,7 @@ static void set_editor_zoom(ScreenwidePreviewSurface *surface,
         self.selectionMoveAutoFitActive = YES;
         NSRect bounds = auto_fit_selection_bounds(
             self.surface, self.selectionMoveTargetsStart, moved);
+        self.selectionMoveAutoFitBounds = bounds;
         NSRect start = self.selectionMoveFrameStart;
         NSRect resized = NSMakeRect(
             start.origin.x + bounds.origin.x * start.size.width,
@@ -2157,6 +2192,7 @@ static void set_editor_zoom(ScreenwidePreviewSurface *surface,
   self.selectionDragEdges = 0;
   self.selectionMoveFrameStart = NSZeroRect;
   self.selectionMoveAutoFitActive = NO;
+  self.selectionMoveAutoFitBounds = NSZeroRect;
   self.selectionMoveTargetsStart = nil;
   self.selectionFramePaneStarts = nil;
   self.panning = NO;

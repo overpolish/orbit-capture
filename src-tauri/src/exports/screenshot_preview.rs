@@ -41,6 +41,8 @@ struct PreviewManager {
   workspace_scene: Option<WorkspaceScene>,
 }
 
+// Only the macOS layout reads the gesture's presentation ownership.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct SelectionGestureOverride {
   native_workspace_owns_presentation: bool,
   operation: SelectionGestureOperation,
@@ -339,6 +341,13 @@ impl PreviewManager {
               snapshot,
             });
           }
+          // macOS recomposes the resized canvas in its retained GPU workspace;
+          // Windows has no such presenter, so the re-composition happens here,
+          // in the same input, and its present publishes the pane box the
+          // native drag deferred.
+          #[cfg(target_os = "windows")]
+          return self.present_batch();
+          #[cfg(not(target_os = "windows"))]
           return Ok(());
         }
         if operation == SelectionGestureOperation::FrameRadius {
@@ -429,6 +438,12 @@ impl PreviewManager {
           // frame resize, selected-layer movement and OSC are encoded from
           // one immutable gesture snapshot. Replacing it here would race a
           // differently normalized but semantically equivalent React scene.
+          // Windows has no retained presenter: the fitted canvas is composed
+          // here, and `native_workspace_owns_presentation` still keeps React's
+          // equivalent layouts from re-presenting it meanwhile.
+          #[cfg(target_os = "windows")]
+          return self.present_batch();
+          #[cfg(not(target_os = "windows"))]
           return Ok(());
         }
         return self.present_batch();
@@ -765,10 +780,20 @@ pub async fn layout_screenshot_preview_surface(
     let Some(surface) = manager.surface.clone() else {
       return Ok(());
     };
+    // macOS: the retained GPU workspace presents a live Frame resize or
+    // auto-fit Move itself, so a layout must not race it with an equivalent
+    // but differently normalised scene. Windows has no such presenter: the
+    // layout re-presents the manager's own gesture output (never React's -
+    // see above), which also covers a gesture sample whose present was
+    // dropped on a contended lock, the way the recording layout redraws its
+    // still.
+    #[cfg(target_os = "macos")]
     let frame_owns_presentation = manager.selection_gesture.as_ref().is_some_and(|gesture| {
       gesture.operation == SelectionGestureOperation::FrameResize
         || gesture.native_workspace_owns_presentation
     });
+    #[cfg(not(target_os = "macos"))]
+    let frame_owns_presentation = false;
     let will_present =
       !frame_owns_presentation && (!manager.has_layout || output_changed || size_changed);
     let natural_size = (output.canvas.width, output.canvas.height);

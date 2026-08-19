@@ -79,6 +79,11 @@ pub(crate) struct StillOverlay;
 
 const FRAME_LAYER_ID: u32 = u32::MAX;
 const CENTERED_RESIZE_EDGE: u32 = 1 << 16;
+/// Edge bits shared with the Metal backend and both preview managers: an
+/// Alt-drag Move grows the canvas around the layer, and releasing Alt
+/// mid-drag accepts that canvas as the origin for the rest of the gesture.
+const AUTO_FIT_MOVE_EDGE: u32 = 1 << 17;
+const AUTO_FIT_COMMIT_EDGE: u32 = 1 << 18;
 
 /// Logical placement of a recording layer in the retained workspace. Windows
 /// keeps the placement in the DirectComposition pane geometry rather than
@@ -217,6 +222,10 @@ struct SurfaceState {
   frame_resize_committed: bool,
   gesture: Option<ActiveGesture>,
   last_pointer: (f64, f64),
+  /// A live layer Move that may grow its canvas under Alt (the Metal
+  /// backend's `selectionMoveTargetsStart` / `selectionMoveAutoFitActive`).
+  /// `None` once the move ends or an Alt release commits the grown canvas.
+  move_auto_fit: Option<MoveAutoFit>,
   panes: Vec<Option<Pane>>,
   primary_composition: Option<ComposedFrame>,
   scale: f64,
@@ -253,6 +262,85 @@ struct FrameResizeStart {
   natural_size: Option<(u32, u32)>,
   pane_rects: Vec<(usize, PreviewSurfaceRect)>,
   transform: WorkspaceTransform,
+}
+
+/// What an Alt-drag auto-fit derives every sample from. The layer targets are
+/// the mouse-down set in mouse-down canvas units: React re-lays the targets
+/// out in each grown canvas meanwhile, and re-using those would compound the
+/// renormalisation and collapse the selection.
+struct MoveAutoFit {
+  /// Alt was held on the previous sample, so the canvas is currently grown
+  /// and a release has to commit it.
+  active: bool,
+  /// The bounds the last auto-fit sample grew the canvas to, in the current
+  /// starts' canvas units, so a commit can re-express the starts in the
+  /// committed canvas and Alt can grow it again from there.
+  last_bounds: Option<PreviewSurfaceRect>,
+  /// The composed canvas size at mouse-down, in output pixels, so the grown
+  /// box snaps outward to whole pixels exactly like the canvas the managers
+  /// fit (`fit_workspace_to_items` / `fit_canvas_to_layers`).
+  natural_size: Option<(f64, f64)>,
+  targets_start: Vec<PreviewSelection>,
+}
+
+/// Mirrors the Metal backend's `auto_fit_selection_bounds`: the smallest
+/// whole-pixel box, in mouse-down canvas units, holding the canvas and every
+/// layer of the moved layer's pane with the moved layer at `moved`.
+fn auto_fit_selection_bounds(
+  auto_fit: &MoveAutoFit,
+  moved: PreviewSelection,
+) -> PreviewSurfaceRect {
+  let mut left = 0.0_f64;
+  let mut top = 0.0_f64;
+  let mut right = 1.0_f64;
+  let mut bottom = 1.0_f64;
+  let mut include = |target: PreviewSelection| {
+    left = left.min(target.x);
+    top = top.min(target.y);
+    right = right.max(target.x + target.width);
+    bottom = bottom.max(target.y + target.height);
+  };
+  for target in auto_fit
+    .targets_start
+    .iter()
+    .filter(|target| target.pane_index == moved.pane_index && target.layer_id != moved.layer_id)
+  {
+    include(*target);
+  }
+  include(moved);
+  if let Some((width, height)) = auto_fit.natural_size {
+    let width = width.max(1.0);
+    let height = height.max(1.0);
+    left = (left * width).floor() / width;
+    top = (top * height).floor() / height;
+    right = (right * width).ceil() / width;
+    bottom = (bottom * height).ceil() / height;
+  }
+  PreviewSurfaceRect {
+    x: left,
+    y: top,
+    width: (right - left).max(0.000_001),
+    height: (bottom - top).max(0.000_001),
+  }
+}
+
+/// The immutable workspace a Frame resize or an auto-fit Move re-derives from.
+fn frame_resize_start(state: &SurfaceState) -> FrameResizeStart {
+  FrameResizeStart {
+    natural_size: state.workspace_natural_size,
+    pane_rects: state
+      .panes
+      .iter()
+      .enumerate()
+      .filter_map(|(index, pane)| {
+        pane
+          .as_ref()
+          .filter(|pane| pane.seen)
+          .map(|pane| (index, pane_canvas_rect(pane, false)))
+      })
+      .collect(),
+    transform: state.workspace_transform,
+  }
 }
 
 #[derive(Clone, Copy)]
@@ -1415,21 +1503,7 @@ fn handle_editor_input(input: editor::Input) {
               let transform = state.workspace_transform;
               state.workspace_transforms.insert(size, transform);
             }
-            state.frame_resize = Some(FrameResizeStart {
-              natural_size: state.workspace_natural_size,
-              pane_rects: state
-                .panes
-                .iter()
-                .enumerate()
-                .filter_map(|(index, pane)| {
-                  pane
-                    .as_ref()
-                    .filter(|pane| pane.seen)
-                    .map(|pane| (index, pane_canvas_rect(pane, false)))
-                })
-                .collect(),
-              transform: state.workspace_transform,
-            });
+            state.frame_resize = Some(frame_resize_start(&state));
           }
           state.gesture = Some(ActiveGesture::Selection(gesture));
           if changed {
@@ -1475,6 +1549,23 @@ fn handle_editor_input(input: editor::Input) {
             pointer_start: point,
             selection_start: selection,
           };
+          state.move_auto_fit =
+            (gesture.operation == SelectionGestureOperation::Move).then(|| MoveAutoFit {
+              active: false,
+              last_bounds: None,
+              natural_size: state
+                .panes
+                .get(selection.pane_index as usize)
+                .and_then(Option::as_ref)
+                .and_then(|pane| pane.settings.as_ref())
+                .map(|settings| (f64::from(settings.width), f64::from(settings.height)))
+                .or_else(|| {
+                  state
+                    .workspace_natural_size
+                    .map(|(width, height)| (f64::from(width), f64::from(height)))
+                }),
+              targets_start: state.selection_targets.clone(),
+            });
           state.gesture = Some(ActiveGesture::Selection(gesture));
           if changed {
             selected = Some(Some(if target.layer_id == FRAME_LAYER_ID {
@@ -1661,44 +1752,167 @@ fn handle_editor_input(input: editor::Input) {
                   selection.radius_percent = (radius * 100.0 / shortest).clamp(0.0, 50.0);
                   gesture.last_scale = selection.radius_percent;
                 } else if gesture.operation == SelectionGestureOperation::Move {
-                  selection.x += dx;
-                  selection.y += dy;
-                  gesture.last_delta = (dx, dy);
-                  if state.selection_snapping_enabled && snapping {
-                    let targets_x = selection_snap_targets(&state, gesture.selection_start, true);
-                    let targets_y = selection_snap_targets(&state, gesture.selection_start, false);
-                    let horizontal = snapping::move_axis(
-                      selection.x,
-                      selection.width,
-                      pane.width,
-                      pane.height,
-                      state.workspace_transform.zoom,
-                      &targets_x,
-                      selection.layer_id,
-                    );
-                    let vertical = snapping::move_axis(
-                      selection.y,
-                      selection.height,
-                      pane.height,
-                      pane.width,
-                      state.workspace_transform.zoom,
-                      &targets_y,
-                      selection.layer_id,
-                    );
-                    if horizontal.found {
-                      selection.x += horizontal.adjustment;
+                  let auto_fit_active = state.move_auto_fit.as_ref().is_some_and(|fit| fit.active);
+                  if auto_fit_active && !centered {
+                    // Releasing Alt accepts the grown canvas. The remainder of
+                    // this pointer gesture is rebased onto that committed
+                    // scene - React and the managers keep one edit-history
+                    // transaction open across the checkpoint - and the DOM
+                    // layout that follows carries its size, so it keeps the
+                    // rebased transform exactly like a Frame resize commit.
+                    state.frame_resize = None;
+                    state.frame_resize_committed = true;
+                    // The committed canvas becomes the move's starting point,
+                    // so Alt can grow it again later in this same gesture:
+                    // re-express the mouse-down targets and canvas size in it.
+                    if let Some(fit) = state.move_auto_fit.as_mut() {
+                      fit.active = false;
+                      if let Some(bounds) = fit.last_bounds.take() {
+                        for target in &mut fit.targets_start {
+                          target.x = (target.x - bounds.x) / bounds.width;
+                          target.y = (target.y - bounds.y) / bounds.height;
+                          target.width /= bounds.width;
+                          target.height /= bounds.height;
+                        }
+                        fit.natural_size = fit.natural_size.map(|(width, height)| {
+                          (
+                            (width * bounds.width).round().max(1.0),
+                            (height * bounds.height).round().max(1.0),
+                          )
+                        });
+                      }
                     }
-                    if vertical.found {
-                      selection.y += vertical.adjustment;
-                    }
-                    state.selection_snap_guide_x = horizontal.found.then_some(horizontal);
-                    state.selection_snap_guide_y = vertical.found.then_some(vertical);
-                    gesture.last_delta = (
-                      selection.x - gesture.selection_start.x,
-                      selection.y - gesture.selection_start.y,
-                    );
-                  } else {
                     clear_selection_snap_guides(&mut state);
+                    // The displayed selection is already expressed in the
+                    // grown canvas; it becomes the new gesture origin, and this
+                    // sample's pointer travel is absorbed by the checkpoint.
+                    selection = state.selection.unwrap_or(gesture.selection_start);
+                    gesture.selection_start = selection;
+                    gesture.pane_start = selection_pane_rect(&state, selection);
+                    gesture.pointer_start = point;
+                    gesture.last_delta = (0.0, 0.0);
+                    gesture.last_scale = 1.0;
+                    // Cleared again by the next sample (see below).
+                    gesture.edges = AUTO_FIT_COMMIT_EDGE;
+                  } else {
+                    let auto_fit = centered && state.move_auto_fit.is_some();
+                    if auto_fit && state.frame_resize.is_none() {
+                      // First Alt sample (of this gesture, or since an Alt
+                      // release committed): the native side takes over the
+                      // pane geometry for the grown canvas, as for a Frame
+                      // resize. The box grows from wherever the pane is now -
+                      // after a commit the DOM layout may have re-placed it.
+                      if let Some(size) = state.workspace_natural_size {
+                        let transform = state.workspace_transform;
+                        state.workspace_transforms.insert(size, transform);
+                      }
+                      gesture.pane_start = selection_pane_rect(&state, gesture.selection_start);
+                      state.frame_resize = Some(frame_resize_start(&state));
+                    }
+                    // While the canvas is grown every sample re-derives from
+                    // mouse-down geometry: the pane box and zoom are rebased on
+                    // each move, and feeding those back would make the layer
+                    // chase the pointer.
+                    let (move_pane, move_zoom) = state
+                      .frame_resize
+                      .as_ref()
+                      .map_or((pane, state.workspace_transform.zoom), |start| {
+                        (gesture.pane_start, start.transform.zoom)
+                      });
+                    let dx =
+                      (point.0 - gesture.pointer_start.0) / (move_pane.width * move_zoom).max(1.0);
+                    let dy =
+                      (point.1 - gesture.pointer_start.1) / (move_pane.height * move_zoom).max(1.0);
+                    selection.x += dx;
+                    selection.y += dy;
+                    gesture.last_delta = (dx, dy);
+                    if state.selection_snapping_enabled && snapping {
+                      let targets_x = selection_snap_targets(&state, gesture.selection_start, true);
+                      let targets_y =
+                        selection_snap_targets(&state, gesture.selection_start, false);
+                      let horizontal = snapping::move_axis(
+                        selection.x,
+                        selection.width,
+                        pane.width,
+                        pane.height,
+                        state.workspace_transform.zoom,
+                        &targets_x,
+                        selection.layer_id,
+                      );
+                      let vertical = snapping::move_axis(
+                        selection.y,
+                        selection.height,
+                        pane.height,
+                        pane.width,
+                        state.workspace_transform.zoom,
+                        &targets_y,
+                        selection.layer_id,
+                      );
+                      if horizontal.found {
+                        selection.x += horizontal.adjustment;
+                      }
+                      if vertical.found {
+                        selection.y += vertical.adjustment;
+                      }
+                      state.selection_snap_guide_x = horizontal.found.then_some(horizontal);
+                      state.selection_snap_guide_y = vertical.found.then_some(vertical);
+                      gesture.last_delta = (
+                        selection.x - gesture.selection_start.x,
+                        selection.y - gesture.selection_start.y,
+                      );
+                    } else {
+                      clear_selection_snap_guides(&mut state);
+                    }
+                    gesture.edges = if auto_fit { AUTO_FIT_MOVE_EDGE } else { 0 };
+                    if auto_fit {
+                      // Grow the canvas around the move: the pane box follows
+                      // the whole-pixel bounds of every layer, its siblings
+                      // re-flow around it and one rebase keeps the pixels still
+                      // (all from the gesture's starts, as for a Frame resize).
+                      // The gesture emitted below re-composes the fitted canvas
+                      // synchronously and that present publishes this box.
+                      let bounds = state.move_auto_fit.as_ref().map_or(
+                        PreviewSurfaceRect {
+                          x: 0.0,
+                          y: 0.0,
+                          width: 1.0,
+                          height: 1.0,
+                        },
+                        |fit| auto_fit_selection_bounds(fit, selection),
+                      );
+                      let start = gesture.pane_start;
+                      let resized = PreviewSurfaceRect {
+                        x: start.x + bounds.x * start.width,
+                        y: start.y + bounds.y * start.height,
+                        width: bounds.width * start.width,
+                        height: bounds.height * start.height,
+                      };
+                      let selected = gesture.selection_start.pane_index as usize;
+                      if let Some(start_state) = state.frame_resize.take() {
+                        let reflowed =
+                          reflow_workspace_panes(&start_state.pane_rects, selected, resized);
+                        for (index, rect) in reflowed {
+                          if let Some(pane) = state.panes.get_mut(index).and_then(Option::as_mut) {
+                            pane.base_rect = rect;
+                          }
+                        }
+                        rebase_workspace_fit(&mut state, &start_state);
+                        state.frame_resize = Some(start_state);
+                        zoom = Some(state.workspace_transform.zoom);
+                      }
+                      if let Some(fit) = state.move_auto_fit.as_mut() {
+                        fit.active = true;
+                        fit.last_bounds = Some(bounds);
+                      }
+                      // The gesture keeps reporting mouse-down canvas units; only
+                      // the displayed selection is renormalised into the grown
+                      // canvas, matching the layers the managers fit into it.
+                      selection.x = (selection.x - bounds.x) / bounds.width;
+                      selection.y = (selection.y - bounds.y) / bounds.height;
+                      selection.width /= bounds.width;
+                      selection.height /= bounds.height;
+                      apply_workspace_transform(inner, &mut state, true);
+                    }
                   }
                 } else if gesture.operation == SelectionGestureOperation::CropMove {
                   clear_selection_snap_guides(&mut state);
@@ -1942,6 +2156,13 @@ fn handle_editor_input(input: editor::Input) {
             // restore a remembered one, and record it as the transform that
             // belongs to that size.
             state.frame_resize_committed = true;
+          } else if gesture.operation == SelectionGestureOperation::Move {
+            // Mouse-up with Alt still held commits the grown canvas the same
+            // way; a plain move never took the geometry over.
+            if state.frame_resize.take().is_some() {
+              state.frame_resize_committed = true;
+            }
+            state.move_auto_fit = None;
           }
           ended = Some(gesture);
         } else {
@@ -1963,7 +2184,12 @@ fn handle_editor_input(input: editor::Input) {
       if let Ok(mut state) = inner.state.lock() {
         if let Some(ActiveGesture::Selection(gesture)) = state.gesture.take() {
           state.selection = Some(gesture.selection_start);
-          if gesture.operation == SelectionGestureOperation::FrameResize {
+          state.move_auto_fit = None;
+          // An auto-fit Move owns the workspace exactly like a Frame resize
+          // until it commits, and is unwound the same way.
+          if gesture.operation == SelectionGestureOperation::FrameResize
+            || state.frame_resize.is_some()
+          {
             // Restore the whole workspace the drag re-flowed and rebased, not
             // just the pane under the pointer.
             if let Some(start) = state.frame_resize.take() {
@@ -2218,6 +2444,7 @@ impl RecordingPreviewSurface {
             editor_active: false,
             frame_resize: None,
             frame_resize_committed: false,
+            move_auto_fit: None,
             gesture: None,
             last_pointer: (0.0, 0.0),
             panes: Vec::new(),
@@ -2308,6 +2535,7 @@ impl RecordingPreviewSurface {
       state.editor_active = true;
       state.frame_resize = None;
       state.frame_resize_committed = false;
+      state.move_auto_fit = None;
       state.workspace_transform = WorkspaceTransform::default();
       state.workspace_natural_size = None;
       state.workspace_transforms.clear();
@@ -2444,7 +2672,7 @@ impl RecordingPreviewSurface {
     let Ok(mut state) = self.inner.state.lock() else {
       return;
     };
-    self.layout_pane(&mut state, index, rect, defer_resize, false);
+    self.layout_pane(&mut state, index, rect, defer_resize);
   }
 
   fn layout_pane(
@@ -2453,7 +2681,6 @@ impl RecordingPreviewSurface {
     index: u32,
     rect: PreviewSurfaceRect,
     defer_resize: bool,
-    workspace: bool,
   ) {
     let index = index as usize;
     if state.panes.len() <= index {
@@ -2471,11 +2698,14 @@ impl RecordingPreviewSurface {
     let scale = state.scale;
     let viewport = state.viewport;
     let transform = state.workspace_transform;
-    // A live Frame resize owns the workspace geometry: the DOM rect still
-    // describes the canvas the drag started from, so adopting it would
-    // stretch the freshly composed canvas back into the old box until
-    // mouse-up. The native re-flow already placed every pane.
-    let owns_geometry = workspace && state.frame_resize.is_some();
+    // A live Frame resize or auto-fit Move owns the workspace geometry: the
+    // DOM rect still describes the canvas the drag started from (or the one
+    // React last heard about, a layout behind), so adopting it would stretch
+    // the freshly composed canvas back into that box until the next native
+    // sample - the screenshot path jittered between the two rects on every
+    // event. The native re-flow already placed every pane, on the recording
+    // workspace and the per-pane screenshot layout alike.
+    let owns_geometry = state.frame_resize.is_some();
     let Some(pane) = state.panes[index].as_mut() else {
       return;
     };
@@ -2530,7 +2760,7 @@ impl RecordingPreviewSurface {
         state.workspace_natural_size = Some(natural_size);
       }
       for (index, rect) in panes {
-        self.layout_pane(&mut state, *index, *rect, defer_draw, true);
+        self.layout_pane(&mut state, *index, *rect, defer_draw);
       }
     }
     if let Some(zoom) = restored_zoom {
@@ -3207,6 +3437,7 @@ impl RecordingPreviewSurface {
       // of the pane geometry behind it.
       state.frame_resize = None;
       state.frame_resize_committed = false;
+      state.move_auto_fit = None;
       self.inner.editor.set_active(false);
       draw_selection(&self.inner, &state);
       let _ = unsafe { self.inner.gpu.composition.Commit() };
