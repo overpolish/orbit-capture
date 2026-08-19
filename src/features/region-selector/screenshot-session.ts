@@ -19,7 +19,8 @@ import { captureStill } from "../screenshots/api";
  * in region-edit mode to handing the still to the export window.
  *
  * The session touches nothing the user chose: the recording mode, source and
- * region are all left exactly as they were found.
+ * region are all left exactly as they were found. It starts with no region at
+ * all - the overlay opens empty and the user draws the one shot's region.
  */
 export const beginScreenshotCapture = async () => {
   const { selectedMonitor, setScreenshotCapture, setSelectedMonitor } =

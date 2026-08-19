@@ -125,16 +125,18 @@ impl PreviewManager {
     let (Some(surface), Some(output)) = (self.surface.as_ref(), self.output.as_ref()) else {
       return Ok(());
     };
-    Self::present_snapshot(surface, output, &self.sources)
+    Self::present_snapshot(surface, output, &self.sources).map(|_| ())
   }
 
+  /// Stages the current sources on the native workspace. `Ok(false)` means the
+  /// pane was not there to stage them on yet (see `present_once_pane_exists`).
   fn present_snapshot(
     surface: &RecordingPreviewSurface,
     output: &ScreenshotWorkspaceOutputSettings,
     sources: &[(u64, Arc<CapturedImage>)],
-  ) -> Result<(), String> {
+  ) -> Result<bool, String> {
     if output.canvas.width < 64 || output.canvas.height < 64 {
-      return Ok(());
+      return Ok(true);
     }
     #[cfg(target_os = "macos")]
     {
@@ -151,9 +153,10 @@ impl PreviewManager {
         })
         .collect::<Vec<_>>();
       if layers.is_empty() {
-        return Ok(());
+        return Ok(true);
       }
-      surface.present_screenshot_workspace(&layers)?;
+      let staged = surface.present_screenshot_workspace(&layers)?;
+      return Ok(staged);
     }
     #[cfg(not(target_os = "macos"))]
     for (index, item_output) in output.items.iter().enumerate() {
@@ -169,7 +172,8 @@ impl PreviewManager {
         index > 0,
       )?;
     }
-    Ok(())
+    #[cfg(not(target_os = "macos"))]
+    Ok(true)
   }
 
   fn present_batch(&self) -> Result<(), String> {
@@ -177,6 +181,40 @@ impl PreviewManager {
     let result = self.present();
     drop(batch);
     result
+  }
+
+  /// Presents from the main thread once the native pane exists.
+  ///
+  /// The async layout and source-refresh commands queue the pane's creation on
+  /// the main thread but stage their present straight away from the worker, so
+  /// the first present of a session (and a refresh racing it) can find no pane
+  /// and be dropped - nothing draws until the user's next interaction. Each
+  /// attempt here is a separate main-thread turn, so the queued layout blocks
+  /// run in between; attempts stop once the present lands or the session ends.
+  fn present_once_pane_exists(app: &AppHandle, session_id: u64, attempt: u32) {
+    const ATTEMPT_LIMIT: u32 = 30;
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+      let presentation = {
+        let state = handle.state::<ScreenshotPreviewState>();
+        let Ok(manager) = state.0.lock() else { return };
+        if manager.require_session(session_id).is_err() {
+          return;
+        }
+        (
+          manager.surface.clone(),
+          manager.output.clone(),
+          manager.sources.clone(),
+        )
+      };
+      let (Some(surface), Some(output), sources) = presentation else {
+        return;
+      };
+      let staged = Self::present_snapshot(&surface, &output, &sources).unwrap_or(true);
+      if !staged && attempt + 1 < ATTEMPT_LIMIT {
+        Self::present_once_pane_exists(&handle, session_id, attempt + 1);
+      }
+    });
   }
 
   fn handle_selection_gesture(
@@ -645,8 +683,11 @@ pub async fn refresh_screenshot_preview_sources(
   };
   if let Some((Some(surface), Some(output), sources)) = presentation {
     let batch = surface.present_batch();
-    PreviewManager::present_snapshot(&surface, &output, &sources)?;
+    let staged = PreviewManager::present_snapshot(&surface, &output, &sources)?;
     drop(batch);
+    if !staged {
+      PreviewManager::present_once_pane_exists(&app, session_id, 0);
+    }
   }
   Ok(())
 }
@@ -656,6 +697,7 @@ pub async fn refresh_screenshot_preview_sources(
 // deliver the webview's pointer input.
 #[tauri::command]
 pub async fn layout_screenshot_preview_surface(
+  app: AppHandle,
   state: tauri::State<'_, ScreenshotPreviewState>,
   backdrop: Option<[f64; 4]>,
   interaction_output: ScreenshotWorkspaceOutputSettings,
@@ -820,7 +862,10 @@ pub async fn layout_screenshot_preview_surface(
       (manager.output.clone(), manager.sources.clone())
     };
     if let (Some(output), sources) = presentation {
-      PreviewManager::present_snapshot(&surface, &output, &sources)?;
+      let staged = PreviewManager::present_snapshot(&surface, &output, &sources)?;
+      if !staged {
+        PreviewManager::present_once_pane_exists(&app, session_id, 0);
+      }
     }
   }
   drop(batch);

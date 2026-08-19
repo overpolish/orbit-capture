@@ -41,6 +41,26 @@ export const parseRatioFromId = (
   return { ratioHeight: b, ratioWidth: a };
 };
 
+/**
+ * Whether dimensions already sit on a ratio, bar whole-pixel rounding.
+ *
+ * Resizing or drawing at a locked ratio lands on whole pixels every frame,
+ * which reduces to a slightly different ratio (16:9 becomes 1000:563) and
+ * would feed that drift back into the next frame.
+ */
+export const matchesRatio = (
+  width: number,
+  height: number,
+  ratio: AspectRatioParts,
+) => {
+  const { ratioHeight, ratioWidth } = ratio;
+  if (ratioWidth <= 0 || ratioHeight <= 0) return false;
+  return (
+    Math.abs(height - (width * ratioHeight) / ratioWidth) <= 1 ||
+    Math.abs(width - (height * ratioWidth) / ratioHeight) <= 1
+  );
+};
+
 export const dimensionsAtRatio = (
   value: number,
   editingDimension: "height" | "width",

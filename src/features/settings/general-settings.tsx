@@ -132,6 +132,19 @@ export function GeneralSettingsPanel({
         </div>
       </SettingRow>
       <SettingRow
+        description="Take the screenshot as soon as you draw a region, without pressing Capture."
+        label="Capture screenshot on draw"
+      >
+        <Checkbox
+          isDisabled={isSaving}
+          isSelected={settings.captureScreenshotOnDraw}
+          onChange={(captureScreenshotOnDraw) => {
+            update({ captureScreenshotOnDraw });
+          }}
+          size="sm"
+        />
+      </SettingRow>
+      <SettingRow
         description="Show the containing folder after a successful export."
         label="Open location after export"
       >

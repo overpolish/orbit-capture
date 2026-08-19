@@ -15,6 +15,7 @@ const SETTINGS_CHANGED_EVENT: &str = "settings://changed";
 pub struct GeneralSettings {
   pub recording_directory: Option<PathBuf>,
   pub screenshot_directory: Option<PathBuf>,
+  pub capture_screenshot_on_draw: bool,
   pub open_location_after_export: bool,
   pub record_screenwide_windows: bool,
   pub show_recording_confidence_checks: bool,
@@ -28,6 +29,7 @@ impl Default for GeneralSettings {
     Self {
       recording_directory: None,
       screenshot_directory: None,
+      capture_screenshot_on_draw: false,
       open_location_after_export: false,
       record_screenwide_windows: false,
       show_recording_confidence_checks: true,

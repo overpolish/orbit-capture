@@ -14,6 +14,7 @@ import {
   AspectRatioParts,
   closestDimensionsAtRatio,
   dimensionsAtRatio,
+  matchesRatio,
   parseRatioFromId,
   reduceToRatio,
 } from "./aspect-ratio-math";
@@ -118,6 +119,12 @@ export const AspectRatio = ({
     )
       return;
 
+    // Whole-pixel dimensions rarely land exactly on the locked ratio, so a
+    // gesture that honours it would still redefine it a little every frame.
+    // Dimensions already on the ratio leave it as it is.
+    const locked = lockedRatioRef.current;
+    if (locked && matchesRatio(widthValue, heightValue, locked)) return;
+
     // Controlled dimensions can begin with temporary placeholder values while
     // their artifact loads, or change through reset/undo. Treat those external
     // values as the ratio to preserve without letting our own linked edits
@@ -126,14 +133,20 @@ export const AspectRatio = ({
   }, [heightValue, linked, widthValue]);
 
   useEffect(() => {
+    if (!linked) {
+      lockedRatioRef.current = undefined;
+      return;
+    }
+
     const dimensions = dimensionsRef.current;
-    if (linked && dimensions.width > 0 && dimensions.height > 0) {
+    // Empty dimensions are not a ratio to keep: linking is often turned on by
+    // a preset chosen before anything has been drawn, and the ratio that
+    // preset just locked is the one to draw at.
+    if (dimensions.width > 0 && dimensions.height > 0) {
       lockedRatioRef.current = reduceToRatio(
         dimensions.width,
         dimensions.height,
       );
-    } else {
-      lockedRatioRef.current = undefined;
     }
   }, [linked]);
 

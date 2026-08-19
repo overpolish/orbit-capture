@@ -15,7 +15,6 @@ import { cn } from "../../lib/styling";
 import {
   hideRegionSelector,
   setRecordingControlsOpacity,
-  setRegionSelectorOpacity,
   setRegionSelectorPassthrough,
   showRegionSelector,
   takeMonitorScreenshot,
@@ -23,10 +22,18 @@ import {
 import { useRecordingSourceStore } from "../recording-sources/store";
 import { Region } from "../recording-sources/types";
 import { ShortcutAction } from "../settings/types";
+import { useGeneralSettings } from "../settings/use-general-settings";
 
 import { Magnifier } from "./magnifier";
 import { RegionDrawingSurface } from "./region-drawing-surface";
-import { fitRegion, wholePixel, wholePixelSize } from "./region-geometry";
+import {
+  EMPTY_REGION,
+  fitRegion,
+  hasRegion,
+  snapRegion,
+  wholePixel,
+  wholePixelSize,
+} from "./region-geometry";
 import { HANDLE_CLASSES, HANDLE_STYLES } from "./resize-handles";
 import {
   beginScreenshotCapture,
@@ -34,8 +41,12 @@ import {
   endScreenshotCapture,
 } from "./screenshot-session";
 import { ResizeDirection } from "./types";
+import { useKeyHeld } from "./use-key-held";
 
 const SHORTCUT_ACTION_EVENT = "global-shortcut://action";
+// Holding this ignores the linked ratio, so the region can be reshaped
+// freely; the shape it ends up with becomes the new ratio.
+const FREE_ASPECT_KEY = "Shift";
 
 export function RegionSelectorWindow() {
   const {
@@ -48,12 +59,29 @@ export function RegionSelectorWindow() {
     setRegionEditing,
   } = useRecordingSourceStore((state) => state);
   const [draft, setDraft] = useState(region);
+  const [seededForSession, setSeededForSession] = useState(isScreenshotCapture);
+  if (seededForSession !== isScreenshotCapture) {
+    // Reseed while rendering rather than in an effect: the session flag and
+    // the editing flag flip together, so an effect would leave one painted
+    // frame of the marquee sitting on the recording region before the empty
+    // draft landed - a visible flash when the overlay was already on screen
+    // for region mode.
+    setSeededForSession(isScreenshotCapture);
+    setDraft(isScreenshotCapture ? EMPTY_REGION : region);
+  }
   const [activeAspect, setActiveAspect] = useState<number>();
   const [resizeDirection, setResizeDirection] = useState<ResizeDirection>();
   const [isDragging, setIsDragging] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [screenshot, setScreenshot] = useState<ArrayBuffer | null>(null);
+  const [freedThisResize, setFreedThisResize] = useState(false);
+  const freeAspect = useKeyHeld(FREE_ASPECT_KEY);
   const activeHandleRef = useRef<HTMLElement | null>(null);
+  // A capture ends the session, so whichever gesture starts one shuts the
+  // others out until the session is over.
+  const isCapturingRef = useRef(false);
+  const generalSettings = useGeneralSettings();
+  const captureOnDraw = generalSettings?.captureScreenshotOnDraw ?? false;
 
   // The overlay is the screenshot shortcut's own surface as well as the
   // recording region's, so it shows for either reason.
@@ -61,27 +89,18 @@ export function RegionSelectorWindow() {
     recordingMode === "region" || isScreenshotCapture ? selectedMonitor : null;
 
   const persistDraft = useCallback((): Region => {
-    const persisted = {
-      position: {
-        x: wholePixel(draft.position.x),
-        y: wholePixel(draft.position.y),
-      },
-      size: {
-        height: wholePixelSize(draft.size.height),
-        width: wholePixelSize(draft.size.width),
-      },
-    };
+    const persisted = snapRegion(draft);
     if (!isScreenshotCapture) setRegion(persisted);
 
     return persisted;
   }, [draft, isScreenshotCapture, setRegion]);
 
   useEffect(() => {
-    // Cross-window storage updates replace the persisted region. Toggling a
-    // screenshot session also restores that region before and after its local
-    // one-off draft is used.
+    // Cross-window storage updates replace the persisted region. A screenshot
+    // session starts from nothing instead: the region is drawn for that shot
+    // alone, and the persisted one comes back when the session ends.
     // eslint-disable-next-line @eslint-react/set-state-in-effect
-    setDraft(region);
+    setDraft(isScreenshotCapture ? EMPTY_REGION : region);
   }, [isScreenshotCapture, region]);
 
   useEffect(() => {
@@ -108,6 +127,8 @@ export function RegionSelectorWindow() {
   }, []);
 
   useEffect(() => {
+    // Each session gets its one capture back.
+    isCapturingRef.current = false;
     if (!isScreenshotCapture) return;
 
     const cancel = (event: KeyboardEvent) => {
@@ -133,9 +154,11 @@ export function RegionSelectorWindow() {
       activeMonitor.size.width,
       activeMonitor.size.height,
     );
-    // The overlay keeps a local draft so dragging does not write storage per frame.
+    // The overlay keeps a local draft so dragging does not write storage per
+    // frame. A screenshot session has no region until one is drawn, so its
+    // draft starts empty rather than from the recording region.
     // eslint-disable-next-line @eslint-react/set-state-in-effect
-    setDraft(fitted);
+    setDraft(isScreenshotCapture ? EMPTY_REGION : fitted);
     if (
       !isScreenshotCapture &&
       JSON.stringify(fitted) !== JSON.stringify(region)
@@ -154,20 +177,20 @@ export function RegionSelectorWindow() {
 
     const channel = new Channel<ArrayBuffer>();
     channel.onmessage = setScreenshot;
-    // Clear the prior monitor image before asynchronously capturing the next one.
+    // Clear the prior monitor image before asynchronously capturing the next
+    // one. The capture leaves Screenwide's windows out, so the overlay stays
+    // exactly as it is while the image is taken.
     // eslint-disable-next-line @eslint-react/set-state-in-effect
     setScreenshot(null);
-    void setRegionSelectorOpacity(0).then(async () => {
-      try {
-        await takeMonitorScreenshot(activeMonitor.id, channel);
-      } finally {
-        await setRegionSelectorOpacity(1);
-      }
-    });
+    void takeMonitorScreenshot(activeMonitor.id, channel);
   }, [activeMonitor, isRegionEditing]);
 
+  // Until a region is drawn there is nothing to move, resize, centre or
+  // capture, which a screenshot session starts out with.
+  const regionPlaced = hasRegion(draft);
+
   const center = () => {
-    if (!activeMonitor) return;
+    if (!activeMonitor || !regionPlaced) return;
     const centered = {
       ...draft,
       position: {
@@ -182,6 +205,8 @@ export function RegionSelectorWindow() {
   const finish = useCallback(() => {
     if (!activeMonitor) return;
     if (isScreenshotCapture) {
+      if (isCapturingRef.current) return;
+      isCapturingRef.current = true;
       captureScreenshotRegion(activeMonitor.id, persistDraft());
       return;
     }
@@ -189,8 +214,25 @@ export function RegionSelectorWindow() {
     setRegionEditing(false);
   }, [activeMonitor, isScreenshotCapture, persistDraft, setRegionEditing]);
 
-  const canFinish =
-    isRegionEditing && !resizeDirection && !isDragging && !isDrawing;
+  // The toolbar is up for the whole of an edit, region or not: an aspect
+  // preset picked before anything is drawn is the ratio to draw at. Instant
+  // capture has no step after the draw for it to serve, so it stays away.
+  const showActions =
+    isRegionEditing &&
+    !resizeDirection &&
+    !isDragging &&
+    !isDrawing &&
+    !(isScreenshotCapture && captureOnDraw);
+  const canFinish = showActions && regionPlaced;
+
+  useEffect(() => {
+    // re-resizable fixes the ratio when a resize starts, so handing it a
+    // number again mid-gesture snaps the region back to the shape it began
+    // with. Freeing once therefore has to hold until the gesture ends.
+    if (!freeAspect || !resizeDirection) return;
+    // eslint-disable-next-line @eslint-react/set-state-in-effect
+    setFreedThisResize(true);
+  }, [freeAspect, resizeDirection]);
 
   useEffect(() => {
     if (!canFinish) return;
@@ -210,7 +252,6 @@ export function RegionSelectorWindow() {
 
   if (!activeMonitor) return null;
 
-  const showActions = canFinish;
   const isMac = navigator.userAgent.includes("Mac");
 
   return (
@@ -242,13 +283,23 @@ export function RegionSelectorWindow() {
       </svg>
 
       <RegionDrawingSurface
+        aspect={freeAspect ? undefined : activeAspect}
         bounds={activeMonitor.size}
         current={draft}
         isEditing={isRegionEditing}
         onChange={setDraft}
         onDrawingChange={setIsDrawing}
         onFinish={(nextRegion) => {
-          if (!isScreenshotCapture) setRegion(nextRegion);
+          if (!isScreenshotCapture) {
+            setRegion(nextRegion);
+            return;
+          }
+          // Releasing the region is the whole gesture when instant capture is
+          // on: the region just drawn goes straight to the shot, since `draft`
+          // may not have re-rendered with it yet.
+          if (!captureOnDraw || isCapturingRef.current) return;
+          isCapturingRef.current = true;
+          captureScreenshotRegion(activeMonitor.id, snapRegion(nextRegion));
         }}
       />
 
@@ -256,10 +307,12 @@ export function RegionSelectorWindow() {
         bounds="parent"
         className={cn(
           "relative transition-opacity",
-          !isRegionEditing && "invisible opacity-0",
+          (!isRegionEditing || !regionPlaced) && "invisible opacity-0",
         )}
         dragGrid={[1, 1]}
-        lockAspectRatio={activeAspect ?? false}
+        lockAspectRatio={
+          freeAspect || freedThisResize ? false : (activeAspect ?? false)
+        }
         onDrag={(_event, data) => {
           setDraft((current) => ({
             ...current,
@@ -294,6 +347,7 @@ export function RegionSelectorWindow() {
           persistDraft();
           activeHandleRef.current = null;
           setResizeDirection(undefined);
+          setFreedThisResize(false);
         }}
         position={draft.position}
         resizeGrid={[1, 1]}
@@ -328,6 +382,7 @@ export function RegionSelectorWindow() {
           )}
         >
           <CheckOnClickButton
+            isDisabled={!regionPlaced}
             onPress={center}
             showFocus={false}
             size="sm"
@@ -340,12 +395,17 @@ export function RegionSelectorWindow() {
             height={draft.size.height}
             onRatioChange={setActiveAspect}
             setHeight={(height) => {
+              // A ratio picked before a region exists is only the shape to
+              // draw at; there is nothing to resize yet.
+              if (!regionPlaced) return;
               setDraft((current) => ({
                 ...current,
                 size: { ...current.size, height: wholePixelSize(height) },
               }));
             }}
             setWidth={(width) => {
+              // As above: no region, nothing to resize.
+              if (!regionPlaced) return;
               setDraft((current) => ({
                 ...current,
                 size: { ...current.size, width: wholePixelSize(width) },
@@ -353,7 +413,13 @@ export function RegionSelectorWindow() {
             }}
             width={draft.size.width}
           />
-          <Button color="success" onPress={finish} showFocus={false} size="sm">
+          <Button
+            color="success"
+            isDisabled={!regionPlaced}
+            onPress={finish}
+            showFocus={false}
+            size="sm"
+          >
             {isScreenshotCapture ? (
               <ImageDown aria-hidden size={18} />
             ) : (

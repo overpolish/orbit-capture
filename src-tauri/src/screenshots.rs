@@ -146,6 +146,17 @@ pub fn screenshot_directory(app: &AppHandle) -> Result<PathBuf, String> {
   Ok(directory)
 }
 
+/// A whole-monitor still with Screenwide's own windows left out, whatever the
+/// "Record Screenwide's windows" setting says: the region overlay reads this
+/// for its magnifier while it is itself on screen.
+#[cfg(target_os = "macos")]
+pub(crate) fn capture_monitor_without_own_windows_blocking(
+  monitor_id: u32,
+) -> Result<Vec<u8>, String> {
+  platform::capture_blocking(ScreenshotTarget::Screen { monitor_id }, false, false)
+    .map(|image| image.rgba)
+}
+
 pub(crate) async fn capture(
   app: &AppHandle,
   target: ScreenshotTarget,

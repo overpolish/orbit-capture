@@ -3264,7 +3264,10 @@ int screenwide_preview_surface_present_screenshot_workspace(
   ScreenwidePreviewSurface *surface = (__bridge ScreenwidePreviewSurface *)handle;
   if (!surface.workspaceMode || surface.views.count == 0) return 0;
   ScreenwidePreviewView *workspace = surface.views[0];
-  if (!workspace.active) return 1;
+  // The pane is made active by the layout block queued on the main thread; a
+  // present that arrives before it has run is reported as not staged so the
+  // caller can come back once the pane exists.
+  if (!workspace.active) return 0;
   ScreenwideWorkspacePlacement placement = workspace_placement(surface);
   ScreenwideWorkspaceLayer *placed = calloc(layer_count, sizeof(*placed));
   if (placed == NULL) return 0;

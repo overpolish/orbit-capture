@@ -14,6 +14,7 @@ type Drawing = {
 };
 
 export function RegionDrawingSurface({
+  aspect,
   bounds,
   current,
   isEditing,
@@ -27,6 +28,8 @@ export function RegionDrawingSurface({
   onChange: (region: Region) => void;
   onDrawingChange: (drawing: boolean) => void;
   onFinish: (region: Region) => void;
+  /** Width over height the drawn region is held to, when one is locked. */
+  aspect?: number;
 }) {
   const [drawing, setDrawing] = useState<Drawing>();
 
@@ -61,6 +64,7 @@ export function RegionDrawingSurface({
         if (!drawing) return;
         onChange(
           drawnRegion({
+            aspect,
             bounds,
             end: { x: event.clientX, y: event.clientY },
             start: drawing.start,
@@ -70,6 +74,7 @@ export function RegionDrawingSurface({
       onPointerUp={(event) => {
         if (!drawing) return;
         const next = drawnRegion({
+          aspect,
           bounds,
           end: { x: event.clientX, y: event.clientY },
           start: drawing.start,
