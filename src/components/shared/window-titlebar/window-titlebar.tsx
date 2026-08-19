@@ -57,7 +57,7 @@ export function WindowTitlebar({
         variant="ghost"
       >
         <Minus
-          className="transform-gpu text-muted transition-[color,transform] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg"
+          className="transform-gpu text-muted transition-[color,transform,scale] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg"
           size={18}
         />
       </Button>
@@ -71,7 +71,7 @@ export function WindowTitlebar({
         variant="ghost"
       >
         <X
-          className="transform-gpu text-muted transition-[color,transform] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg"
+          className="transform-gpu text-muted transition-[color,transform,scale] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg"
           size={18}
         />
       </Button>

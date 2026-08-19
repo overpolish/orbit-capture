@@ -51,6 +51,7 @@ type RecordingBarProps = {
   mode?: RecordingMode;
   onCameraLockedPress?: () => void;
   onCancel?: () => void;
+  onFocusPendingExport?: () => void;
   onFpsChange?: (fps: RecordingFps) => void;
   onInputChange?: (input: keyof RecordingInputs, selected: boolean) => void;
   onInteract?: () => void;
@@ -92,6 +93,7 @@ export function RecordingBar({
   mode: controlledMode,
   onCameraLockedPress,
   onCancel,
+  onFocusPendingExport,
   onFpsChange,
   onInputChange,
   onInteract,
@@ -148,9 +150,13 @@ export function RecordingBar({
     isScreenCapture && !isScreenshotLocked && !isRecordingActive;
   const canExportScreenshot = canCaptureStill && !isRecordingWorkspaceOpen;
   const canCopyScreenshot = canCaptureStill;
-  const canRecord =
+  // Capture that only a pending export stands in the way of: the button stays
+  // pressable and brings that export forward rather than going dead, which is
+  // the same escape hatch the global shortcuts take.
+  const isScreenshotBlockedByExport =
+    canCaptureStill && isRecordingWorkspaceOpen;
+  const canRecordIgnoringExport =
     !isRecordingActive &&
-    pendingExportKind === null &&
     canStartRecording({
       hasCameraWarning,
       hasMicrophoneWarning,
@@ -163,6 +169,9 @@ export function RecordingBar({
       isScreenLocked: Boolean(isLocked),
       mode,
     });
+  const canRecord = canRecordIgnoringExport && pendingExportKind === null;
+  const isRecordBlockedByExport =
+    canRecordIgnoringExport && pendingExportKind !== null;
 
   return (
     <main
@@ -193,7 +202,7 @@ export function RecordingBar({
         variant="ghost"
       >
         <div className="flex flex-col items-center gap-1">
-          <CircleX className="origin-center transform-gpu backface-hidden text-muted will-change-transform transition-[color,transform] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg" />
+          <CircleX className="origin-center transform-gpu backface-hidden text-muted will-change-transform transition-[color,transform,scale] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg" />
         </div>
       </Button>
 
@@ -295,10 +304,19 @@ export function RecordingBar({
           toggle each underneath them - need air between them. */}
       <div className="mr-3 flex flex-col items-center justify-center self-stretch">
         <Button
-          aria-label="Take screenshot"
+          aria-label={
+            isScreenshotBlockedByExport
+              ? "Show export window"
+              : "Take screenshot"
+          }
           className="group cursor-default p-1"
-          isDisabled={!canExportScreenshot || isCapturingStill}
-          onPress={onScreenshot}
+          isDisabled={
+            (!canExportScreenshot && !isScreenshotBlockedByExport) ||
+            isCapturingStill
+          }
+          onPress={
+            isScreenshotBlockedByExport ? onFocusPendingExport : onScreenshot
+          }
           showFocus={false}
           variant="ghost"
         >
@@ -307,8 +325,16 @@ export function RecordingBar({
           ) : (
             <ImageDown
               className={cn(
-                "origin-center transform-gpu backface-hidden will-change-transform transition-[color,transform] group-data-[hovered]:scale-110",
+                "origin-center transform-gpu backface-hidden will-change-transform transition-[color,transform,scale]",
+                !isScreenshotBlockedByExport &&
+                  "group-data-[hovered]:scale-110",
                 isCapturingStill && "animate-pulse text-muted",
+                // Reads as inactive, like an unselected mode, while a pending
+                // export redirects the press to that window instead. No hover
+                // scale here: the press moves focus away, so the bar never sees
+                // the pointer leave and the grown icon would stick.
+                isScreenshotBlockedByExport &&
+                  "text-muted group-data-[hovered]:text-content-fg/75",
                 exportScreenshotState === "failed" && "text-error",
               )}
               size={40}
@@ -330,7 +356,7 @@ export function RecordingBar({
           ) : (
             <ClipboardCopy
               className={cn(
-                "origin-center transform-gpu backface-hidden will-change-transform transition-[color,transform] group-data-[hovered]:scale-110",
+                "origin-center transform-gpu backface-hidden will-change-transform transition-[color,transform,scale] group-data-[hovered]:scale-110",
                 isCapturingStill && "animate-pulse text-muted",
                 clipboardScreenshotState === "failed" && "text-error",
               )}
@@ -351,15 +377,22 @@ export function RecordingBar({
             column at all. */}
         <div className="flex flex-col items-center justify-center self-stretch pr-2">
           <Button
-            aria-label="Start recording"
+            aria-label={
+              isRecordBlockedByExport ? "Show export window" : "Start recording"
+            }
             className="group cursor-default p-1"
-            isDisabled={!canRecord}
-            onPress={onRecord}
+            isDisabled={!canRecord && !isRecordBlockedByExport}
+            onPress={isRecordBlockedByExport ? onFocusPendingExport : onRecord}
             showFocus={false}
             variant="ghost"
           >
             <Circle
-              className="origin-center transform-gpu backface-hidden will-change-transform transition-transform group-data-[hovered]:scale-110"
+              className={cn(
+                "origin-center transform-gpu backface-hidden will-change-transform transition-[color,transform,scale]",
+                !isRecordBlockedByExport && "group-data-[hovered]:scale-110",
+                isRecordBlockedByExport &&
+                  "text-muted group-data-[hovered]:text-content-fg/75",
+              )}
               size={40}
             />
           </Button>

@@ -70,9 +70,7 @@ struct RecordingInputsSkippedPayload {
 /// source is never dropped: a camera recording without its camera must still
 /// fail loudly, and an audio recording keeps its sole input so the resolve
 /// error names what actually went wrong.
-pub(super) fn drop_unavailable_inputs(
-  options: &mut StartRecordingOptions,
-) -> Vec<&'static str> {
+pub(super) fn drop_unavailable_inputs(options: &mut StartRecordingOptions) -> Vec<&'static str> {
   let mut skipped = Vec::new();
   if let Some(microphone_id) = options.microphone_id.clone() {
     let sole_audio_source = options.mode == RecordingMode::Audio && !options.system_audio;

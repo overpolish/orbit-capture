@@ -21,3 +21,14 @@ type Story = StoryObj<typeof meta>;
 
 /* --------------------------------- Stories -------------------------------- */
 export const Default: Story = {};
+
+/** The check waits for the handler's promise, pulsing until it resolves. */
+export const Awaited: Story = {
+  args: {
+    children: "Await",
+    onPress: () =>
+      new Promise((resolve) => {
+        setTimeout(resolve, 1500);
+      }),
+  },
+};

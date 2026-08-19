@@ -3,7 +3,7 @@
 
 import { Check } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { ComponentProps, useState } from "react";
+import { ComponentProps, useEffect, useRef, useState } from "react";
 import { PressEvent } from "react-aria";
 import { VariantProps } from "tailwind-variants";
 
@@ -33,10 +33,27 @@ const checkOnClickButtonVariants = tv({
   },
 });
 
-type CheckOnClickButtonProps = ComponentProps<typeof Button> &
-  VariantProps<typeof checkOnClickButtonVariants>;
+type CheckOnClickButtonProps = Omit<ComponentProps<typeof Button>, "onPress"> &
+  VariantProps<typeof checkOnClickButtonVariants> & {
+    // Typed as `unknown` rather than `Promise<unknown> | void` so a plain
+    // void handler still fits; a returned promise switches the button to its
+    // awaited mode.
+    onPress?: (e: PressEvent) => unknown;
+  };
 
-/** Shows a check after pressing, has no concept of success/fail. */
+/**
+ * Shows a check after pressing, in one of two modes depending on what the
+ * `onPress` handler returns.
+ *
+ * - Returns `void`: optimistic. The check appears immediately on press and
+ *   holds for two seconds; success and failure look identical.
+ * - Returns a `Promise`: awaited. The button pulses while the promise is in
+ *   flight and only shows the check once it resolves. A rejection returns the
+ *   button to idle with no check — surfacing the error is the caller's job.
+ *
+ * The button is non-interactive while pending or checked, but is never marked
+ * `isDisabled` for that: the disabled styling desaturates the check itself.
+ */
 export const CheckOnClickButton = ({
   blur = "md",
   children,
@@ -44,26 +61,69 @@ export const CheckOnClickButton = ({
   onPress,
   ...props
 }: CheckOnClickButtonProps) => {
-  const [isClicked, setIsClicked] = useState(false);
+  const [status, setStatus] = useState<"checked" | "idle" | "pending">("idle");
+  const isClicked = status === "checked";
+
+  // A press token discards the tail of any press that has been superseded, and
+  // the mounted flag keeps a late promise from setting state on a dead tree.
+  const pressTokenRef = useRef(0);
+  const isMountedRef = useRef(false);
+  // Set inside the effect, not at declaration: StrictMode runs the cleanup
+  // and then re-mounts, and a flag only ever cleared would stay false.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const handlePress = (e: PressEvent) => {
-    onPress?.(e);
+    if (status !== "idle") return;
 
-    setIsClicked(true);
-    setTimeout(() => {
-      setIsClicked(false);
-    }, 2000);
+    const token = ++pressTokenRef.current;
+    const isCurrent = () =>
+      isMountedRef.current && pressTokenRef.current === token;
+    const showCheck = () => {
+      if (!isCurrent()) return;
+      setStatus("checked");
+      setTimeout(() => {
+        if (!isCurrent()) return;
+        setStatus("idle");
+      }, 2000);
+    };
+
+    const result = onPress?.(e);
+    if (result instanceof Promise) {
+      setStatus("pending");
+      void result.then(showCheck, () => {
+        if (!isCurrent()) return;
+        setStatus("idle");
+      });
+      return;
+    }
+
+    showCheck();
   };
   return (
     <Button
       {...props}
-      className={cn(className, "relative")}
-      // The caller's own disabled state has to survive, or a button that is
-      // meant to be unavailable stays pressable between checks.
-      isDisabled={Boolean(props.isDisabled) || isClicked}
+      // `relative` comes first so a caller positioning the button wins; an
+      // absolute button is still a containing block for the check overlay.
+      className={cn(
+        "relative",
+        className,
+        status !== "idle" && "pointer-events-none",
+      )}
       onPress={handlePress}
     >
-      {children}
+      <span
+        className={cn(
+          "inline-flex items-center gap-2",
+          status === "pending" && "animate-pulse",
+        )}
+      >
+        {children}
+      </span>
 
       <div className={checkOnClickButtonVariants({ blur, isClicked })}>
         <AnimatePresence>

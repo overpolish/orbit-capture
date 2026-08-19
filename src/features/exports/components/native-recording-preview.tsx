@@ -129,9 +129,6 @@ export function NativeRecordingPreview({
     useState<RecordingOutputSettings | null>(null);
   const [layerContextMenu, setLayerContextMenu] =
     useState<LayerContextMenuState<RecordingVideoTrackId> | null>(null);
-  const [copyState, setCopyState] = useState<"copying" | "done" | "idle">(
-    "idle",
-  );
   const [copyError, setCopyError] = useState<string | null>(null);
   const capabilities = usePreviewCapabilities();
   // Everything derived below feeds memoized children. A canvas-resize gesture
@@ -1259,26 +1256,19 @@ export function NativeRecordingPreview({
   };
   const getPositionMs = player.getPositionMs;
   const copyCurrentFrame = useCallback(() => {
-    setCopyState("copying");
     setCopyError(null);
-    void copyRecordingPreviewFrameToClipboard({
+    return copyRecordingPreviewFrameToClipboard({
       artifactId,
       bakeCamera: copyPayloadRef.current.bakeCamera,
       cameraOverlay: copyPayloadRef.current.cameraOverlay,
       cursorEffects: copyPayloadRef.current.cursorEffects,
       positionMs: getPositionMs(),
       recordingOutput: copyPayloadRef.current.recordingOutput,
-    })
-      .then(() => {
-        setCopyState("done");
-        window.setTimeout(() => {
-          setCopyState("idle");
-        }, 1_500);
-      })
-      .catch((cause: unknown) => {
-        setCopyState("idle");
-        setCopyError(cause instanceof Error ? cause.message : String(cause));
-      });
+    }).catch((cause: unknown) => {
+      setCopyError(cause instanceof Error ? cause.message : String(cause));
+      // Rethrown so the copy button knows the press failed and skips its check.
+      throw cause;
+    });
   }, [artifactId, getPositionMs]);
 
   return (
@@ -1452,7 +1442,6 @@ export function NativeRecordingPreview({
 
           {layout ? (
             <RecordingPlaybackControls
-              copyState={copyState}
               durationMs={totalDurationMs}
               isPlaying={player.isPlaying}
               onCopyCurrentFrame={copyCurrentFrame}

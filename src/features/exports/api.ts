@@ -556,6 +556,10 @@ export const cancelExport = async () => {
 
 export const cancelExportJob = () => invoke<boolean>("cancel_export_job");
 
+export const focusExportWindow = async () => {
+  await invoke<null>("focus_export_window");
+};
+
 export const browseExportDirectory = () =>
   invoke<string | null>("browse_export_directory");
 

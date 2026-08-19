@@ -77,6 +77,7 @@ pub fn run() {
       exports::commands::cancel_export,
       exports::commands::cancel_export_job,
       exports::commands::copy_export_to_clipboard,
+      exports::commands::focus_export_window,
       exports::preview::estimate_recording_export,
       exports::preview::get_export_preview,
       exports::preview::render_screenshot_output_preview,

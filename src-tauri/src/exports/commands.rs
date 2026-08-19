@@ -8,6 +8,16 @@ pub fn cancel_export(app: AppHandle) {
   discard(&app);
 }
 
+/// Brings the window holding the pending artifact to the front.
+///
+/// The recording bar keeps its capture buttons enabled while an export is
+/// waiting, so pressing one has to lead somewhere: the same focus the global
+/// shortcuts already fall back to.
+#[tauri::command]
+pub fn focus_export_window(app: AppHandle) {
+  super::workspace::focus_pending(&app);
+}
+
 /// Requests cancellation of the save currently processing, if there is one.
 ///
 /// The worker owns the FFmpeg child and performs the actual kill and wait. The

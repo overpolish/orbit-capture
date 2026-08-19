@@ -4,6 +4,7 @@
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 
+import { focusExportWindow } from "../../exports/api";
 import { selectArtifact, useExportStore } from "../../exports/store";
 import {
   openPermissionSettings,
@@ -360,6 +361,11 @@ export function RecordingBarWindow() {
       }}
       onCancel={() => {
         void hideRecordingUi();
+      }}
+      onFocusPendingExport={() => {
+        focusExportWindow().catch((error: unknown) => {
+          console.error("Could not focus the export window", error);
+        });
       }}
       onFpsChange={setFps}
       onInputChange={setInput}
