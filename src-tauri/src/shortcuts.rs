@@ -53,7 +53,7 @@ impl Default for ShortcutSettings {
         },
         ShortcutBinding {
           action: ShortcutAction::TakeScreenshot,
-          shortcut: None,
+          shortcut: Some("CommandOrControl+Shift+Digit8".to_owned()),
         },
         ShortcutBinding {
           action: ShortcutAction::RecognizeText,
@@ -334,18 +334,23 @@ mod tests {
   use super::*;
 
   #[test]
-  fn defaults_open_the_recording_bar_and_recognize_text() {
+  fn defaults_open_the_recording_bar_take_screenshots_and_recognize_text() {
     let settings = ShortcutSettings::default();
     let assigned = settings
       .bindings
       .iter()
       .filter(|binding| binding.shortcut.is_some())
       .collect::<Vec<_>>();
-    assert_eq!(assigned.len(), 2);
+    assert_eq!(assigned.len(), 3);
     assert_eq!(assigned[0].action, ShortcutAction::ToggleRecordingBar);
-    assert_eq!(assigned[1].action, ShortcutAction::RecognizeText);
+    assert_eq!(assigned[1].action, ShortcutAction::TakeScreenshot);
     assert_eq!(
       assigned[1].shortcut.as_deref(),
+      Some("CommandOrControl+Shift+Digit8")
+    );
+    assert_eq!(assigned[2].action, ShortcutAction::RecognizeText);
+    assert_eq!(
+      assigned[2].shortcut.as_deref(),
       Some("CommandOrControl+Shift+KeyT")
     );
   }
