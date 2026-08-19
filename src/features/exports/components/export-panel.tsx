@@ -4,6 +4,7 @@
 import { Button } from "../../../components/base/button/button";
 import { CircularProgressBar } from "../../../components/base/circular-progress-bar/circular-progress-bar";
 import { Overlay } from "../../../components/base/overlay/overlay";
+import { formatEta } from "../duration";
 import { defaultCameraOverlay } from "../recording-export-settings";
 import {
   RecordingOutputSettings,
@@ -45,6 +46,7 @@ type ExportPanelProps = {
   enabledVideoTracks?: RecordingVideoTrackId[];
   error?: string | null;
   estimatedSizeBytes?: number | null;
+  etaSeconds?: number | null;
   isCancelingSave?: boolean;
   isEstimatingSize?: boolean;
   isExportPreparationPending?: boolean;
@@ -124,6 +126,7 @@ export function ExportPanel({
   enabledVideoTracks = [],
   error,
   estimatedSizeBytes,
+  etaSeconds = null,
   fileStem,
   isCancelingSave = false,
   isEstimatingSize,
@@ -247,17 +250,24 @@ export function ExportPanel({
             strokeWidth={8}
             value={saveProgress ?? undefined}
           />
-          <span className="text-sm text-content-fg">
-            {isAudioExport
-              ? "Saving audio…"
-              : isRecording
-                ? savePhase === "camera"
-                  ? "Saving camera…"
-                  : savePhase === "finalizing"
-                    ? "Finalizing recording…"
-                    : "Saving recording…"
-                : "Saving screenshot…"}
-          </span>
+          <div className="flex flex-col items-center gap-0.5">
+            <span className="text-sm text-content-fg">
+              {isAudioExport
+                ? "Saving audio…"
+                : isRecording
+                  ? savePhase === "camera"
+                    ? "Saving camera…"
+                    : savePhase === "finalizing"
+                      ? "Finalizing recording…"
+                      : "Saving recording…"
+                  : "Saving screenshot…"}
+            </span>
+            {etaSeconds === null ? null : (
+              <span className="text-xs text-muted tabular-nums">
+                {formatEta(etaSeconds)}
+              </span>
+            )}
+          </div>
           <Button
             isDisabled={isCancelingSave}
             onPress={onCancelSave}

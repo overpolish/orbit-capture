@@ -5,14 +5,14 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use windows::core::{Interface, GUID, PCWSTR, PWSTR};
+use windows::core::PCWSTR;
 use windows::Win32::Graphics::Direct3D11::{
   ID3D11Device, ID3D11Resource, ID3D11Texture2D, D3D11_BIND_RENDER_TARGET,
   D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{
-  CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_MULTITHREADED,
+  CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED,
 };
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
@@ -240,9 +240,6 @@ impl Sink {
       config.fps,
     )?;
     win(unsafe { sink.SetInputMediaType(stream, &input, None) })?;
-    if let Some(description) = encoder_description(&sink, stream) {
-      eprintln!("windows recorder: H.264 encoder = {description}");
-    }
     win(unsafe { sink.BeginWriting() })?;
 
     Ok(Self {
@@ -336,25 +333,6 @@ fn encoder_config(gop_frames: u32) -> Result<IPropertyStore, String> {
 
 /// Best-effort identification of the H.264 transform the sink writer chose,
 /// so GOP behaviour can be tied to a vendor when a recording misbehaves.
-fn encoder_description(sink: &IMFSinkWriter, stream: u32) -> Option<String> {
-  let mut raw = std::ptr::null_mut();
-  unsafe { sink.GetServiceForStream(stream, &GUID::zeroed(), &IMFTransform::IID, &mut raw) }.ok()?;
-  let transform = unsafe { IMFTransform::from_raw(raw) };
-  let attributes = unsafe { transform.GetAttributes() }.ok()?;
-  let mut url = PWSTR::null();
-  let mut length = 0;
-  let hardware = unsafe {
-    attributes.GetAllocatedString(&MFT_ENUM_HARDWARE_URL_Attribute, &mut url, &mut length)
-  }
-  .ok()
-  .and_then(|()| {
-    let text = unsafe { url.to_string() }.ok();
-    unsafe { CoTaskMemFree(Some(url.as_ptr().cast())) };
-    text
-  });
-  Some(hardware.unwrap_or_else(|| "software or unnamed transform".to_owned()))
-}
-
 fn video_type(
   subtype: windows::core::GUID,
   width: u32,

@@ -16,14 +16,12 @@ import logoUrl from "../../../assets/screenwide-mark.svg";
 import { Button } from "../../../components/base/button/button";
 import { inputFieldVariants } from "../../../components/base/input-fields/input-field";
 import { ConfirmActionButton } from "../../../components/shared/confirm-action-button/confirm-action-button";
+import { truncateDirectoryPath } from "../directory-path";
 import { ExportArtifact } from "../types";
 import { useExportWindowShortcuts } from "../use-export-window-shortcuts";
 
-const directoryName = (directory: string | null) => {
-  if (!directory) return "Choose folder";
-  const parts = directory.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? directory;
-};
+const directoryLabel = (directory: string | null) =>
+  directory ? truncateDirectoryPath(directory) : "Choose folder";
 
 export function ExportTitlebar({
   artifact,
@@ -118,7 +116,7 @@ export function ExportTitlebar({
         variant="soft"
       >
         <Folder className="shrink-0" size={15} />
-        <span className="truncate">{directoryName(directory)}</span>
+        <span className="truncate">{directoryLabel(directory)}</span>
       </Button>
 
       <div className="min-w-4 grow" data-tauri-drag-region />

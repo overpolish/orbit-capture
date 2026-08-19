@@ -520,6 +520,7 @@ export function ExportWindow() {
         enabledVideoTracks={enabledVideoTracks}
         error={error}
         estimatedSizeBytes={estimatedSizeBytes}
+        etaSeconds={saveProgress.etaSeconds}
         fileStem={fileStem}
         isCancelingSave={isCancelingSave}
         isEstimatingSize={isEstimatingSize}

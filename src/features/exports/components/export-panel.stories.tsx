@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { type Meta, type StoryObj } from "@storybook/react-vite";
-import { ComponentProps, useState } from "react";
-
 import {
-  defaultScreenshotOutput,
-  resetScreenshotLayout,
-  ScreenshotOutputSettings,
-} from "../screenshot-output";
+  type Decorator,
+  type Meta,
+  type StoryObj,
+} from "@storybook/react-vite";
+
+import { defaultScreenshotOutput } from "../screenshot-output";
 import { ExportArtifact } from "../types";
 
 import { ExportPanel } from "./export-panel";
@@ -28,16 +27,6 @@ const screenshot: ExportArtifact = {
   width: 3456,
 };
 const screenshotOutput = defaultScreenshotOutput(3456, 2234);
-const customScreenshotOutput = resetScreenshotLayout(
-  {
-    ...screenshotOutput,
-    backgroundColor: "#172554",
-    height: 1080,
-    radiusPercent: 8,
-    width: 1920,
-  },
-  screenshot,
-);
 
 const recording: Extract<ExportArtifact, { kind: "recording" }> = {
   audioTracks: [
@@ -118,6 +107,35 @@ const audioPreviewLayout = {
   width: 0,
 };
 
+/**
+ * Storybook-only. The native Metal compositor that paints the recording
+ * preview cannot run outside the desktop app, so the video-preview area is
+ * blank in these stories. This decorator marks recording stories so a CSS rule
+ * in `.storybook/styles.css` can label that empty region with a placeholder.
+ *
+ * Scoping is done here, in the decorator, rather than with a bare
+ * `[data-recording-preview-viewport]` selector, because outside the desktop app
+ * `usePreviewCapabilities()` reports no native surface, so the screenshot
+ * preview falls back to the very same `data-recording-preview-viewport`
+ * container (rendering its `<img>` there). A bare selector would therefore also
+ * cover the screenshot stories' image preview, which we do not want.
+ *
+ * Screenshot stories (`artifact.kind === "screenshot"`) and `NothingPending`
+ * (`artifact` is `null`) are left unwrapped. The audio recording story is
+ * wrapped but renders an audio-waveform visualizer with no viewport element, so
+ * the placeholder never appears there — which is correct, since that area is
+ * not a blank GPU surface.
+ */
+const withGpuPreviewPlaceholder: Decorator = (Story, context) => {
+  const artifact = context.args.artifact as ExportArtifact | null | undefined;
+  if (artifact?.kind !== "recording") return <Story />;
+  return (
+    <div className="sb-gpu-preview" style={{ display: "contents" }}>
+      <Story />
+    </div>
+  );
+};
+
 const meta = {
   args: {
     artifact: screenshot,
@@ -127,6 +145,7 @@ const meta = {
     screenshotOutput: { ...screenshotOutput, items: [] },
   },
   component: ExportPanel,
+  decorators: [withGpuPreviewPlaceholder],
   parameters: {
     layout: "fullscreen",
   },
@@ -135,65 +154,6 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
-
-export const Default: Story = {};
-
-function RoundedScreenshotPanel(args: ComponentProps<typeof ExportPanel>) {
-  const [radius, setRadius] = useState(args.screenshotRadiusPercent ?? 12);
-  return (
-    <ExportPanel
-      {...args}
-      onScreenshotRadiusChange={setRadius}
-      screenshotRadiusPercent={radius}
-    />
-  );
-}
-
-export const RoundedScreenshot: Story = {
-  args: { previewUrl: screenshotPreview, screenshotRadiusPercent: 12 },
-  render: (args) => <RoundedScreenshotPanel {...args} />,
-};
-
-function CustomScreenshotPanel(args: ComponentProps<typeof ExportPanel>) {
-  const [settings, setSettings] = useState<ScreenshotOutputSettings>(
-    customScreenshotOutput,
-  );
-  return (
-    <ExportPanel
-      {...args}
-      onScreenshotBackgroundRadiusChange={(backgroundRadiusPercent) => {
-        setSettings((current) => ({ ...current, backgroundRadiusPercent }));
-      }}
-      onScreenshotOutputChange={setSettings}
-      screenshotOutput={{ ...settings, items: [] }}
-      screenshotRadiusPercent={settings.radiusPercent}
-    />
-  );
-}
-
-export const CustomScreenshotCanvas: Story = {
-  args: { previewUrl: screenshotPreview },
-  render: (args) => <CustomScreenshotPanel {...args} />,
-};
-
-export const Saving: Story = {
-  args: { isSaving: true },
-};
-
-export const EmptyName: Story = {
-  args: { fileStem: "" },
-};
-
-export const WithError: Story = {
-  args: { error: "That file name cannot be used" },
-};
-
-export const LongDestination: Story = {
-  args: {
-    directory:
-      "/Users/dom/Library/Mobile Documents/com~apple~CloudDocs/Screenshots/2026/August",
-  },
-};
 
 export const NothingPending: Story = {
   args: { artifact: null, fileStem: "" },
@@ -230,6 +190,50 @@ export const Recording: Story = {
     ],
     resolutionScalePercent: 150,
   },
+  render: (args) => <RecordingStoryPanel {...args} />,
+};
+
+export const Saving: Story = {
+  args: {
+    ...Recording.args,
+    isSaving: true,
+  },
+  render: (args) => <RecordingStoryPanel {...args} />,
+};
+
+export const EmptyName: Story = {
+  args: {
+    ...Recording.args,
+    fileStem: "",
+  },
+  render: (args) => <RecordingStoryPanel {...args} />,
+};
+
+export const WithError: Story = {
+  args: {
+    ...Recording.args,
+    error: "That file name cannot be used",
+  },
+  render: (args) => <RecordingStoryPanel {...args} />,
+};
+
+export const LongDestinationMac: Story = {
+  args: {
+    ...Recording.args,
+    directory:
+      "/Users/dom/Library/Mobile Documents/com~apple~CloudDocs/Screenshots/2026/August",
+  },
+  name: "Long Destination (Mac)",
+  render: (args) => <RecordingStoryPanel {...args} />,
+};
+
+export const LongDestinationWindows: Story = {
+  args: {
+    ...Recording.args,
+    directory:
+      "C:\\Users\\dom\\OneDrive\\Documents\\Screen Recordings\\2026\\August",
+  },
+  name: "Long Destination (Windows)",
   render: (args) => <RecordingStoryPanel {...args} />,
 };
 
@@ -314,27 +318,10 @@ export const RecordingWithCamera: Story = {
   render: (args) => <RecordingStoryPanel {...args} />,
 };
 
-export const RecordingWithBakedCamera: Story = {
-  args: {
-    ...RecordingWithCamera.args,
-    bakeCamera: true,
-    cameraOverlay: {
-      cameraWidthPercent: 25,
-      cameraXPercent: 85,
-      cameraYPercent: 18,
-      frameHeightPercent: 14.0625,
-      frameWidthPercent: 25,
-      frameXPercent: 72,
-      frameYPercent: 4,
-      radiusPercent: 8,
-    },
-  },
-  render: (args) => <RecordingStoryPanel {...args} />,
-};
-
 export const SavingRecording: Story = {
   args: {
     ...Recording.args,
+    etaSeconds: 128,
     isSaving: true,
     saveProgress: 58,
   },
@@ -343,6 +330,7 @@ export const SavingRecording: Story = {
 export const SavingCamera: Story = {
   args: {
     ...RecordingWithCamera.args,
+    etaSeconds: 45,
     isSaving: true,
     savePhase: "camera",
     saveProgress: 68,
@@ -359,9 +347,8 @@ export const CancelingRecording: Story = {
 export const EstimatingCompressedSize: Story = {
   args: {
     ...Recording.args,
-    estimatedSizeBytes: null,
-    isEstimatingSize: true,
-    isExportPreparationPending: true,
+    estimatedSizeBytes: 92_800_000,
+    isEstimatingSize: false,
   },
 };
 
@@ -371,13 +358,6 @@ export const RecordingWithoutCompressionSupport: Story = {
     artifact: { ...recording, canCompress: false },
     compression: 0,
     estimatedSizeBytes: recording.originalSizeBytes,
-  },
-};
-
-export const PreparingRecordingPreview: Story = {
-  args: {
-    ...Recording.args,
-    isPreparingRecordingPreview: true,
   },
 };
 
@@ -394,5 +374,6 @@ export const RecoveredRecording: Story = {
     },
     enabledVideoTracks: ["primary"],
     fileStem: recording.suggestedFileStem,
+    recordingPreviewLayout: screenPreviewLayout,
   },
 };
