@@ -41,11 +41,12 @@ pub use recovery::initialize;
 use recovery::orphan_plan;
 use save::{delivered_extension, scale_percent};
 use validation::{validate_camera_resolution_scale, validate_primary_resolution_scale};
+#[cfg(target_os = "macos")]
+pub use workspace::has_pending_kind as has_pending_workspace_kind;
 pub use workspace::{
   focus_if_pending as focus_pending_workspace,
   focus_if_screenshot_blocked as focus_if_screenshot_workspace_blocked,
-  has_pending as has_pending_workspace, has_pending_kind as has_pending_workspace_kind,
-  release_recording as release_recording_workspace,
+  has_pending as has_pending_workspace, release_recording as release_recording_workspace,
   release_screenshot as release_screenshot_workspace,
   reserve_recording as reserve_recording_workspace,
   reserve_screenshot as reserve_screenshot_workspace,
