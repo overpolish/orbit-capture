@@ -159,6 +159,10 @@ typedef struct {
 @property(nonatomic) double workspaceResizeNaturalWidth;
 @property(nonatomic) double workspaceResizeNaturalHeight;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSValue *> *workspaceTransforms;
+/// Set when a native gesture has just committed a new canvas size whose
+/// zoom/pan are already right on screen. The layout that echoes that size
+/// back must not treat it as an undo/redo jump and recentre the workspace.
+@property(nonatomic) BOOL keepTransformForCommittedNaturalSize;
 @property(nonatomic) BOOL workspaceDrawInFlight;
 @property(nonatomic) BOOL workspaceDrawPending;
 @property(nonatomic) BOOL workspaceLayoutAwaitsPresent;
@@ -191,6 +195,19 @@ typedef struct {
 @property(nonatomic) BOOL selectionVisible;
 @property(nonatomic) ScreenwidePreviewSelection selection;
 @property(nonatomic, strong) CAMetalLayer *selectionLayer;
+/// The rasterised "W × H" readout drawn under the selection OSC, plus the
+/// inputs it was built from. Rebuilding the bitmap on every gesture sample
+/// would burn a CoreGraphics text layout per pointer event, so the texture is
+/// reused until the text, the backing scale or the appearance changes.
+@property(nonatomic, strong) id<MTLTexture> selectionLabelTexture;
+/// Bound whenever there is no label. The fragment function declares a texture,
+/// and Metal validation requires every declared texture slot to be filled even
+/// when no vertex in the draw samples it.
+@property(nonatomic, strong) id<MTLTexture> selectionLabelPlaceholder;
+@property(nonatomic, strong) NSString *selectionLabelText;
+@property(nonatomic) CGFloat selectionLabelScale;
+@property(nonatomic) uint32_t selectionLabelLightMode;
+@property(nonatomic) NSSize selectionLabelSize;
 @property(nonatomic) uint64_t selectionDrawRevision;
 @property(nonatomic) BOOL selectionDrawInFlight;
 @property(nonatomic) BOOL selectionDrawPending;
@@ -303,6 +320,14 @@ static void remember_workspace_transform(ScreenwidePreviewSurface *surface,
 
 static void restore_workspace_transform(ScreenwidePreviewSurface *surface,
                                         double width, double height) {
+  // A size the user just produced by dragging is not a history jump: the
+  // auto-fit samples rebased zoom/pan so the grown canvas already sits where
+  // the pointer left it, and React's integer canvas can differ from the
+  // native float estimate by a pixel, which must not recentre the view.
+  if (surface.keepTransformForCommittedNaturalSize) {
+    surface.keepTransformForCommittedNaturalSize = NO;
+    return;
+  }
   NSValue *value = surface.workspaceTransforms[workspace_size_key(width, height)];
   if (value == nil) return;
   ScreenwideWorkspaceTransform transform;
@@ -639,6 +664,132 @@ static void rebase_recording_workspace_fit(
 static const uint32_t ScreenwideAutoFitMoveEdge = 1u << 17;
 static const uint32_t ScreenwideAutoFitCommitEdge = 1u << 18;
 
+/// Size of the current selection in OUTPUT pixels, or NO when the workspace
+/// has no pixel scale to convert with.
+///
+/// `workspaceNaturalWidth/Height` is the canvas size in output pixels and the
+/// pane rects are pre-zoom points, so pixels-per-point is simply natural over
+/// the union of the ACTIVE pane rects. That relation holds in every gesture
+/// path by construction: the screenshot workspace has a single pane whose rect
+/// is the canvas (and `update_workspace_frame_resize` /
+/// `update_workspace_auto_fit_move` keep natural live during a drag), and the
+/// recording workspace's `rebase_recording_workspace_fit` scales natural by
+/// exactly the union-bounds ratio it rebases the pane rects with.
+static BOOL selection_pixel_size(ScreenwidePreviewSurface *surface,
+                                 double *width, double *height) {
+  if (!surface.workspaceMode || !surface.hasSelection) return NO;
+  if (surface.workspaceNaturalWidth <= 0.0 ||
+      surface.workspaceNaturalHeight <= 0.0) return NO;
+  if (surface.selection.pane_index >= surface.editorBaseRects.count) return NO;
+  NSRect bounds = NSZeroRect;
+  BOOL hasBounds = NO;
+  for (NSNumber *value in surface.workspaceActivePaneIndices) {
+    NSUInteger index = value.unsignedIntegerValue;
+    if (index >= surface.editorBaseRects.count) continue;
+    NSRect frame = surface.editorBaseRects[index].rectValue;
+    if (NSIsEmptyRect(frame)) continue;
+    bounds = hasBounds ? NSUnionRect(bounds, frame) : frame;
+    hasBounds = YES;
+  }
+  if (!hasBounds || NSIsEmptyRect(bounds)) return NO;
+  NSRect pane = surface.editorBaseRects[surface.selection.pane_index].rectValue;
+  double perPointX = surface.workspaceNaturalWidth / bounds.size.width;
+  double perPointY = surface.workspaceNaturalHeight / bounds.size.height;
+  *width = surface.selection.width * pane.size.width * perPointX;
+  *height = surface.selection.height * pane.size.height * perPointY;
+  return YES;
+}
+
+static const CGFloat ScreenwideSelectionLabelFontSize = 11.0;
+static const CGFloat ScreenwideSelectionLabelStroke = 2.0;
+
+/// (Re)builds `selectionLabelTexture` for `text`. Returns NO when the bitmap
+/// could not be produced, in which case no label must be drawn.
+///
+/// Rasterised exactly like Keyframeless's OSC label: a monospaced string drawn
+/// twice into a premultiplied sRGB bitmap - a stroked halo pass first, then the
+/// fill on top - so the readout stays legible over any pane content without a
+/// backing plate. The colours mirror the OSC palette in `selection_fragment`.
+static BOOL update_selection_label(ScreenwidePreviewSurface *surface,
+                                   NSString *text, CGFloat scale,
+                                   uint32_t lightMode) {
+  if (surface.device == nil || text.length == 0) return NO;
+  if (surface.selectionLabelTexture != nil &&
+      surface.selectionLabelScale == scale &&
+      surface.selectionLabelLightMode == lightMode &&
+      [surface.selectionLabelText isEqualToString:text])
+    return YES;
+
+  NSColor *fill = lightMode != 0
+      ? [NSColor colorWithSRGBRed:0.12 green:0.12 blue:0.12 alpha:1.0]
+      : [NSColor colorWithSRGBRed:1.0 green:1.0 blue:1.0 alpha:1.0];
+  NSColor *halo = lightMode != 0
+      ? [NSColor colorWithSRGBRed:1.0 green:1.0 blue:1.0 alpha:1.0]
+      : [NSColor colorWithSRGBRed:0.0 green:0.0 blue:0.0 alpha:0.8];
+  NSFont *font = [NSFont monospacedSystemFontOfSize:ScreenwideSelectionLabelFontSize
+                                             weight:NSFontWeightMedium];
+  // A positive stroke width strokes the glyph without filling it, so this pass
+  // lays down only the outline the fill pass then sits inside.
+  NSDictionary *strokeAttributes = @{
+    NSFontAttributeName : font,
+    NSForegroundColorAttributeName : halo,
+    NSStrokeColorAttributeName : halo,
+    NSStrokeWidthAttributeName :
+        @(ScreenwideSelectionLabelStroke / ScreenwideSelectionLabelFontSize * 100.0),
+  };
+  NSDictionary *fillAttributes = @{
+    NSFontAttributeName : font,
+    NSForegroundColorAttributeName : fill,
+  };
+  NSSize textSize = [text sizeWithAttributes:fillAttributes];
+  // The inset leaves room for the halo, which spills outside the glyph box.
+  NSInteger pointWidth = (NSInteger)ceil(textSize.width) + 4;
+  NSInteger pointHeight = (NSInteger)ceil(textSize.height) + 2;
+  NSInteger pixelWidth = (NSInteger)MAX(round(pointWidth * scale), 1.0);
+  NSInteger pixelHeight = (NSInteger)MAX(round(pointHeight * scale), 1.0);
+
+  CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+  CGContextRef context = CGBitmapContextCreate(
+      NULL, (size_t)pixelWidth, (size_t)pixelHeight, 8, (size_t)pixelWidth * 4,
+      space,
+      (CGBitmapInfo)kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+  CGColorSpaceRelease(space);
+  if (context == NULL) return NO;
+  CGContextScaleCTM(context, scale, scale);
+  NSGraphicsContext *graphics =
+      [NSGraphicsContext graphicsContextWithCGContext:context flipped:NO];
+  [NSGraphicsContext saveGraphicsState];
+  [NSGraphicsContext setCurrentContext:graphics];
+  [text drawAtPoint:NSMakePoint(2.0, 1.0) withAttributes:strokeAttributes];
+  [text drawAtPoint:NSMakePoint(2.0, 1.0) withAttributes:fillAttributes];
+  [NSGraphicsContext restoreGraphicsState];
+
+  MTLTextureDescriptor *descriptor = [MTLTextureDescriptor
+      texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                   width:(NSUInteger)pixelWidth
+                                  height:(NSUInteger)pixelHeight
+                               mipmapped:NO];
+  descriptor.usage = MTLTextureUsageShaderRead;
+  id<MTLTexture> texture = [surface.device newTextureWithDescriptor:descriptor];
+  if (texture == nil) {
+    CGContextRelease(context);
+    return NO;
+  }
+  [texture replaceRegion:MTLRegionMake2D(0, 0, (NSUInteger)pixelWidth,
+                                         (NSUInteger)pixelHeight)
+             mipmapLevel:0
+               withBytes:CGBitmapContextGetData(context)
+             bytesPerRow:(NSUInteger)pixelWidth * 4];
+  CGContextRelease(context);
+
+  surface.selectionLabelTexture = texture;
+  surface.selectionLabelText = [text copy];
+  surface.selectionLabelScale = scale;
+  surface.selectionLabelLightMode = lightMode;
+  surface.selectionLabelSize = NSMakeSize(pointWidth, pointHeight);
+  return YES;
+}
+
 static void redraw_selection(ScreenwidePreviewSurface *surface) {
   surface.selectionDrawRevision += 1;
   uint64_t revision = surface.selectionDrawRevision;
@@ -688,6 +839,12 @@ static void redraw_selection(ScreenwidePreviewSurface *surface) {
                             size.height - transformed.origin.y - transformed.size.height,
                             transformed.size.width, transformed.size.height);
   CGFloat scale = surface.host.window.backingScaleFactor ?: 1.0;
+  // Resolved before the vertices are built because the size readout rasterises
+  // its own colours from it; both encode paths below reuse this value.
+  NSString *appearance = [surface.interaction.effectiveAppearance
+      bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,
+                                          NSAppearanceNameDarkAqua]];
+  uint32_t lightMode = [appearance isEqualToString:NSAppearanceNameAqua] ? 1 : 0;
   ScreenwideSelectionVertex vertices[512];
   NSUInteger count = 0;
   // Match Keyframeless's contrast-safe OSC construction: hard-edged quads
@@ -700,6 +857,34 @@ static void redraw_selection(ScreenwidePreviewSurface *surface) {
     add_selection_osc(vertices, &count, size, frame, scale,
                       surface.selection.radius_percent,
                       surface.selection.radius_disabled == 0);
+  double pixelWidth = 0.0;
+  double pixelHeight = 0.0;
+  if (selection_pixel_size(surface, &pixelWidth, &pixelHeight)) {
+    NSString *text = [NSString stringWithFormat:@"%lld × %lld",
+                      (long long)MAX(1, llround(pixelWidth)),
+                      (long long)MAX(1, llround(pixelHeight))];
+    if (update_selection_label(surface, text, scale, lightMode)) {
+      NSSize label = surface.selectionLabelSize;
+      // `frame` is already top-left-origin / y-down, so NSMaxY is the box's
+      // BOTTOM edge on screen and the readout hangs 4pt below it, trailing
+      // edge flush with the box's right edge (Keyframeless's placement).
+      CGFloat x = NSMaxX(frame) - label.width;
+      CGFloat y = NSMaxY(frame) + 4.0;
+      if (y + label.height > size.height)
+        y = NSMaxY(frame) - 4.0 - label.height;
+      x = MAX(0.0, MIN(x, size.width - label.width));
+      y = MAX(0.0, y);
+      // Snap to device pixels so the glyphs land on the same grid they were
+      // rasterised on and stay crisp instead of resampling every sample.
+      x = floor(x * scale) / scale;
+      y = floor(y * scale) / scale;
+      // The quad's uv (0,0) sits at the rect's min corner, which is the TOP
+      // left here; texture row 0 is the bitmap's first memory row, which is
+      // the top scanline of the rendered text. So no v flip is needed.
+      add_selection_quad(vertices, &count, size,
+                         NSMakeRect(x, y, label.width, label.height), 11);
+    }
+  }
   if (surface.hasSelectionSnapGuideX) {
     ScreenwidePreviewSelection guide = surface.selection;
     guide.x = surface.selectionSnapGuideX;
@@ -736,12 +921,10 @@ static void redraw_selection(ScreenwidePreviewSurface *surface) {
         [surface.workspaceEncodingCommand renderCommandEncoderWithDescriptor:pass];
     [encoder setRenderPipelineState:surface.selectionPipeline];
     [encoder setVertexBuffer:buffer offset:0 atIndex:0];
-    NSString *appearance = [surface.interaction.effectiveAppearance
-        bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,
-                                            NSAppearanceNameDarkAqua]];
-    uint32_t lightMode =
-        [appearance isEqualToString:NSAppearanceNameAqua] ? 1 : 0;
     [encoder setFragmentBytes:&lightMode length:sizeof(lightMode) atIndex:0];
+    [encoder setFragmentTexture:(surface.selectionLabelTexture
+                                     ?: surface.selectionLabelPlaceholder)
+                        atIndex:0];
     ScreenwideWorkspaceMagnifier magnifier = surface.workspaceMagnifier;
     float magnifierBox[4] = {
       magnifier.active != 0 ? magnifier.box_x : 0,
@@ -776,11 +959,10 @@ static void redraw_selection(ScreenwidePreviewSurface *surface) {
   id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
   [encoder setRenderPipelineState:surface.selectionPipeline];
   [encoder setVertexBuffer:buffer offset:0 atIndex:0];
-  NSString *appearance = [surface.interaction.effectiveAppearance
-      bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,
-                                          NSAppearanceNameDarkAqua]];
-  uint32_t lightMode = [appearance isEqualToString:NSAppearanceNameAqua] ? 1 : 0;
   [encoder setFragmentBytes:&lightMode length:sizeof(lightMode) atIndex:0];
+  [encoder setFragmentTexture:(surface.selectionLabelTexture
+                                   ?: surface.selectionLabelPlaceholder)
+                      atIndex:0];
   float magnifierBox[4] = {0};
   [encoder setFragmentBytes:magnifierBox length:sizeof(magnifierBox) atIndex:1];
   [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:count];
@@ -1501,6 +1683,8 @@ static void set_editor_zoom(ScreenwidePreviewSurface *surface,
   (void)event;
 }
 - (void)mouseDown:(NSEvent *)event {
+  // A stale commit flag must not outlive its gesture (see its declaration).
+  self.surface.keepTransformForCommittedNaturalSize = NO;
   // Keep keyboard shortcuts in React even though pointer gestures are native.
   // The overlay receives the click, so AppKit cannot focus WKWebView for us.
   if (self.surface.webview != nil)
@@ -1829,7 +2013,8 @@ static void set_editor_zoom(ScreenwidePreviewSurface *surface,
         [self.surface.workspaceLock lock];
         screenwide_gpu_still_presenter_update_workspace_selected_radius(
             self.surface.views[0].compositor,
-            self.selectionDragStart.pane_index, radiusPercent);
+            self.selectionDragStart.pane_index, radiusPercent,
+            self.selectionDragOperation == 4 ? 1 : 0);
         [self.surface.workspaceLock unlock];
         redraw_workspace(self.surface);
       }
@@ -1975,13 +2160,10 @@ static void set_editor_zoom(ScreenwidePreviewSurface *surface,
       if (self.selectionMoveAutoFitActive && !optionHeld) {
         // Releasing Option accepts the grown canvas. Rebase the remainder of
         // this mouse gesture onto that committed scene, while React/Rust keep
-        // one edit-history transaction open across the checkpoint.
-        self.surface.editorPanX = 0.0;
-        self.surface.editorPanY = 0.0;
-        apply_editor_transform(self.surface);
-        if (self.surface.transformCallback)
-          self.surface.transformCallback(self.surface.editorZoom * 100.0,
-                                         self.surface.transformContext);
+        // one edit-history transaction open across the checkpoint. The
+        // zoom/pan already express the grown canvas pixel-for-pixel (the
+        // auto-fit samples rebased them), so they are kept as they are: a
+        // recentre here would yank the workspace mid-drag.
         end_workspace_frame_resize(self.surface, YES);
         self.selectionDragStart = self.surface.selection;
         self.selectionDragOrigin = point;
@@ -2180,11 +2362,17 @@ static void set_editor_zoom(ScreenwidePreviewSurface *surface,
     }
     emit_selection_gesture(self.surface, 2, self.selectionDragOperation,
                            edges, scale, deltaX, deltaY);
-    if (self.selectionDragOperation == 3)
+    if (self.selectionDragOperation == 3) {
       end_workspace_frame_resize(self.surface, YES);
-    else if (self.selectionDragOperation == 0 &&
-             !NSIsEmptyRect(self.selectionMoveFrameStart))
+    } else if (self.selectionDragOperation == 0 &&
+               !NSIsEmptyRect(self.selectionMoveFrameStart)) {
+      // Unlike Frame (which recentred above), an auto-fit Move leaves the
+      // view where the drag put it; the layout echoing the grown canvas must
+      // keep that transform rather than restore/recentre. A plain move sets
+      // this too, harmlessly: its echo changes no size and clears the flag.
+      self.surface.keepTransformForCommittedNaturalSize = YES;
       end_workspace_frame_resize(self.surface, YES);
+    }
   }
   clear_selection_snap_guides(self.surface);
   self.selectionDragActive = NO;
@@ -2266,7 +2454,9 @@ vertex selection_out selection_vertex_main(const device selection_vertex *vertic
 
 fragment float4 selection_fragment(selection_out in [[stage_in]],
                                    constant uint &light_mode [[buffer(0)]],
-                                   constant float4 &magnifier_box [[buffer(1)]]) {
+                                   constant float4 &magnifier_box [[buffer(1)]],
+                                   texture2d<float> label [[texture(0)]]) {
+  constexpr sampler label_sampler(filter::linear, address::clamp_to_edge);
   if (magnifier_box.z > 0.0) {
     float2 half_size = magnifier_box.zw * 0.5;
     float2 local = abs(in.position.xy - (magnifier_box.xy + half_size)) -
@@ -2274,6 +2464,14 @@ fragment float4 selection_fragment(selection_out in [[stage_in]],
     float distance = length(max(local, 0.0)) +
                      min(max(local.x, local.y), 0.0) - 4.0;
     if (distance <= 0.0) discard_fragment();
+  }
+  if (in.kind == 11) {
+    // The label bitmap is premultiplied, but this pipeline blends with
+    // SourceAlpha/OneMinusSourceAlpha (i.e. it expects straight alpha), so the
+    // colour is un-premultiplied back out before it is returned.
+    float4 sampled = label.sample(label_sampler, in.uv);
+    if (sampled.a <= 0.002) discard_fragment();
+    return float4(sampled.rgb / sampled.a, sampled.a);
   }
   if (in.kind == 6) return float4(0.0, 0.0, 0.0, 0.4);
   if (in.kind >= 7 && in.kind <= 10) {
@@ -2548,6 +2746,22 @@ void *screenwide_preview_surface_create(void *host_view) {
     selectionDescriptor.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
     surface.selectionPipeline = [surface.device newRenderPipelineStateWithDescriptor:selectionDescriptor
                                                                                   error:&error];
+    // A 1x1 transparent texture stands in whenever no size readout exists, so
+    // the fragment function's texture slot is always bound (see
+    // `selectionLabelPlaceholder`).
+    MTLTextureDescriptor *placeholderDescriptor = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                     width:1
+                                    height:1
+                                 mipmapped:NO];
+    placeholderDescriptor.usage = MTLTextureUsageShaderRead;
+    surface.selectionLabelPlaceholder =
+        [surface.device newTextureWithDescriptor:placeholderDescriptor];
+    const uint8_t transparent[4] = {0, 0, 0, 0};
+    [surface.selectionLabelPlaceholder replaceRegion:MTLRegionMake2D(0, 0, 1, 1)
+                                         mipmapLevel:0
+                                           withBytes:transparent
+                                         bytesPerRow:4];
     surface.container = [[ScreenwidePreviewView alloc] initWithFrame:NSZeroRect];
     surface.container.wantsLayer = YES;
     surface.container.layer.masksToBounds = YES;
@@ -2912,6 +3126,9 @@ void screenwide_preview_surface_layout_workspace(
            fabs(surface.workspaceNaturalHeight - natural_height) > 0.51);
       if (naturalSizeChanged)
         restore_workspace_transform(surface, natural_width, natural_height);
+      // The first layout after a commit echoes that commit; anything later
+      // is a genuine change (undo/redo) and may restore again.
+      surface.keepTransformForCommittedNaturalSize = NO;
       surface.editorBaseRects[0] = [NSValue valueWithRect:incoming];
       surface.workspaceNaturalWidth = natural_width;
       surface.workspaceNaturalHeight = natural_height;
@@ -2958,6 +3175,7 @@ void screenwide_preview_surface_layout_recording_workspace(
          fabs(surface.workspaceNaturalHeight - natural_height) > 0.51);
     if (!ownsFrame && naturalSizeChanged)
       restore_workspace_transform(surface, natural_width, natural_height);
+    if (!ownsFrame) surface.keepTransformForCommittedNaturalSize = NO;
     while (surface.views.count == 0)
       [surface.views addObject:make_view(surface)];
     while (surface.editorBaseRects.count < pane_count)

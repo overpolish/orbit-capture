@@ -2906,20 +2906,30 @@ int screenwide_gpu_still_presenter_update_workspace_selected_resize(
 }
 
 int screenwide_gpu_still_presenter_update_workspace_selected_radius(
-    void *handle, uint32_t selected_layer, double radius_percent) {
+    void *handle, uint32_t selected_layer, double radius_percent, int frame) {
   if (handle == NULL || !isfinite(radius_percent)) return 0;
   ScreenwideStillPresenter *presenter = (__bridge ScreenwideStillPresenter *)handle;
   NSMutableArray<NSValue *> *updated =
       [NSMutableArray arrayWithCapacity:presenter.workspaceLayers.count];
   BOOL found = NO;
+  double percent = fmin(50.0, fmax(0.0, radius_percent));
   for (NSValue *value in presenter.workspaceLayers) {
     ScreenwideWorkspaceLayer layer;
     [value getValue:&layer size:sizeof(layer)];
     if (layer.pane_index == selected_layer) {
       found = YES;
-      double shortest = MIN(layer.canvas_width, layer.canvas_height);
-      layer.canvas.background_radius = (uint32_t)MAX(
-          llround(shortest * fmin(50.0, fmax(0.0, radius_percent)) / 100.0), 0);
+      // Same pixel derivation as the export path (platform_macos.rs): the
+      // frame radius is a share of the canvas's shorter side, the clip radius
+      // a share of the crop's shorter side.
+      if (frame != 0) {
+        double shortest = MIN(layer.canvas_width, layer.canvas_height);
+        layer.canvas.background_radius =
+            (uint32_t)MAX(llround(shortest * percent / 100.0), 0);
+      } else {
+        double shortest = MIN(layer.canvas.crop_width, layer.canvas.crop_height);
+        layer.canvas.radius =
+            (uint32_t)MAX(llround(shortest * percent / 100.0), 0);
+      }
     }
     [updated addObject:[NSValue valueWithBytes:&layer
                                        objCType:@encode(ScreenwideWorkspaceLayer)]];

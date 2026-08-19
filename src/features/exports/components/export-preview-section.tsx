@@ -208,14 +208,11 @@ export function ScreenshotSection({
   return (
     <div className="flex min-h-0 min-w-0 grow flex-col">
       <PreviewToolbar
-        badges={[
-          {
-            height: outputDimensions.height,
-            kind: "screenshot",
-            width: outputDimensions.width,
-          },
-        ]}
-        center={
+        onZoomChange={(nextZoom) => {
+          setContextMenu(null);
+          setZoomPercent(nextZoom);
+        }}
+        tools={
           <div className="flex items-center gap-1">
             <TooltipTrigger delay={400}>
               <span
@@ -333,10 +330,6 @@ export function ScreenshotSection({
             </TooltipTrigger>
           </div>
         }
-        onZoomChange={(nextZoom) => {
-          setContextMenu(null);
-          setZoomPercent(nextZoom);
-        }}
         zoomPercent={zoomPercent}
       />
       <PreviewViewport

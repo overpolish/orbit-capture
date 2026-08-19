@@ -207,8 +207,12 @@ int screenwide_gpu_still_presenter_update_recording_auto_fit_move(
 int screenwide_gpu_still_presenter_update_workspace_selected_resize(
     void *handle, uint32_t selected_layer, double origin_x_ratio,
     double origin_y_ratio, double width_ratio, double height_ratio);
+/// Live corner-radius preview for the selected retained recording layer.
+/// `frame` non-zero rounds the pane's canvas background (frame tool);
+/// zero rounds the clip inside it (select tool), as a percentage of the
+/// crop's shorter side, matching the export compositor.
 int screenwide_gpu_still_presenter_update_workspace_selected_radius(
-    void *handle, uint32_t selected_layer, double radius_percent);
+    void *handle, uint32_t selected_layer, double radius_percent, int frame);
 void screenwide_gpu_still_presenter_end_workspace_resize(
     void *handle, int commit);
 

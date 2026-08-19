@@ -1150,19 +1150,6 @@ export function NativeRecordingPreview({
       visiblePaneEntries.length,
     ],
   );
-  const previewBadges = useMemo(
-    () =>
-      visibleLayout?.panes.map((pane, index) => {
-        const outputDimensions =
-          previewOutputDimensions?.[visiblePaneEntries[index].trackId];
-        return {
-          height: outputDimensions?.height ?? pane.sourceHeight,
-          kind: pane.kind,
-          width: outputDimensions?.width ?? pane.sourceWidth,
-        };
-      }) ?? [],
-    [previewOutputDimensions, visibleLayout, visiblePaneEntries],
-  );
 
   useEffect(() => {
     playhead.publish(0, 0);
@@ -1283,9 +1270,8 @@ export function NativeRecordingPreview({
           />
           {visibleLayout && visibleLayout.panes.length > 0 ? (
             <PreviewToolbar
-              badges={previewBadges}
-              center={cropToggle}
               onZoomChange={setZoomPercent}
+              tools={cropToggle}
               zoomPercent={zoomPercent}
             />
           ) : null}
