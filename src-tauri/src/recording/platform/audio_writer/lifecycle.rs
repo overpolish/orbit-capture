@@ -47,7 +47,6 @@ impl AudioWriter {
       duration_ms: u64::try_from(end_ns / NANOS_PER_MS).unwrap_or_default(),
       height: 0,
       path: self.path.clone(),
-      poster: None,
       primary_kind: PrimaryRecordingKind::Audio,
       source_scale_factor: 1.0,
       width: 0,

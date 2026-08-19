@@ -15,7 +15,7 @@ const extensions = new Set([".mjs", ".rs", ".ts", ".tsx"]);
 // shape closely, so they cannot become a place to quietly add more concerns.
 const exceptions = new Map([
   ["src-tauri/src/windows.rs", 600],
-  ["src/features/exports/components/preview-viewport.tsx", 625],
+  ["src/features/exports/components/preview-viewport.tsx", 525],
   ["src/features/exports/components/scrub-preview.tsx", 700],
   ["src/features/exports/export-window.tsx", 555],
   ["src-tauri/src/screenshots/output.rs", 435],

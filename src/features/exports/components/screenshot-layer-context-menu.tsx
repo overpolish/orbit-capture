@@ -12,8 +12,6 @@ export type LayerContextMenuState<ItemId = number> = {
   y: number;
 };
 
-export type ScreenshotLayerContextMenuState = LayerContextMenuState;
-
 export function LayerContextMenu<ItemId>({
   ariaLabel = "Layer actions",
   canDelete,
@@ -82,12 +80,6 @@ export function LayerContextMenu<ItemId>({
       ) : null}
     </div>
   );
-}
-
-export function ScreenshotLayerContextMenu(
-  props: Parameters<typeof LayerContextMenu<number>>[0],
-) {
-  return <LayerContextMenu {...props} ariaLabel="Screenshot layer actions" />;
 }
 
 function Item({

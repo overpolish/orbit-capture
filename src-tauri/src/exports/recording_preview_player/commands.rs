@@ -34,7 +34,6 @@ pub async fn start_recording_preview_player(
   state: tauri::State<'_, RecordingPreviewPlayerState>,
   artifact_id: u64,
   settings: PreviewPlayerSettings,
-  frame_channel: Channel,
   event_channel: Channel<RecordingPreviewPlayerEvent>,
   session_id: u64,
 ) -> Result<RecordingPreviewPlayerInfo, String> {
@@ -153,7 +152,6 @@ pub async fn start_recording_preview_player(
   manager.audio_indices = settings.audio.enabled_stream_indices;
   manager.audio_volumes = settings.audio.audio_track_volumes;
   manager.event_channel = Some(event_channel);
-  manager.frame_channel = Some(frame_channel);
   manager.latest_layout_request = 0;
   manager.latest_seek_request = 0;
   manager.position_ms = 0;

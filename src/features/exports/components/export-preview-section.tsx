@@ -46,10 +46,6 @@ import {
   deleteScreenshotLayer,
   moveScreenshotLayer,
 } from "./screenshot-layer-actions";
-import {
-  ScreenshotLayerContextMenu,
-  ScreenshotLayerContextMenuState,
-} from "./screenshot-layer-context-menu";
 import { ScrubPreview } from "./scrub-preview";
 
 /**
@@ -62,12 +58,9 @@ export function ScreenshotSection({
   onBackgroundRadiusChange,
   onBackgroundRadiusChangeEnd,
   onCanvasResize,
-  onNeedFullResolution,
   onOutputChange,
-  onRadiusChange,
   onRadiusChangeEnd,
   onSelectedItemChange,
-  previewUrl,
   screenshotOutput,
   selectedItemId = null,
 }: {
@@ -76,15 +69,12 @@ export function ScreenshotSection({
   onBackgroundRadiusChange?: (radiusPercent: number) => void;
   onBackgroundRadiusChangeEnd?: () => void;
   onCanvasResize?: (settings: ScreenshotWorkspaceOutputSettings) => void;
-  onNeedFullResolution?: () => void;
   onOutputChange?: (
     settings: ScreenshotOutputSettings,
     itemId?: number,
   ) => void;
-  onRadiusChange?: (radiusPercent: number) => void;
   onRadiusChangeEnd?: () => void;
   onSelectedItemChange?: (itemId: number | null) => void;
-  previewUrl?: string | null;
   screenshotOutput?: ScreenshotWorkspaceOutputSettings;
   selectedItemId?: number | null;
 }) {
@@ -92,8 +82,6 @@ export function ScreenshotSection({
   const [tool, setTool] = useState<"canvas" | "crop" | "select" | null>(
     "select",
   );
-  const [contextMenu, setContextMenu] =
-    useState<ScreenshotLayerContextMenuState | null>(null);
   const newestItemId = artifact.items[artifact.items.length - 1]?.id ?? null;
   const moveSelectedLayer = (
     direction: "backward" | "forward",
@@ -106,7 +94,6 @@ export function ScreenshotSection({
       settings: screenshotOutput,
     });
     if (next !== screenshotOutput) onCanvasResize?.(next);
-    setContextMenu(null);
   };
   const deleteSelectedLayer = (itemId = selectedItemId) => {
     if (
@@ -122,7 +109,6 @@ export function ScreenshotSection({
     if (!result) return;
     onCanvasResize?.(result.settings);
     onSelectedItemChange?.(result.nextSelectedItemId);
-    setContextMenu(null);
   };
   const outputDimensions = screenshotOutput
     ? screenshotOutputDimensions(screenshotOutput)
@@ -208,10 +194,7 @@ export function ScreenshotSection({
   return (
     <div className="flex min-h-0 min-w-0 grow flex-col">
       <PreviewToolbar
-        onZoomChange={(nextZoom) => {
-          setContextMenu(null);
-          setZoomPercent(nextZoom);
-        }}
+        onZoomChange={setZoomPercent}
         tools={
           <div className="flex items-center gap-1">
             <TooltipTrigger delay={400}>
@@ -345,51 +328,14 @@ export function ScreenshotSection({
         onBackgroundRadiusChange={onBackgroundRadiusChange}
         onBackgroundRadiusChangeEnd={onBackgroundRadiusChangeEnd}
         onCanvasResize={onCanvasResize}
-        onItemContextMenu={(itemId, event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onSelectedItemChange?.(itemId);
-          setContextMenu({
-            itemId,
-            x: Math.min(event.clientX, window.innerWidth - 196),
-            y: Math.min(event.clientY, window.innerHeight - 132),
-          });
-        }}
         onItemSelect={onSelectedItemChange}
-        onNeedFullResolution={onNeedFullResolution}
         onOutputChange={onOutputChange}
-        onRadiusChange={onRadiusChange}
         onRadiusChangeEnd={onRadiusChangeEnd}
-        onViewportInteraction={() => {
-          setContextMenu(null);
-        }}
-        onZoomChange={(nextZoom) => {
-          setContextMenu(null);
-          setZoomPercent(nextZoom);
-        }}
-        previewUrl={previewUrl}
+        onZoomChange={setZoomPercent}
         screenshotOutput={screenshotOutput}
         selectedItemId={selectedItemId}
         zoomPercent={zoomPercent}
       />
-      {contextMenu ? (
-        <ScreenshotLayerContextMenu
-          canDelete={(screenshotOutput?.items.length ?? 0) > 1}
-          menu={contextMenu}
-          onClose={() => {
-            setContextMenu(null);
-          }}
-          onDelete={() => {
-            deleteSelectedLayer(contextMenu.itemId);
-          }}
-          onMoveBackward={() => {
-            moveSelectedLayer("backward", contextMenu.itemId);
-          }}
-          onMoveForward={() => {
-            moveSelectedLayer("forward", contextMenu.itemId);
-          }}
-        />
-      ) : null}
     </div>
   );
 }

@@ -111,60 +111,6 @@ pub(super) fn emit_snapshot(app: &AppHandle) {
   let _ = app.emit(EXPORT_CHANGED_EVENT, snapshot(app));
 }
 
-/// Shrinks the capture to something worth sending over IPC.
-pub(super) fn preview_png(image: &CapturedImage) -> Option<Vec<u8>> {
-  let buffer = image::RgbaImage::from_raw(image.width, image.height, image.rgba.clone())?;
-  let scale = f64::from(PREVIEW_MAX_EDGE) / f64::from(image.width.max(image.height));
-  let (width, height) = if scale >= 1.0 {
-    (image.width, image.height)
-  } else {
-    (
-      ((f64::from(image.width) * scale).round() as u32).max(1),
-      ((f64::from(image.height) * scale).round() as u32).max(1),
-    )
-  };
-
-  let thumbnail = image::DynamicImage::ImageRgba8(buffer).thumbnail(width, height);
-  let mut png = Vec::new();
-  thumbnail
-    .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-    .ok()?;
-
-  Some(png)
-}
-
-/// The capture at full resolution, for zooming into. Encoded losslessly and
-/// quickly - this is for looking at, not for keeping, so the slow quantizing
-/// encoder that produces the saved file would be the wrong trade here.
-pub(super) fn full_preview_png(image: &CapturedImage) -> Result<Vec<u8>, String> {
-  let mut png = Vec::new();
-  PngEncoder::new_with_quality(
-    std::io::Cursor::new(&mut png),
-    CompressionType::Fast,
-    FilterType::Sub,
-  )
-  .write_image(
-    &image.rgba,
-    image.width,
-    image.height,
-    ExtendedColorType::Rgba8,
-  )
-  .map_err(|error| error.to_string())?;
-
-  Ok(png)
-}
-
-pub(super) fn screenshot_image(items: &[ScreenshotItem]) -> Result<&CapturedImage, String> {
-  items
-    .first()
-    .map(|item| &item.image)
-    .ok_or_else(|| "The screenshot workspace is empty".to_owned())
-}
-
-/// Deletes the working file behind a recording that will not be saved.
-///
-/// A screenshot lives in memory and needs nothing; a recording is a file, and
-/// every path that lets go of one without saving it comes through here.
 pub(super) fn delete_working_file(artifact: &ExportArtifact) {
   if let ExportArtifact::Recording {
     camera,
@@ -203,20 +149,6 @@ pub(super) fn clear_recording_preview(app: &AppHandle) {
     .clear();
 }
 
-pub(super) fn clear_cached_previews(app: &AppHandle) {
-  let state = app.state::<ExportState>();
-  state
-    .preview
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner())
-    .take();
-  state
-    .full_preview
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner())
-    .take();
-}
-
 /// The next artifact identity. Two consecutive captures are otherwise
 /// indistinguishable, and the window needs to tell them apart.
 pub(super) fn next_id(app: &AppHandle) -> u64 {
@@ -229,11 +161,7 @@ pub(super) fn next_id(app: &AppHandle) -> u64 {
 
 /// Puts a new artifact in front of the user. Admission is checked before any
 /// state is changed, so this path can never silently replace unsaved work.
-pub(super) fn present_new(
-  app: &AppHandle,
-  artifact: ExportArtifact,
-  preview: Option<Vec<u8>>,
-) -> Result<(), String> {
+pub(super) fn present_new(app: &AppHandle, artifact: ExportArtifact) -> Result<(), String> {
   clear_recording_preview(app);
   {
     let state = app.state::<ExportState>();
@@ -259,14 +187,6 @@ pub(super) fn present_new(
       .directory
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner()) = default_directory;
-    *state
-      .preview
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner()) = preview;
-    *state
-      .full_preview
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     *artifact_slot = Some(artifact);
     *reservation = None;
   }
@@ -278,14 +198,6 @@ pub(super) fn present_new(
     let state = app.state::<ExportState>();
     *state
       .artifact
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    *state
-      .preview
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    *state
-      .full_preview
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     *state
@@ -311,7 +223,6 @@ pub fn present_screenshot(
   image: CapturedImage,
   suggested_file_stem: String,
 ) -> Result<(), String> {
-  let preview = preview_png(&image);
   let item = ScreenshotItem {
     id: next_id(app),
     image,
@@ -325,14 +236,6 @@ pub fn present_screenshot(
       .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(ExportArtifact::Screenshot { items, .. }) = artifact.as_mut() {
       items.push(item);
-      *state
-        .preview
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = preview;
-      *state
-        .full_preview
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
       *state
         .capture_reservation
         .lock()
@@ -352,15 +255,13 @@ pub fn present_screenshot(
       items: vec![item],
       suggested_file_stem,
     },
-    preview,
   )
 }
 
 /// Hands a finished recording to the export window.
 ///
-/// Mirrors `present_screenshot`, with the poster standing in for the preview.
-/// There is no full-resolution counterpart: the artifact is a movie, and the
-/// only still it has is the one drawn when it finished.
+/// Mirrors `present_screenshot`. The window previews the movie itself through
+/// the native preview surface, so nothing still-image is carried here.
 pub fn present_recording(
   app: &AppHandle,
   info: FinalizeInfo,
@@ -374,7 +275,6 @@ pub fn present_recording(
     duration_ms,
     height,
     path,
-    poster,
     primary_kind,
     source_scale_factor,
     width,
@@ -415,7 +315,6 @@ pub fn present_recording(
       suggested_file_stem,
       width,
     },
-    poster,
   )
 }
 
@@ -434,7 +333,6 @@ pub(super) fn take_artifact(app: &AppHandle) -> Option<ExportArtifact> {
 /// the window are the same act.
 pub fn discard(app: &AppHandle) {
   clear_recording_preview(app);
-  clear_cached_previews(app);
   if let Some(artifact) = take_artifact(app) {
     delete_working_file(&artifact);
   }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { MouseEvent as ReactMouseEvent, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   ScreenshotOutputSettings,
@@ -14,17 +14,10 @@ import {
   uncroppedScreenshotPreviewOutput,
 } from "../screenshot-output";
 import { useExportEditGesture } from "../use-export-edit-history";
-import { usePreviewCapabilities } from "../use-preview-capabilities";
 import {
   ScreenshotSelectionGestureEvent,
   useScreenshotPreviewSurface,
 } from "../use-screenshot-preview-surface";
-
-import { InteractivePreviewViewport } from "./interactive-preview-viewport";
-import { NativeOutputPreview } from "./native-output-preview";
-import { ScreenshotCanvasControl } from "./screenshot-canvas-control";
-import { ScreenshotPreviewLayer } from "./screenshot-preview-layer";
-import { ScreenshotRadiusControl } from "./screenshot-radius-control";
 
 type PreviewViewportProps = {
   alt: string;
@@ -46,21 +39,13 @@ type PreviewViewportProps = {
   onBackgroundRadiusChange?: (radiusPercent: number) => void;
   onBackgroundRadiusChangeEnd?: () => void;
   onCanvasResize?: (settings: ScreenshotWorkspaceOutputSettings) => void;
-  onItemContextMenu?: (
-    itemId: number,
-    event: ReactMouseEvent<HTMLDivElement>,
-  ) => void;
   onItemSelect?: (itemId: number) => void;
-  onNeedFullResolution?: () => void;
   onOutputChange?: (
     settings: ScreenshotOutputSettings,
     itemId?: number,
   ) => void;
-  onRadiusChange?: (radiusPercent: number) => void;
   onRadiusChangeEnd?: () => void;
-  onViewportInteraction?: () => void;
   onZoomChange?: (zoomPercent: number) => void;
-  previewUrl?: string | null;
   screenshotOutput?: ScreenshotWorkspaceOutputSettings;
   selectedItemId?: number | null;
   zoomPercent?: number;
@@ -82,26 +67,15 @@ export function PreviewViewport({
   onBackgroundRadiusChange,
   onBackgroundRadiusChangeEnd,
   onCanvasResize,
-  onItemContextMenu,
   onItemSelect,
-  onNeedFullResolution,
   onOutputChange,
-  onRadiusChange,
   onRadiusChangeEnd,
-  onViewportInteraction,
   onZoomChange,
-  previewUrl,
   screenshotOutput,
   selectedItemId = null,
   zoomPercent,
 }: PreviewViewportProps) {
-  const outputRef = useRef<HTMLDivElement | null>(null);
-  const composedCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const nativeFrameRef = useRef<HTMLDivElement | null>(null);
-  const autoFitGestureRef = useRef<{
-    initial: ScreenshotWorkspaceOutputSettings;
-    used: boolean;
-  } | null>(null);
   const selectionGestureRef = useRef<{
     autoFitCheckpointed: boolean;
     autoFitUsed: boolean;
@@ -137,9 +111,6 @@ export function PreviewViewport({
   const output = workspaceOutput
     ? screenshotOutputDimensions(workspaceOutput)
     : { height: naturalHeight, width: naturalWidth };
-  // `undefined` until the capability probe resolves: neither preview path is
-  // rendered before then, so the viewport never flashes the wrong one.
-  const nativePane = usePreviewCapabilities()?.nativeScreenshotPreview;
   const previewOutput =
     workspaceOutput && isEditing && selectedItemId !== null
       ? {
@@ -441,15 +412,14 @@ export function PreviewViewport({
     return;
   };
   const selectionOverlay =
-    nativePane === true && isResizingCanvas && workspaceOutput
+    isResizingCanvas && workspaceOutput
       ? {
           layerId: 0xffffffff,
           paneIndex: 0,
           radiusPercent: workspaceOutput.backgroundRadiusPercent,
           rect: { height: 1, width: 1, x: 0, y: 0 },
         }
-      : nativePane === true &&
-          (isSelecting || isEditing) &&
+      : (isSelecting || isEditing) &&
           selectedItemIndex >= 0 &&
           selectedItem &&
           selectedItemOutput
@@ -479,7 +449,7 @@ export function PreviewViewport({
           })()
         : null;
   const selectionTargets =
-    nativePane === true && (isSelecting || isEditing) && workspaceOutput
+    (isSelecting || isEditing) && workspaceOutput
       ? workspaceOutput.items.flatMap((itemOutput, paneIndex) => {
           const item = items.find(
             (candidate) => candidate.id === itemOutput.id,
@@ -512,7 +482,7 @@ export function PreviewViewport({
     canvasRef: nativeFrameRef,
     interactionOutput: workspaceOutput,
     isEditorSuspended: isSaving,
-    isEnabled: nativePane === true && workspaceOutput !== undefined,
+    isEnabled: workspaceOutput !== undefined,
     onSelectionChange: (paneIndex) => {
       if (paneIndex === null) return;
       const itemOutput = workspaceOutput?.items[paneIndex];
@@ -532,186 +502,19 @@ export function PreviewViewport({
       .join(":"),
     zoomPercent,
   });
-  if (nativePane === true) {
-    return (
-      <div
-        aria-label={alt}
-        className={`relative flex min-h-0 grow overflow-hidden ${isSelecting ? "cursor-move" : "cursor-grab"}`}
-        data-recording-preview-viewport
-        ref={nativeFrameRef}
-        role="img"
-      >
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10 bg-black/5 dark:bg-black/25"
-          data-preview-backdrop
-        />
-      </div>
-    );
-  }
   return (
-    <InteractivePreviewViewport<HTMLDivElement>
-      getMediaSize={() => output}
-      hideUntilMeasured
-      mediaSizeKey={`${output.width.toString()}x${output.height.toString()}`}
-      onNeedFullResolution={onNeedFullResolution}
-      onViewportInteraction={onViewportInteraction}
-      onZoomChange={onZoomChange}
-      renderMedia={({
-        onMediaResize,
-        onMediaResizeEnd,
-        onMediaResizeStart,
-        onReady,
-        ref,
-        style,
-      }) => (
-        <div
-          className="absolute shrink-0 select-none"
-          ref={(element) => {
-            outputRef.current = element;
-            ref(element);
-          }}
-          style={{
-            ...style,
-            height: `${output.height.toString()}px`,
-            width: `${output.width.toString()}px`,
-          }}
-        >
-          <div className="absolute inset-0 overflow-visible bg-transparent">
-            {workspaceOutput && nativePane === false ? (
-              <NativeOutputPreview
-                artifactId={artifactId}
-                canvasRef={composedCanvasRef}
-                onReady={onReady}
-                output={previewOutput ?? workspaceOutput}
-              />
-            ) : previewUrl && workspaceOutput === undefined ? (
-              <img
-                alt={alt}
-                className="absolute inset-0 size-full"
-                draggable={false}
-                onLoad={onReady}
-                src={previewUrl}
-              />
-            ) : null}
-          </div>
-          {workspaceOutput
-            ? orderedItems.map((item) => {
-                const itemOutput = screenshotWorkspaceItemOutput(
-                  workspaceOutput,
-                  item.id,
-                );
-                const selected = item.id === selectedItemId;
-                return (
-                  <ScreenshotPreviewLayer
-                    isCropTarget={isEditing && !selected}
-                    isEditing={isEditing && selected}
-                    isItemSelected={selected}
-                    isSelecting={isSelecting}
-                    key={item.id}
-                    onItemContextMenu={(event) => {
-                      onItemContextMenu?.(item.id, event);
-                    }}
-                    onItemSelect={() => {
-                      onItemSelect?.(item.id);
-                    }}
-                    onLayoutChange={(change) => {
-                      if (change.autoFitStarted) {
-                        autoFitGestureRef.current = {
-                          initial: workspaceOutput,
-                          used: false,
-                        };
-                      }
-                      const gesture = autoFitGestureRef.current;
-                      if (!change.autoFitCanvas || !gesture) {
-                        if (gesture?.used) onMediaResizeEnd();
-                        autoFitGestureRef.current = null;
-                        return change.settings;
-                      }
-                      const fitted = fitScreenshotWorkspaceToItems({
-                        initial: gesture.initial,
-                        movedItemId: item.id,
-                        movedItemOutput: change.settings,
-                        sources: orderedItems,
-                      });
-                      if (!gesture.used) {
-                        gesture.used = true;
-                        onMediaResizeStart();
-                      }
-                      onMediaResize(fitted.bounds);
-                      onCanvasResize?.(fitted.output);
-                      return fitted.movedItemOutput;
-                    }}
-                    onLayoutInteractionEnd={() => {
-                      const gesture = autoFitGestureRef.current;
-                      if (gesture?.used) onMediaResizeEnd();
-                      autoFitGestureRef.current = null;
-                    }}
-                    onLayoutInteractionStart={() => {
-                      autoFitGestureRef.current = {
-                        initial: workspaceOutput,
-                        used: false,
-                      };
-                    }}
-                    onOutputChange={(settings) => {
-                      onOutputChange?.(settings, item.id);
-                    }}
-                    onRadiusChange={selected ? onRadiusChange : undefined}
-                    onRadiusChangeEnd={selected ? onRadiusChangeEnd : undefined}
-                    output={output}
-                    outputRef={outputRef}
-                    previewUrl={selected ? previewUrl : undefined}
-                    radiusPercent={itemOutput.radiusPercent}
-                    settings={itemOutput}
-                    snapFrames={orderedItems
-                      .filter((candidate) => candidate.id !== item.id)
-                      .map((candidate) =>
-                        screenshotLayout(
-                          candidate,
-                          output,
-                          screenshotWorkspaceItemOutput(
-                            workspaceOutput,
-                            candidate.id,
-                          ),
-                        ),
-                      )
-                      .map((layout) => layout.crop)}
-                    source={item}
-                  />
-                );
-              })
-            : null}
-          {workspaceOutput && isResizingCanvas ? (
-            <ScreenshotCanvasControl
-              items={items}
-              mediaRef={outputRef}
-              onBoundsChange={onMediaResize}
-              onChange={setCanvasResizeDraft}
-              onResizeEnd={(finalOutput) => {
-                onMediaResizeEnd();
-                onCanvasResize?.(finalOutput);
-                setCanvasResizeDraft(null);
-              }}
-              onResizeStart={onMediaResizeStart}
-              output={output}
-              settings={workspaceOutput}
-            />
-          ) : null}
-          {workspaceOutput && isEditing ? (
-            <ScreenshotRadiusControl
-              anchor="top-right"
-              height={output.height}
-              mediaRef={outputRef}
-              onChange={onBackgroundRadiusChange}
-              onChangeEnd={onBackgroundRadiusChangeEnd}
-              radiusPercent={workspaceOutput.backgroundRadiusPercent}
-              width={output.width}
-            />
-          ) : null}
-        </div>
-      )}
-      resetKey={artifactId}
-      zoomPercent={zoomPercent}
-    />
+    <div
+      aria-label={alt}
+      className={`relative flex min-h-0 grow overflow-hidden ${isSelecting ? "cursor-move" : "cursor-grab"}`}
+      data-recording-preview-viewport
+      ref={nativeFrameRef}
+      role="img"
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 bg-black/5 dark:bg-black/25"
+        data-preview-backdrop
+      />
+    </div>
   );
 }

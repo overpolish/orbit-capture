@@ -10,11 +10,6 @@ use super::{platform, sources};
 use crate::exports::{
   cursor_effects::CursorEffectSettings, CameraOverlaySettings, RecordingOutputSettings,
 };
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-use crate::{
-  exports::cursor_effects::CursorOutputLayout,
-  screenshots::{compose_screenshot, output_placement, CapturedImage},
-};
 
 pub(super) const HEADER_MARKER: u32 = u32::from_le_bytes(*b"OCTH");
 const HEADER_VERSION: u32 = 1;
@@ -56,7 +51,6 @@ pub async fn copy_recording_preview_frame_to_clipboard(
   recording_output: RecordingOutputSettings,
 ) -> Result<(), String> {
   let sources = sources(&app, artifact_id, None)?;
-  #[cfg(any(target_os = "macos", target_os = "windows"))]
   let composed = tauri::async_runtime::spawn_blocking(move || {
     platform::composed_frame_image(
       &sources,
@@ -66,57 +60,6 @@ pub async fn copy_recording_preview_frame_to_clipboard(
       cursor_effects,
       &recording_output,
     )
-  })
-  .await
-  .map_err(|error| error.to_string())??;
-  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-  let _ = (bake_camera, camera_overlay);
-  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-  let path = sources.screen_path.clone();
-  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-  let duration_ms = sources.duration_ms;
-  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-  let cursor = sources.cursor.clone();
-  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-  let composed = tauri::async_runtime::spawn_blocking(move || {
-    let jpeg = platform::source_frame_jpeg(&path, position_ms, duration_ms)?;
-    let decoded = image::load_from_memory(&jpeg)
-      .map_err(|error| format!("The current video frame could not be decoded: {error}"))?
-      .into_rgba8();
-    let (width, height) = decoded.dimensions();
-    let source = CapturedImage {
-      height,
-      rgba: decoded.into_raw(),
-      width,
-    };
-    let placement = output_placement(width, height, &recording_output.primary)?;
-    let mut composed = compose_screenshot(&source, &recording_output.primary)?;
-    if cursor_effects.bake {
-      if let Some(cursor) = cursor {
-        cursor.composite_output_rgba(
-          &mut composed.rgba,
-          (width, height),
-          position_ms,
-          cursor_effects,
-          CursorOutputLayout {
-            output_size: (composed.width, composed.height),
-            image_rect: (
-              placement.image_x,
-              placement.image_y,
-              f64::from(placement.image_width),
-              f64::from(placement.image_height),
-            ),
-            clip_rect: cursor_effects.clip_at_video_edge.then_some((
-              placement.crop_x,
-              placement.crop_y,
-              placement.crop_width,
-              placement.crop_height,
-            )),
-          },
-        )?;
-      }
-    }
-    Ok::<_, String>(composed)
   })
   .await
   .map_err(|error| error.to_string())??;

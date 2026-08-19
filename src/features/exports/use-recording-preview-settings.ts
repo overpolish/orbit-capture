@@ -1,47 +1,38 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { Dispatch, RefObject, SetStateAction, useEffect, useRef } from "react";
+import { Dispatch, RefObject, SetStateAction, useEffect } from "react";
 
 import {
-  selectRecordingPreviewAudio,
   setRecordingPreviewAudioVolumes,
-  setRecordingPreviewComposition,
   setRecordingPreviewCursorEffects,
 } from "./api";
-import { RecordingOutputSettings } from "./screenshot-output";
-import {
-  AudioTrackVolume,
-  CameraOverlaySettings,
-  CursorEffectSettings,
-} from "./types";
-import { usePreviewCapabilities } from "./use-preview-capabilities";
+import { AudioTrackVolume, CursorEffectSettings } from "./types";
 
+/**
+ * The preview settings React still pushes on their own channel.
+ *
+ * The composition (camera overlay, recording output, bake) is not among them:
+ * the native surface receives it inside every layout invoke, atomically with
+ * the pane rects it belongs to and ordered by requestId. Sending it here as
+ * well would create a second, unordered channel. Audio selection is likewise
+ * installed with the session and then owned by the native player.
+ */
 export function useRecordingPreviewSettings({
   audioTrackVolumes,
-  bakeCamera,
-  cameraOverlay,
   cursorEffects,
-  enabledStreamIndices,
   isEnabled,
-  recordingOutput,
   sessionIdRef,
   setError,
   startedRef,
 }: {
   audioTrackVolumes: AudioTrackVolume[];
-  bakeCamera: boolean;
-  cameraOverlay: CameraOverlaySettings;
   cursorEffects: CursorEffectSettings;
-  enabledStreamIndices: number[];
   isEnabled: boolean;
-  recordingOutput: RecordingOutputSettings;
   sessionIdRef: RefObject<number>;
   setError: Dispatch<SetStateAction<string | null>>;
   startedRef: RefObject<boolean>;
 }) {
-  const nativeSurface = usePreviewCapabilities()?.nativeRecordingPreview;
-  const selection = enabledStreamIndices.join("-");
   const volumes = audioTrackVolumes
     .map(
       ({ decibels, streamIndex }) =>
@@ -49,29 +40,6 @@ export function useRecordingPreviewSettings({
     )
     .join("-");
   const cursor = Object.values(cursorEffects).join("-");
-  const composition = JSON.stringify({
-    bakeCamera,
-    cameraOverlay,
-    recordingOutput,
-  });
-  const pendingCompositionRef = useRef({
-    bakeCamera,
-    cameraOverlay,
-    recordingOutput,
-  });
-  pendingCompositionRef.current = {
-    bakeCamera,
-    cameraOverlay,
-    recordingOutput,
-  };
-  useEffect(() => {
-    if (!isEnabled || !startedRef.current || nativeSurface) return;
-    void selectRecordingPreviewAudio(
-      enabledStreamIndices,
-      sessionIdRef.current,
-    ).catch(setError);
-    // eslint-disable-next-line @eslint-react/exhaustive-deps
-  }, [isEnabled, selection]);
   useEffect(() => {
     if (!isEnabled || !startedRef.current) return;
     void setRecordingPreviewAudioVolumes(
@@ -88,28 +56,4 @@ export function useRecordingPreviewSettings({
     ).catch(setError);
     // eslint-disable-next-line @eslint-react/exhaustive-deps
   }, [cursor, isEnabled]);
-  useEffect(() => {
-    // The native surface receives the composition inside every layout invoke,
-    // atomically with the pane rects it belongs to and ordered by requestId.
-    // Sending it here as well creates a second, unordered channel: a redraw
-    // for this composition can land after a newer layout and stretch the
-    // previous canvas into the new rect for a frame.
-    if (!isEnabled || !startedRef.current || nativeSurface) return;
-    // Inspector and OSC changes can arrive faster than the display. Forward
-    // only the newest composition once per display tick so pointer input never
-    // creates an IPC/render backlog behind the visible controls.
-    const frame = requestAnimationFrame(() => {
-      const pending = pendingCompositionRef.current;
-      void setRecordingPreviewComposition({
-        bakeCamera: pending.bakeCamera,
-        cameraOverlay: pending.cameraOverlay,
-        recordingOutput: pending.recordingOutput,
-        sessionId: sessionIdRef.current,
-      }).catch(setError);
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-    };
-    // eslint-disable-next-line @eslint-react/exhaustive-deps
-  }, [composition, isEnabled]);
 }

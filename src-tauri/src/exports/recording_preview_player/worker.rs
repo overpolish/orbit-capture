@@ -53,15 +53,6 @@ fn stop_child(child: &Arc<Mutex<Option<Child>>>) {
   }
 }
 
-fn send_frame(
-  channel: &Channel,
-  sources: &PlayerSources,
-  request_id: u64,
-  payload: platform::VideoFramePayload,
-) -> bool {
-  platform::send_frame(channel, sources, request_id, payload)
-}
-
 fn send_error(channel: &Channel<RecordingPreviewPlayerEvent>, message: String) {
   let _ = channel.send(RecordingPreviewPlayerEvent::Error { message });
 }
@@ -75,7 +66,6 @@ struct RunContext {
   audio_volumes: Arc<RwLock<Vec<AudioTrackVolume>>>,
   cancelled: Arc<AtomicBool>,
   event_channel: Channel<RecordingPreviewPlayerEvent>,
-  frame_channel: Channel,
   mode: PlaybackMode,
   playback_factors: Vec<f64>,
   position_ms: Arc<AtomicU64>,
@@ -93,7 +83,6 @@ fn run(context: RunContext) {
     audio_volumes,
     start_ms,
     mode,
-    frame_channel,
     event_channel,
     cancelled,
     playback_factors,
@@ -136,9 +125,7 @@ fn run(context: RunContext) {
 
   if matches!(mode, PlaybackMode::Still | PlaybackMode::InteractiveStill) {
     if let Ok(frame) = frame_rx.recv() {
-      if !cancelled.load(Ordering::Acquire)
-        && send_frame(&frame_channel, &sources, request_id, frame.payload)
-      {
+      if !cancelled.load(Ordering::Acquire) && platform::send_frame(&sources, frame.payload) {
         position_ms.store(start_ms, Ordering::Release);
         let _ = event_channel.send(RecordingPreviewPlayerEvent::Ready {
           position_ms: start_ms,
@@ -206,7 +193,7 @@ fn run(context: RunContext) {
       .saturating_add(elapsed_ms())
       .min(sources.duration_ms);
     position_ms.store(current, Ordering::Release);
-    if !send_frame(&frame_channel, &sources, request_id, frame.payload) {
+    if !platform::send_frame(&sources, frame.payload) {
       break;
     }
     let _ = event_channel.send(RecordingPreviewPlayerEvent::Position {
@@ -234,7 +221,6 @@ impl PreviewPlayerWorker {
   pub(super) fn spawn(
     sources: PlayerSources,
     launch: WorkerLaunch,
-    frame_channel: Channel,
     event_channel: Channel<RecordingPreviewPlayerEvent>,
   ) -> Result<Self, String> {
     let WorkerLaunch {
@@ -264,7 +250,6 @@ impl PreviewPlayerWorker {
             audio_child,
             cancelled,
             event_channel,
-            frame_channel,
             mode,
             playback_factors,
             position_ms,

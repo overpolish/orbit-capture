@@ -301,7 +301,11 @@ export function useScreenshotPreviewSurface({
       void layoutScreenshotPreviewSurface(next)
         .catch(() => undefined)
         .finally(() => {
-          if (!disposed && nativeEditorActive && pendingZoomRestoreRef.current) {
+          if (
+            !disposed &&
+            nativeEditorActive &&
+            pendingZoomRestoreRef.current
+          ) {
             pendingZoomRestoreRef.current = false;
             const zoom = zoomPercentRef.current;
             if (zoom !== undefined) {

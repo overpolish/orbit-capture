@@ -8,7 +8,7 @@ import {
 } from "./screenshot-output";
 import { CameraOverlaySettings, RecordingPreviewPane } from "./types";
 
-export type OverlayRect = {
+type OverlayRect = {
   height: number;
   width: number;
   x: number;
@@ -19,25 +19,6 @@ export type CameraOverlayGeometry = {
   camera: OverlayRect;
   frame: OverlayRect;
   radius: number;
-};
-
-export const RADIUS_HANDLE_INSET = 10;
-export const RADIUS_HANDLE_TRAVEL = 0.55;
-const CAMERA_FRAME_MINIMUM_SHORT_EDGE_PERCENT = 10;
-
-export const clamp = (value: number, minimum: number, maximum: number) =>
-  Math.min(maximum, Math.max(minimum, value));
-
-export const minimumCameraFrameWidth = (
-  screen: RecordingPreviewPane,
-  frame: OverlayRect,
-) => {
-  const minimumShortEdge =
-    (Math.min(screen.width, screen.height) *
-      CAMERA_FRAME_MINIMUM_SHORT_EDGE_PERCENT) /
-    100;
-  const aspectRatio = frame.width / frame.height;
-  return aspectRatio >= 1 ? minimumShortEdge * aspectRatio : minimumShortEdge;
 };
 
 export const cameraOverlayGeometry = (
@@ -259,50 +240,6 @@ export const cameraOverlayHasCrop = ({
     Math.abs(geometry.frame.width - geometry.camera.width) > epsilon ||
     Math.abs(geometry.frame.height - geometry.camera.height) > epsilon
   );
-};
-
-/** Grow the output canvas around a camera frame dragged past its edges. */
-export const fitCanvasToCameraOverlay = (
-  screen: RecordingPreviewPane,
-  camera: RecordingPreviewPane,
-  settings: CameraOverlaySettings,
-) => {
-  const { frame } = cameraOverlayGeometry(screen, camera, settings);
-  const left = Math.min(0, Math.floor(frame.x));
-  const top = Math.min(0, Math.floor(frame.y));
-  const right = Math.max(screen.width, Math.ceil(frame.x + frame.width));
-  const bottom = Math.max(screen.height, Math.ceil(frame.y + frame.height));
-  return {
-    height: bottom - top,
-    originX: left,
-    originY: top,
-    width: right - left,
-  };
-};
-
-/** Preserve baked-camera geometry while the shared output canvas is resized. */
-export const resizeCameraOverlayCanvas = (
-  settings: CameraOverlaySettings,
-  previous: { height: number; width: number },
-  bounds: { height: number; originX: number; originY: number; width: number },
-): CameraOverlaySettings => {
-  const width = Math.max(1, bounds.width);
-  const height = Math.max(1, bounds.height);
-  const frameX = (previous.width * settings.frameXPercent) / 100;
-  const frameY = (previous.height * settings.frameYPercent) / 100;
-  const cameraX = (previous.width * settings.cameraXPercent) / 100;
-  const cameraY = (previous.height * settings.cameraYPercent) / 100;
-  return {
-    ...settings,
-    cameraWidthPercent: (previous.width * settings.cameraWidthPercent) / width,
-    cameraXPercent: ((cameraX - bounds.originX) * 100) / width,
-    cameraYPercent: ((cameraY - bounds.originY) * 100) / height,
-    frameHeightPercent:
-      (previous.height * settings.frameHeightPercent) / height,
-    frameWidthPercent: (previous.width * settings.frameWidthPercent) / width,
-    frameXPercent: ((frameX - bounds.originX) * 100) / width,
-    frameYPercent: ((frameY - bounds.originY) * 100) / height,
-  };
 };
 
 /** Uniformly reframe a baked camera with the shared output dimensions. */

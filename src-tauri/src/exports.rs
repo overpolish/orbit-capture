@@ -24,7 +24,7 @@ mod validation;
 mod workspace;
 
 pub use artifact::{discard, present_recording, present_screenshot};
-use artifact::{emit_snapshot, full_preview_png, screenshot_image, snapshot, take_artifact};
+use artifact::{emit_snapshot, snapshot, take_artifact};
 use camera_save::validate_camera_overlay;
 use commands::set_export_directory;
 use directory::current_directory;
@@ -57,10 +57,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use image::{ExtendedColorType, ImageEncoder};
 use serde::{Deserialize, Serialize};
-use tauri::{image::Image, ipc::Response, AppHandle, Emitter, Manager};
+use tauri::{image::Image, AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::recording::{FinalizeInfo, PrimaryRecordingKind};
@@ -95,9 +93,6 @@ const WORKING_RECORDING_EXTENSIONS: &[&str] = &["mov", "mp4"];
 /// enough that a crash is recoverable, short enough that a forgotten one does
 /// not sit in the app's data directory forever.
 const ORPHAN_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-/// The long edge of the preview shipped to the window. The capture itself can
-/// be 30 MB of pixels, which has no business crossing the IPC boundary.
-const PREVIEW_MAX_EDGE: u32 = 640;
 const MAX_FILE_STEM: usize = 200;
 
 /// A capture waiting to be saved.
@@ -433,9 +428,6 @@ pub struct ExportState {
   artifact: Mutex<Option<ExportArtifact>>,
   capture_reservation: Mutex<Option<workspace::CaptureWorkspaceReservation>>,
   generation: AtomicU64,
-  preview: Mutex<Option<Vec<u8>>>,
-  /// Built only if the user zooms in, because it is the whole capture.
-  full_preview: Mutex<Option<Vec<u8>>>,
   directory: Mutex<Option<PathBuf>>,
   cursor_effects: Mutex<cursor_effects::CursorEffectSettings>,
   recording_output: Mutex<Option<RecordingOutputSettings>>,

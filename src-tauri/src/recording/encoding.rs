@@ -28,9 +28,6 @@ pub struct FinalizeInfo {
   pub duration_ms: u64,
   pub height: u32,
   pub path: PathBuf,
-  /// A still from the last frame, if one could be drawn. A recording recovered
-  /// from a previous run has none, because its frames are long gone.
-  pub poster: Option<Vec<u8>>,
   pub primary_kind: PrimaryRecordingKind,
   /// The captured pixels per logical display point. Export uses this to offer
   /// meaningful 1x/1.5x output rather than arbitrary percentages.
@@ -257,103 +254,6 @@ impl Timeline {
       .max(0)
       .max(after_last)
   }
-}
-
-/// Scales a capture down to fit `max_edge`, never up.
-pub fn poster_size(width: u32, height: u32, max_edge: u32) -> (u32, u32) {
-  let longest = width.max(height);
-  if longest == 0 {
-    return (0, 0);
-  }
-  if longest <= max_edge {
-    return (width, height);
-  }
-
-  let scale = f64::from(max_edge) / f64::from(longest);
-  (
-    ((f64::from(width) * scale).round() as u32).max(1),
-    ((f64::from(height) * scale).round() as u32).max(1),
-  )
-}
-
-/// BT.709 video-range coefficients, which is what ScreenCaptureKit hands back
-/// for a `420v` capture.
-const LUMA_SCALE: f32 = 1.164_383_5;
-const R_V: f32 = 1.792_741_1;
-const G_U: f32 = -0.213_248_6;
-const G_V: f32 = -0.532_909_3;
-const B_U: f32 = 2.112_401_8;
-
-/// One plane of a captured frame. The stride is the buffer's own row pitch,
-/// which for a hardware capture is padded well past the image's width.
-pub struct Plane<'a> {
-  pub bytes: &'a [u8],
-  pub stride: usize,
-}
-
-/// Converts a bi-planar NV12 frame straight into a downscaled RGBA thumbnail.
-///
-/// Sampling on the way down rather than converting the whole frame first is
-/// what keeps this cheap: a 4K frame costs a few hundred thousand pixel
-/// conversions instead of eight million. This runs once per recording, on the
-/// writer thread, so nearest-neighbour sampling is the right trade - the
-/// result is a poster image, not a frame of the movie.
-pub fn nv12_poster_rgba(
-  luma: Plane<'_>,
-  chroma: Plane<'_>,
-  width: u32,
-  height: u32,
-  out_width: u32,
-  out_height: u32,
-) -> Vec<u8> {
-  let (
-    Plane {
-      bytes: luma,
-      stride: luma_stride,
-    },
-    Plane {
-      bytes: chroma,
-      stride: chroma_stride,
-    },
-  ) = (luma, chroma);
-  let mut rgba = vec![0_u8; (out_width as usize) * (out_height as usize) * 4];
-  if out_width == 0 || out_height == 0 || width == 0 || height == 0 {
-    return rgba;
-  }
-
-  for out_y in 0..out_height as usize {
-    let source_y = (out_y * height as usize / out_height as usize).min(height as usize - 1);
-    let luma_row = source_y * luma_stride;
-    let chroma_row = (source_y / 2) * chroma_stride;
-
-    for out_x in 0..out_width as usize {
-      let source_x = (out_x * width as usize / out_width as usize).min(width as usize - 1);
-      let y = luma.get(luma_row + source_x).copied().unwrap_or(16);
-      let u = chroma
-        .get(chroma_row + (source_x / 2) * 2)
-        .copied()
-        .unwrap_or(128);
-      let v = chroma
-        .get(chroma_row + (source_x / 2) * 2 + 1)
-        .copied()
-        .unwrap_or(128);
-
-      let luminance = LUMA_SCALE * (f32::from(y) - 16.0);
-      let chroma_u = f32::from(u) - 128.0;
-      let chroma_v = f32::from(v) - 128.0;
-      let pixel = (out_y * out_width as usize + out_x) * 4;
-      rgba[pixel] = clamp_channel(luminance + R_V * chroma_v);
-      rgba[pixel + 1] = clamp_channel(luminance + G_U * chroma_u + G_V * chroma_v);
-      rgba[pixel + 2] = clamp_channel(luminance + B_U * chroma_u);
-      rgba[pixel + 3] = u8::MAX;
-    }
-  }
-
-  rgba
-}
-
-fn clamp_channel(value: f32) -> u8 {
-  value.clamp(0.0, 255.0) as u8
 }
 
 #[cfg(test)]

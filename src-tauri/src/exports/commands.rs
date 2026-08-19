@@ -44,9 +44,9 @@ pub fn copy_export_to_clipboard(
   screenshot_output: ScreenshotWorkspaceOutputSettings,
 ) -> Result<(), String> {
   // Refused before the artifact is taken, not after: the clipboard cannot hold
-  // a movie, and taking one only to put it back would drop its poster on the
-  // way through. The window hides the button, so this is for callers that are
-  // out of date rather than for anything a user can press.
+  // a movie, and taking one only to put it back is pointless churn. The window
+  // hides the button, so this is for callers that are out of date rather than
+  // for anything a user can press.
   if matches!(
     app
       .state::<ExportState>()

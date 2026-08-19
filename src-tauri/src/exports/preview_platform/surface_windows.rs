@@ -63,17 +63,11 @@ use super::{
     DisplayTarget, NormalizedRect,
   },
   workspace_transform::WorkspaceTransform,
-  PreviewCapabilities, PreviewSelection, PreviewSurfaceRect, SelectionCallback,
-  SelectionGestureCallback, SelectionGestureOperation, SelectionGesturePhase, TransformCallback,
+  PreviewSelection, PreviewSurfaceRect, SelectionCallback, SelectionGestureCallback,
+  SelectionGestureOperation, SelectionGesturePhase, TransformCallback,
 };
 use crate::exports::media_preview::{BakeGeometry, BakedVideoExportOptions, VideoExportOptions};
 use crate::screenshots::{CapturedImage, ScreenshotOutputSettings};
-
-pub(super) const CAPABILITIES: PreviewCapabilities = PreviewCapabilities {
-  native_workspace_editor: true,
-  native_recording_preview: true,
-  native_screenshot_preview: true,
-};
 
 pub(crate) struct StillOverlay;
 

@@ -10,7 +10,6 @@
 
 mod composition;
 mod cursor;
-mod frame;
 mod image;
 mod scrubber;
 mod still;
@@ -44,7 +43,6 @@ pub(crate) enum VideoFramePayload {
   Native {
     screen: crate::screenshots::CapturedImage,
     camera: Option<crate::screenshots::CapturedImage>,
-    cursor: Option<frame::CursorPreview>,
     screen_output: crate::screenshots::ScreenshotOutputSettings,
     camera_output: crate::screenshots::ScreenshotOutputSettings,
     cursor_image: Option<crate::screenshots::CapturedImage>,
@@ -55,17 +53,11 @@ pub(crate) enum VideoFramePayload {
   },
 }
 
-pub(crate) fn send_frame(
-  channel: &Channel,
-  sources: &PlayerSources,
-  request_id: u64,
-  payload: VideoFramePayload,
-) -> bool {
+pub(crate) fn send_frame(sources: &PlayerSources, payload: VideoFramePayload) -> bool {
   match payload {
     VideoFramePayload::Native {
       screen,
       camera,
-      cursor,
       screen_output,
       camera_output,
       cursor_image,
@@ -115,53 +107,7 @@ pub(crate) fn send_frame(
           .present_recording_workspace(&layers)
           .unwrap_or(false);
       }
-      let screen = match crate::screenshots::compose_output_layers(
-        &screen,
-        &screen_output,
-        seconds,
-        true,
-        cursor_image.as_ref(),
-        bake_camera.then_some(camera.as_ref()).flatten(),
-        overlay.as_ref(),
-        clip_cursor_at_video_edge,
-        false,
-      ) {
-        Ok(screen) => screen,
-        Err(_) => return false,
-      };
-      let camera = if bake_camera {
-        None
-      } else {
-        camera.as_ref().and_then(|camera| {
-          crate::screenshots::compose_output_layers(
-            camera,
-            &camera_output,
-            seconds,
-            true,
-            None,
-            None,
-            None,
-            false,
-            false,
-          )
-          .ok()
-        })
-      };
-      let screen = match composition::encoded_jpeg(&screen) {
-        Ok(bytes) => bytes,
-        Err(_) => return false,
-      };
-      let camera = camera.as_ref().map(composition::encoded_jpeg).transpose();
-      match camera {
-        Ok(camera) => frame::send_frame(
-          channel,
-          request_id,
-          &screen,
-          camera.as_deref(),
-          cursor.as_ref(),
-        ),
-        Err(_) => false,
-      }
+      false
     }
   }
 }

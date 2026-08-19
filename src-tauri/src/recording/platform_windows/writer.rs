@@ -505,7 +505,6 @@ impl Writer {
       has_system_audio: false,
       height: self.config.height,
       path: self.config.path.clone(),
-      poster: None,
       primary_kind: self.config.primary_kind,
       source_scale_factor: 1.0,
       width: self.config.width,

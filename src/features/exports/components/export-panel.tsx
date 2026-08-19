@@ -69,7 +69,6 @@ type ExportPanelProps = {
   onEnabledVideoTracksChange?: (tracks: RecordingVideoTrackId[]) => void;
   onFileStemChange?: (fileStem: string) => void;
   onMinimize?: () => void;
-  onNeedFullResolution?: () => void;
   onRecordingOutputChange?: (
     trackId: RecordingVideoTrackId,
     settings: ScreenshotOutputSettings,
@@ -82,14 +81,12 @@ type ExportPanelProps = {
     settings: ScreenshotOutputSettings,
     itemId?: number,
   ) => void;
-  onScreenshotRadiusChange?: (radiusPercent: number) => void;
   onScreenshotRadiusChangeEnd?: () => void;
   onSelectedScreenshotItemChange?: (itemId: number | null) => void;
   onSelectedTrackChange?: (trackId: RecordingTrackId | null) => void;
   onSelectedTrackVolumeChange?: (decibels: number) => void;
   onToggleMaximize?: () => void;
   onVideoTrackOrderChange?: (tracks: RecordingVideoTrackId[]) => void;
-  previewUrl?: string | null;
   recordingOutput?: RecordingOutputSettings;
   recordingPreviewError?: string | null;
   recordingPreviewLayout?: RecordingPreviewLayout;
@@ -150,21 +147,18 @@ export function ExportPanel({
   onEnabledVideoTracksChange,
   onFileStemChange,
   onMinimize,
-  onNeedFullResolution,
   onRecordingOutputChange,
   onResolutionScaleChange,
   onSave,
   onScreenshotBackgroundRadiusChange,
   onScreenshotBackgroundRadiusChangeEnd,
   onScreenshotOutputChange,
-  onScreenshotRadiusChange,
   onScreenshotRadiusChangeEnd,
   onSelectedScreenshotItemChange,
   onSelectedTrackChange,
   onSelectedTrackVolumeChange,
   onToggleMaximize,
   onVideoTrackOrderChange,
-  previewUrl,
   recordingOutput,
   recordingPreviewError,
   recordingPreviewLayout,
@@ -355,12 +349,9 @@ export function ExportPanel({
             onBackgroundRadiusChange={onScreenshotBackgroundRadiusChange}
             onBackgroundRadiusChangeEnd={onScreenshotBackgroundRadiusChangeEnd}
             onCanvasResize={onCanvasResize}
-            onNeedFullResolution={onNeedFullResolution}
             onOutputChange={onScreenshotOutputChange}
-            onRadiusChange={onScreenshotRadiusChange}
             onRadiusChangeEnd={onScreenshotRadiusChangeEnd}
             onSelectedItemChange={onSelectedScreenshotItemChange}
-            previewUrl={previewUrl}
             screenshotOutput={screenshotOutput}
             selectedItemId={selectedScreenshotItemId}
           />

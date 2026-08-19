@@ -387,7 +387,6 @@ pub async fn save_export(
   // may still be restored by Cancel or an export error, then retire it only
   // once the finished files have been published.
   artifact::clear_recording_preview(&app);
-  artifact::clear_cached_previews(&app);
   let _ = window::hide(&app);
   emit_snapshot(&app);
 

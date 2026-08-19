@@ -14,8 +14,7 @@ use cidre::{arc, av, cm, cv, ns};
 
 use super::{
   composition::{cursor_rgba, still_overlay},
-  cursor::cursor_preview,
-  frame::CursorPreview,
+  cursor::{cursor_preview, CursorPreview},
   VideoFramePayload,
 };
 use crate::exports::cursor_effects::CursorOverlayCache;
@@ -326,7 +325,6 @@ pub(super) fn spawn(
           payload: VideoFramePayload::Native {
             screen: raw_screen,
             camera: raw_camera,
-            cursor: None,
             screen_output,
             camera_output,
             cursor_image,

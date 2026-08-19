@@ -240,7 +240,7 @@ export const screenshotLayout = (
 };
 
 /** Resize the output canvas without moving or scaling the screenshot in it. */
-export const resizeScreenshotCanvas = (
+const resizeScreenshotCanvas = (
   source: { height: number; width: number },
   settings: ScreenshotOutputSettings,
   bounds: ScreenshotCanvasBounds,

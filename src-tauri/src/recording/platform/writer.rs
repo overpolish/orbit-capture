@@ -8,7 +8,6 @@ mod samples;
 use std::sync::OnceLock;
 use std::{
   collections::VecDeque,
-  io::Cursor,
   ops::ControlFlow,
   path::PathBuf,
   sync::{
@@ -30,14 +29,13 @@ use super::{
     time_to_ns, video_settings, VideoEncoder,
   },
   AudioSample, CaptureStats, Command, Frame, CAMERA_ENCODER_POLL, CAMERA_ENCODER_WAIT,
-  MICROPHONE_PREROLL_LIMIT, NANOS_PER_MS, POSTER_MAX_EDGE, REJECTION_STREAK_LIMIT,
-  SYSTEM_AUDIO_CHANNELS, SYSTEM_AUDIO_PREROLL_LIMIT, SYSTEM_AUDIO_SAMPLE_RATE,
-  TAIL_APPEND_ATTEMPTS, TAIL_APPEND_WAIT,
+  MICROPHONE_PREROLL_LIMIT, NANOS_PER_MS, REJECTION_STREAK_LIMIT, SYSTEM_AUDIO_CHANNELS,
+  SYSTEM_AUDIO_PREROLL_LIMIT, SYSTEM_AUDIO_SAMPLE_RATE, TAIL_APPEND_ATTEMPTS, TAIL_APPEND_WAIT,
 };
 pub(super) use container::Container;
 
 use crate::recording::{
-  encoding::{nv12_poster_rgba, poster_size, FailureReport, FinalizeInfo, Plane, Timeline},
+  encoding::{FailureReport, FinalizeInfo, Timeline},
   microphone::{Buffer as MicrophoneBuffer, Format as MicrophoneFormat},
 };
 
@@ -281,8 +279,7 @@ impl Writer {
       Command::Begin { .. } => {}
       Command::Frame(frame) => {
         if self.timeline.is_paused() {
-          // Still worth keeping: it is the frame the movie resumes from and
-          // the one the poster is drawn from if the user stops here.
+          // Still worth keeping: it is the frame the movie resumes from.
           self.tail = Some(frame);
           return ControlFlow::Continue(());
         }

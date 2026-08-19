@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use cidre::cv;
-
 use super::*;
 use crate::recording::PrimaryRecordingKind;
 
@@ -57,7 +55,7 @@ impl Writer {
     // Holding the final frame until the true stop time is what gives a
     // recording of a static screen its real duration, so a busy encoder is
     // worth waiting a moment for rather than giving up on.
-    let mut tail = self.tail.take();
+    let tail = self.tail.take();
     if let Some(frame) = &tail {
       self.append_insisting(frame, stop_ns);
     }
@@ -124,7 +122,6 @@ impl Writer {
       duration_ms: u64::try_from(end_ns / NANOS_PER_MS).unwrap_or_default(),
       height: self.height,
       path: self.path.clone(),
-      poster: tail.as_mut().and_then(poster_png),
       primary_kind: match self.source {
         VideoSource::Camera => PrimaryRecordingKind::Camera,
         VideoSource::Screen => PrimaryRecordingKind::Screen,
@@ -135,52 +132,4 @@ impl Writer {
       width: self.width,
     })
   }
-}
-
-/// Draws the still shown in the export window from the recording's last frame.
-fn poster_png(frame: &mut Frame) -> Option<Vec<u8>> {
-  let buf = &mut *frame.buf;
-  // A `420v` capture is always bi-planar; anything else is not a frame this
-  // pipeline produced.
-  if buf.plane_count() < 2 {
-    return None;
-  }
-  let width = u32::try_from(buf.width()).ok()?;
-  let height = u32::try_from(buf.height()).ok()?;
-  let (out_width, out_height) = poster_size(width, height, POSTER_MAX_EDGE);
-
-  let flags = cv::pixel_buffer::LockFlags::READ_ONLY;
-  // SAFETY: the buffer stays locked for exactly the two reads below, and each
-  // plane is bounded by the stride and height the buffer itself reports.
-  unsafe { buf.lock_base_addr(flags) }.result().ok()?;
-  let luma_stride = buf.plane_bytes_per_row(0);
-  let chroma_stride = buf.plane_bytes_per_row(1);
-  let luma_base = buf.plane_base_address(0);
-  let chroma_base = buf.plane_base_address(1);
-  let rgba = if luma_base.is_null() || chroma_base.is_null() {
-    None
-  } else {
-    let luma = Plane {
-      bytes: unsafe { std::slice::from_raw_parts(luma_base, luma_stride * buf.plane_height(0)) },
-      stride: luma_stride,
-    };
-    let chroma = Plane {
-      bytes: unsafe {
-        std::slice::from_raw_parts(chroma_base, chroma_stride * buf.plane_height(1))
-      },
-      stride: chroma_stride,
-    };
-    Some(nv12_poster_rgba(
-      luma, chroma, width, height, out_width, out_height,
-    ))
-  };
-  unsafe { buf.unlock_lock_base_addr(flags) };
-
-  let image = image::RgbaImage::from_raw(out_width, out_height, rgba?)?;
-  let mut png = Vec::new();
-  image::DynamicImage::ImageRgba8(image)
-    .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
-    .ok()?;
-
-  Some(png)
 }

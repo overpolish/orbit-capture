@@ -1,40 +1,28 @@
 <!-- SPDX-FileCopyrightText: 2026 overpolish -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# Native screenshot viewer migration
+# Native preview viewer
 
-The native screenshot path no longer mounts `InteractivePreviewViewport` or
-its WebKit editing controls. The WebKit side contributes only a passive frame
-whose bounds define the native AppKit/Metal workarea.
+The native GPU compositor is the only preview path on every shipped platform.
+The DOM/canvas viewer it replaced - `InteractivePreviewViewport`, the DOM
+on-screen controls (selection, crop, radius, canvas resize, snapping,
+magnifier), the RGBA frame channel and the `preview_capabilities` probe - has
+been removed from the frontend.
 
-## Implemented natively
+What the WebKit side still contributes is a passive frame: marker elements
+whose bounds define the native workarea and pane rects, plus the composited
+backdrop colour and its mask holes. `useRecordingPreviewSurface` and
+`useScreenshotPreviewSurface` measure those markers and forward the geometry,
+composition and selection state to Rust; everything painted inside the viewport
+comes back from `preview_platform` (see `workspace_editor.rs`), including
+selection chrome, crop shade, corner-radius handles, snapping and the
+pointer/wheel gestures behind pan and zoom.
 
-- Fit the composed screenshot into the workarea with the existing 8-point gutter.
-- Left- or middle-button drag to pan.
-- Trackpad/two-axis wheel pan.
-- Trackpad pinch and Control-wheel pointer-anchored zoom.
-- Toolbar-controlled zoom from 10% to 1600%.
-- Double-click reset to fit.
-- Live toolbar zoom updates from native gestures.
+Consequences worth remembering:
 
-## Still to reimplement natively
-
-- Layer selection, deselection, ordering, and context menus.
-- Screenshot move, frame resize, crop, and crop shade.
-- Canvas resize, including centred Alt resize and anchor compensation.
-- Screenshot and workspace corner-radius controls.
-- Snapping, snap guides, modifier tracking, and Alt workspace auto-fit.
-- Crop pixel magnifier.
-- Full-resolution source escalation above fit zoom.
-- Tool-specific cursors and gesture cancellation/pointer-capture semantics.
-- Accessibility equivalents for transform handles, radius controls, and menus.
-- Animated reset and any desired inertial/elastic gesture behaviour.
-
-## Removed WebKit coupling
-
-- Per-frame `requestAnimationFrame` geometry measurement.
-- CSS `zoom` and translated media-host transforms.
-- Pointer and wheel listeners in `InteractivePreviewViewport`.
-- `screenwide-preview-transformed` and
-  `screenwide-preview-transform-committed` synchronization.
-- DOM screenshot OSC rendering on the native path.
+- The viewport is empty DOM. In Storybook, where no backend exists, it renders
+  as a labelled placeholder (`.storybook/styles.css`).
+- Zoom is native-authoritative: React sends `set_*_preview_zoom` and listens to
+  `recording-preview://transform` for the echo.
+- Layer edits arrive as `selection-gesture` events and are translated back into
+  output settings by the React gesture handlers, which own undo history.

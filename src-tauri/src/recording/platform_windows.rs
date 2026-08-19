@@ -168,7 +168,6 @@ impl CaptureSession {
         has_system_audio,
         height: 0,
         path,
-        poster: None,
         primary_kind: crate::recording::PrimaryRecordingKind::Audio,
         source_scale_factor: 1.0,
         width: 0,

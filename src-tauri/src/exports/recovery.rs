@@ -121,9 +121,8 @@ pub(super) fn sweep_unclaimed_cursors(directory: &Path, keep: Option<&Path>) {
 
 /// Offers back the recording an earlier run never got to save.
 ///
-/// Deliberately not the whole artifact: the poster and the duration lived in
-/// the frames, which are long gone. The name and the file are what matter, and
-/// the window renders without a poster rather than pretending to have one.
+/// Deliberately not the whole artifact: the duration lived in the frames,
+/// which are long gone. The name and the file are what matter.
 /// Deletes every preview derivative left in the working directory.
 ///
 /// They exist only for as long as an artifact is on screen, so at startup
@@ -219,7 +218,6 @@ pub(super) fn sweep_orphaned_recordings(app: &AppHandle) {
       duration_ms,
       height,
       path,
-      poster: None,
       primary_kind,
       source_scale_factor: 1.0,
       width,

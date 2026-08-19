@@ -3,7 +3,6 @@
 
 import {
   ReactNode,
-  MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -36,7 +35,6 @@ import {
 } from "../types";
 import { useExportEditGesture } from "../use-export-edit-history";
 import { useExportWindowShortcuts } from "../use-export-window-shortcuts";
-import { usePreviewCapabilities } from "../use-preview-capabilities";
 import { useRecordingPreviewPlayer } from "../use-recording-preview-player";
 import { useRecordingTimelineThumbnails } from "../use-recording-timeline-thumbnails";
 
@@ -52,12 +50,7 @@ import { RecordingPlaybackControls } from "./recording-playback-controls";
 import { RECORDING_PREVIEW_PANE_GAP } from "./recording-preview-layout";
 import { RecordingPreviewViewport } from "./recording-preview-viewport";
 import { RecordingTrackLanes } from "./recording-track-lanes";
-import {
-  LayerContextMenu,
-  LayerContextMenuState,
-} from "./screenshot-layer-context-menu";
 import { clamp, createPlayhead } from "./scrub-playhead";
-import { useCameraOverlayHistory } from "./use-camera-overlay-history";
 
 import type { RecordingSelectionGestureEvent } from "../use-recording-preview-surface";
 import type { ScrubPreviewProps } from "./scrub-preview";
@@ -104,7 +97,6 @@ export function NativeRecordingPreview({
 }: ScrubPreviewProps & { inspector?: ReactNode }) {
   const screenCanvasRef = useRef<HTMLCanvasElement>(null);
   const cameraCanvasRef = useRef<HTMLCanvasElement>(null);
-  const cursorCanvasRef = useRef<HTMLCanvasElement>(null);
   const selectionGestureRef = useRef<{
     cameraOverlaySnapshot: CameraOverlaySettings | null;
     lastDeltaX: number;
@@ -118,7 +110,6 @@ export function NativeRecordingPreview({
   const editGesture = useExportEditGesture();
   const totalDurationRef = useRef(durationMs);
   const [playhead] = useState(createPlayhead);
-  const [isScrubbing, setIsScrubbing] = useState(false);
   const [zoomPercent, setZoomPercent] = useState(100);
   const [canvasTool, setCanvasTool] = useState<RecordingCanvasTool>("select");
   // A canvas resize runs at pointer rate; committing every move to the export
@@ -127,10 +118,7 @@ export function NativeRecordingPreview({
   // commits once on release, exactly like the screenshot editor.
   const [canvasResizeDraft, setCanvasResizeDraft] =
     useState<RecordingOutputSettings | null>(null);
-  const [layerContextMenu, setLayerContextMenu] =
-    useState<LayerContextMenuState<RecordingVideoTrackId> | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
-  const capabilities = usePreviewCapabilities();
   // Everything derived below feeds memoized children. A canvas-resize gesture
   // re-renders this component at pointer rate, so a derived array or Set rebuilt
   // per render would defeat the memo of every subtree it reaches.
@@ -150,10 +138,9 @@ export function NativeRecordingPreview({
     bakeCamera &&
     selectedVideoTracks.has("primary") &&
     selectedVideoTracks.has("camera");
-  const nativeEditorOwnsLayout =
-    capabilities?.nativeRecordingPreview === true &&
-    capabilities.nativeWorkspaceEditor &&
-    previewLayout === undefined;
+  // Storybook renders a fixed layout with no backend session behind it; every
+  // other caller lets the native workspace editor own the layout.
+  const nativeEditorOwnsLayout = previewLayout === undefined;
   // A running save covers the viewport with the progress overlay, whose Cancel
   // button is a DOM control - and the native interaction view is inserted
   // above the webview, so it would swallow that click and pan the workspace
@@ -953,7 +940,6 @@ export function NativeRecordingPreview({
     bakeCamera,
     cameraCanvasRef,
     cameraOverlay: previewCameraOverlay,
-    cursorCanvasRef,
     cursorEffects,
     enabledStreamIndices: selectedStreamIndices,
     isEditorSuspended,
@@ -981,12 +967,6 @@ export function NativeRecordingPreview({
   const timelineThumbnails = useRecordingTimelineThumbnails({
     artifactId,
     isEnabled: previewLayout === undefined,
-  });
-  const cameraHistory = useCameraOverlayHistory({
-    enabled: bakeCamera,
-    onChange: onCameraOverlayChange,
-    resetKey: artifactId,
-    settings: cameraOverlay,
   });
   const totalDurationMs = player.durationMs || durationMs;
   totalDurationRef.current = totalDurationMs;
@@ -1062,38 +1042,6 @@ export function NativeRecordingPreview({
     },
     [activeVideoTrack, onVideoTrackOrderChange, videoTrackOrder],
   );
-  const openLayerContextMenu = useCallback(
-    (
-      trackId: RecordingVideoTrackId,
-      event: ReactMouseEvent<HTMLDivElement>,
-    ) => {
-      event.preventDefault();
-      event.stopPropagation();
-      onSelectedTrackChange?.(trackId);
-      setLayerContextMenu({
-        itemId: trackId,
-        x: Math.min(event.clientX, window.innerWidth - 196),
-        y: Math.min(event.clientY, window.innerHeight - 92),
-      });
-    },
-    [onSelectedTrackChange],
-  );
-  const moveVideoTrack = useCallback(
-    (trackId: RecordingVideoTrackId, direction: "backward" | "forward") => {
-      setLayerContextMenu(null);
-      const currentIndex = videoTrackOrder.indexOf(trackId);
-      const nextIndex =
-        direction === "forward" ? currentIndex - 1 : currentIndex + 1;
-      if (nextIndex < 0 || nextIndex >= videoTrackOrder.length) return;
-      const next = [...videoTrackOrder];
-      [next[currentIndex], next[nextIndex]] = [
-        next[nextIndex],
-        next[currentIndex],
-      ];
-      onVideoTrackOrderChange?.(next);
-    },
-    [onVideoTrackOrderChange, videoTrackOrder],
-  );
 
   // The shortcut hook re-binds its window listener whenever a handler identity
   // changes, so these stay stable across the per-move draft renders.
@@ -1162,8 +1110,6 @@ export function NativeRecordingPreview({
   playerSeekRef.current = player.seek;
   const seek = useCallback(
     (ratio: number, phase: "end" | "move" | "start") => {
-      if (phase === "start") setIsScrubbing(true);
-      if (phase === "end") setIsScrubbing(false);
       const positionMs = ratio * totalDurationRef.current;
       playhead.publish(positionMs / 1_000, ratio);
       playerSeekRef.current(positionMs, phase);
@@ -1289,52 +1235,14 @@ export function NativeRecordingPreview({
             ) : canPreviewBakedCamera && screenPane && cameraPane ? (
               <div className="flex min-h-0 min-w-0 grow flex-col">
                 <BakedCameraPreviewViewport
-                  activeTrack={activeVideoTrack}
-                  cameraCanvasRef={cameraCanvasRef}
-                  cameraPane={cameraPane}
-                  controlsVisible={
-                    canvasTool !== null &&
-                    canvasTool !== "canvas" &&
-                    activeVideoTrack === "camera" &&
-                    !isPlaying &&
-                    !isScrubbing
-                  }
-                  interactionEnabled={!isPlaying && !isScrubbing}
                   isBusy={
                     previewLayout === undefined &&
                     (player.isPreparing || isPreparingPreview)
                   }
-                  nativeWorkspaceEditor={nativeEditorOwnsLayout}
-                  onCanvasResizeDraft={(settings) => {
-                    // Same contract as the unbaked viewport: the gesture
-                    // renders from the draft and commits once on release.
-                    setCanvasResizeDraft(
-                      settings === null
-                        ? null
-                        : { ...effectiveRecordingOutput, primary: settings },
-                    );
-                  }}
-                  onInteractionEnd={cameraHistory.endGesture}
-                  onInteractionStart={cameraHistory.beginGesture}
-                  onOutputChange={(settings) =>
-                    onRecordingOutputChange?.("primary", settings)
-                  }
-                  onSelectTrack={(trackId) => {
-                    onSelectedTrackChange?.(trackId);
-                  }}
-                  onSettingsChange={cameraHistory.change}
-                  onTrackContextMenu={openLayerContextMenu}
-                  onZoomChange={setZoomPercent}
-                  outputControlsVisible={
-                    canvasTool !== null &&
-                    activeVideoTrack === "primary" &&
-                    !isPlaying &&
-                    !isScrubbing
-                  }
                   outputSettings={
-                    // The draft-derived output, so the composed frame, camera
-                    // overlay geometry and on-screen controls all follow the
-                    // resize before it reaches the export window's state.
+                    // The draft-derived output, so the composed frame and the
+                    // native workspace follow the resize before it reaches the
+                    // export window's state.
                     activeRecordingOutput?.primary ?? {
                       backgroundColor: "#171717",
                       backgroundRadiusPercent: 0,
@@ -1358,10 +1266,7 @@ export function NativeRecordingPreview({
                     }
                   }
                   screenCanvasRef={screenCanvasRef}
-                  screenPane={screenPane}
-                  settings={cameraOverlay}
                   tool={canvasTool}
-                  zoomPercent={zoomPercent}
                 />
               </div>
             ) : visibleLayout &&
@@ -1369,28 +1274,9 @@ export function NativeRecordingPreview({
               activeRecordingOutput ? (
               <div className="flex min-h-0 min-w-0 grow flex-col">
                 <RecordingOutputPreviewViewport
-                  activeTrack={activeVideoTrack}
-                  controlsVisible={!isPlaying && !isScrubbing}
                   entries={visiblePaneEntries}
-                  onCanvasResizeDraft={(trackId, settings) => {
-                    // `effectiveRecordingOutput` already renders from the
-                    // draft while the gesture runs, so the other track's
-                    // settings carry over from the frame on screen.
-                    setCanvasResizeDraft(
-                      settings === null
-                        ? null
-                        : { ...effectiveRecordingOutput, [trackId]: settings },
-                    );
-                  }}
-                  onChange={onRecordingOutputChange}
-                  onSelectTrack={(trackId) => {
-                    onSelectedTrackChange?.(trackId);
-                  }}
-                  onTrackContextMenu={openLayerContextMenu}
-                  onZoomChange={setZoomPercent}
                   outputs={activeRecordingOutput}
                   tool={canvasTool}
-                  zoomPercent={zoomPercent}
                 />
               </div>
             ) : visibleLayout && visibleLayout.panes.length > 0 ? (
@@ -1402,8 +1288,6 @@ export function NativeRecordingPreview({
                     (player.isPreparing || isPreparingPreview)
                   }
                   layout={visibleLayout}
-                  onZoomChange={setZoomPercent}
-                  zoomPercent={zoomPercent}
                 />
               </div>
             ) : (
@@ -1469,24 +1353,6 @@ export function NativeRecordingPreview({
             volumes={audioVolumeByStream}
           />
         )
-      ) : null}
-      {layerContextMenu ? (
-        <LayerContextMenu
-          ariaLabel="Video layer actions"
-          canDelete={false}
-          menu={layerContextMenu}
-          onClose={() => {
-            setLayerContextMenu(null);
-          }}
-          onDelete={() => undefined}
-          onMoveBackward={() => {
-            moveVideoTrack(layerContextMenu.itemId, "backward");
-          }}
-          onMoveForward={() => {
-            moveVideoTrack(layerContextMenu.itemId, "forward");
-          }}
-          showDelete={false}
-        />
       ) : null}
     </div>
   );

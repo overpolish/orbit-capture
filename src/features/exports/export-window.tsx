@@ -51,7 +51,6 @@ import {
   ExportEditState,
   useExportEditHistory,
 } from "./use-export-edit-history";
-import { useExportPreviewImage } from "./use-export-preview-image";
 import { useExportProgress } from "./use-export-progress";
 import { useRecordingExportEstimate } from "./use-recording-export-estimate";
 import { useRecordingExportPreview } from "./use-recording-export-preview";
@@ -119,13 +118,6 @@ export function ExportWindow() {
   // the previous capture's pixels.
   const artifactId = artifact?.id;
   const saveProgress = useExportProgress(artifactId);
-  const screenshotArtifactId =
-    artifact?.kind === "screenshot" ? artifact.id : undefined;
-  const { loadFullPreview, previewUrl } = useExportPreviewImage(
-    screenshotArtifactId,
-    true,
-    selectedScreenshotItemId,
-  );
   const canCompress = artifact?.kind === "recording" && artifact.canCompress;
   const originalResolutionScale =
     artifact?.kind === "recording" ? sourceScalePercent(artifact) : 100;
@@ -593,7 +585,6 @@ export function ExportWindow() {
               console.error("Could not minimize the export window", cause);
             });
         }}
-        onNeedFullResolution={loadFullPreview}
         onRecordingOutputChange={(trackId, settings) => {
           setRecordingOutput((current) => ({
             ...current,
@@ -677,18 +668,6 @@ export function ExportWindow() {
           }));
           setError(null);
         }}
-        onScreenshotRadiusChange={(value) => {
-          screenshotRadiusRef.current = value;
-          setScreenshotOutput((current) => ({
-            ...current,
-            items: current.items.map((item) =>
-              item.id === selectedScreenshotItemId
-                ? { ...item, output: { ...item.output, radiusPercent: value } }
-                : item,
-            ),
-          }));
-          setError(null);
-        }}
         onScreenshotRadiusChangeEnd={() => {
           setScreenshotRadius(screenshotRadiusRef.current).catch(
             report("remember the screenshot radius for"),
@@ -729,7 +708,6 @@ export function ExportWindow() {
           }));
           setError(null);
         }}
-        previewUrl={previewUrl}
         recordingOutput={recordingOutput}
         recordingPreviewError={recordingPreviewError}
         recordingPreviewTracks={recordingPreviewTracks}

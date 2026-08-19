@@ -31,12 +31,11 @@ impl NativeStillDecoder {
   pub(crate) fn spawn(
     sources: PlayerSources,
     event_channel: Channel<RecordingPreviewPlayerEvent>,
-    frame_channel: Channel,
   ) -> Result<Self, String> {
     let (sender, receiver) = mpsc::channel();
     let thread = std::thread::Builder::new()
       .name("recording-preview-still-windows".to_owned())
-      .spawn(move || run(sources, receiver, event_channel, frame_channel))
+      .spawn(move || run(sources, receiver, event_channel))
       .map_err(|error| error.to_string())?;
     Ok(Self {
       sender,
@@ -80,7 +79,6 @@ fn run(
   sources: PlayerSources,
   receiver: mpsc::Receiver<DecoderCommand>,
   event_channel: Channel<RecordingPreviewPlayerEvent>,
-  _frame_channel: Channel,
 ) {
   let Some(surface) = sources.preview_surface.clone() else {
     let _ = event_channel.send(RecordingPreviewPlayerEvent::Error {

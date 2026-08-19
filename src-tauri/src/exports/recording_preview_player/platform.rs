@@ -11,9 +11,9 @@
 //! A backend must supply, with exactly these names and signatures:
 //!
 //! - [`VideoFramePayload`] - whatever a decoded playback frame is on this
-//!   platform. A GPU backend carries decoded surfaces; a fallback backend
-//!   carries encoded bytes the webview draws itself.
-//! - [`send_frame`] - hand one payload to the surface (or to the webview).
+//!   platform: the decoded GPU surfaces the compositor presents. Frames never
+//!   cross IPC, so this is never encoded bytes.
+//! - [`send_frame`] - hand one payload to the surface.
 //! - [`spawn_video`] - the playback decode thread.
 //! - [`StillDecoder`] and [`NATIVE_STILLS`] - the paused-frame and scrub path.
 //!   A backend without one sets `NATIVE_STILLS` to `false`, and the player
@@ -22,31 +22,24 @@
 //!   constructed.
 //! - [`playback_factors`] - how far each pane's decode shrinks toward its
 //!   on-screen size.
-//! - [`generate_thumbnails`] and [`source_frame_jpeg`] - the timeline strip and
-//!   the one-off full-resolution frame the crop magnifier needs.
+//! - [`generate_thumbnails`] and a `source_frame_jpeg` - the timeline strip
+//!   and the one-off full-resolution frame the crop magnifier needs.
 //!
 //! Geometry, layout and settings math deliberately stay above this line, in
 //! [`super::layout`] and the shared output validation, so a new backend never
 //! reimplements them and never inherits Metal-specific assumptions.
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-mod fallback;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-use fallback as backend;
 #[cfg(target_os = "macos")]
 use macos as backend;
 #[cfg(target_os = "windows")]
 use windows as backend;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) use backend::composed_frame_image;
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(super) use backend::source_frame_jpeg;
 #[cfg(target_os = "windows")]
 pub(crate) use backend::GpuVideoReader;
 pub(super) use backend::{

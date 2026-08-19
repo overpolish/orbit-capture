@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use super::frame::CursorPreview;
+use super::cursor::CursorPreview;
 use crate::{
   exports::{media_preview, CameraOverlaySettings},
   screenshots::{self, CapturedImage, ScreenshotOutputSettings, StillOverlay},

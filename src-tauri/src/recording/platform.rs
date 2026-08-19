@@ -112,8 +112,6 @@ const CAMERA_ENCODER_WAIT: Duration = Duration::from_millis(100);
 const CAMERA_ENCODER_POLL: Duration = Duration::from_millis(1);
 const NANOS_PER_SEC: i64 = 1_000_000_000;
 const NANOS_PER_MS: i64 = 1_000_000;
-/// The long edge of the poster shipped to the export window.
-const POSTER_MAX_EDGE: u32 = 640;
 /// Finishing writes out the movie's index, which is fast but not instant.
 const FINALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How many frames in a row the writer may refuse before the user is told.

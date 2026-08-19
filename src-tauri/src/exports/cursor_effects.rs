@@ -126,14 +126,6 @@ pub(crate) struct GpuCursor {
   pub clip_at_video_edge: bool,
 }
 
-#[derive(Clone, Copy)]
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(in crate::exports) struct CursorOutputLayout {
-  pub output_size: (u32, u32),
-  pub image_rect: (f64, f64, f64, f64),
-  pub clip_rect: Option<(i32, i32, u32, u32)>,
-}
-
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct CursorOverlayPosition {
   pub x: i32,
@@ -527,81 +519,6 @@ impl CursorCompositor {
       y: output.y as f32,
       clip_at_video_edge: settings.clip_at_video_edge,
     })
-  }
-
-  /// Composes one explicit still-frame request for the non-native fallback.
-  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-  pub(in crate::exports) fn composite_output_rgba(
-    &self,
-    pixels: &mut [u8],
-    source_size: (u32, u32),
-    position_ms: u64,
-    settings: CursorEffectSettings,
-    layout: CursorOutputLayout,
-  ) -> Result<(), String> {
-    let CursorOutputLayout {
-      output_size,
-      image_rect,
-      clip_rect,
-    } = layout;
-    let expected = output_size.0 as usize * output_size.1 as usize * 4;
-    if pixels.len() != expected {
-      return Err("The clipboard frame pixels are invalid".to_owned());
-    }
-    let Some(mut output) = self.output_cursor(
-      position_ms,
-      source_size.0 as usize,
-      source_size.1 as usize,
-      settings,
-    ) else {
-      return Ok(());
-    };
-    let scale_x = image_rect.2 / f64::from(source_size.0);
-    let scale_y = image_rect.3 / f64::from(source_size.1);
-    output.x = image_rect.0 + output.x * scale_x;
-    output.y = image_rect.1 + output.y * scale_y;
-    output.width *= scale_x;
-    output.height *= scale_y;
-    output.hotspot_x *= scale_x;
-    output.hotspot_y *= scale_y;
-    output.delta_x *= scale_x;
-    output.delta_y *= scale_y;
-    let before = clip_rect.map(|_| pixels.to_vec());
-    for pixel in pixels.chunks_exact_mut(4) {
-      pixel.swap(0, 2);
-    }
-    self.draw_output(
-      &mut raster::FrameMut {
-        height: output_size.1 as usize,
-        pixels,
-        stride: output_size.0 as usize * 4,
-        width: output_size.0 as usize,
-      },
-      output,
-      output.x,
-      output.y,
-      settings,
-    );
-    for pixel in pixels.chunks_exact_mut(4) {
-      pixel.swap(0, 2);
-    }
-    if let (Some(before), Some((clip_x, clip_y, clip_width, clip_height))) = (before, clip_rect) {
-      let right = i64::from(clip_x) + i64::from(clip_width);
-      let bottom = i64::from(clip_y) + i64::from(clip_height);
-      for y in 0..output_size.1 {
-        for x in 0..output_size.0 {
-          if i64::from(x) < i64::from(clip_x)
-            || i64::from(x) >= right
-            || i64::from(y) < i64::from(clip_y)
-            || i64::from(y) >= bottom
-          {
-            let offset = ((y * output_size.0 + x) * 4) as usize;
-            pixels[offset..offset + 4].copy_from_slice(&before[offset..offset + 4]);
-          }
-        }
-      }
-    }
-    Ok(())
   }
 
   fn draw_output(

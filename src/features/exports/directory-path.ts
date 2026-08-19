@@ -55,7 +55,9 @@ export const truncateDirectoryPath = (
   // Floor: root + ellipsis + leaf. Grow inward from the leaf while it fits.
   const tail = [last];
   for (let index = segments.length - 2; index >= 1; index--) {
-    const candidate = [root, ELLIPSIS, segments[index], ...tail].join(separator);
+    const candidate = [root, ELLIPSIS, segments[index], ...tail].join(
+      separator,
+    );
     if (candidate.length > maxLength) break;
     tail.unshift(segments[index]);
   }

@@ -101,12 +101,7 @@ pub(super) fn present_native_frame(sources: &PlayerSources, index: u32, frame: &
   })
 }
 
-pub(crate) fn send_frame(
-  _channel: &Channel,
-  sources: &PlayerSources,
-  _request_id: u64,
-  payload: VideoFramePayload,
-) -> bool {
+pub(crate) fn send_frame(sources: &PlayerSources, payload: VideoFramePayload) -> bool {
   let VideoFramePayload::Native {
     frame,
     index,

@@ -11,7 +11,6 @@ import { defaultScreenshotOutput } from "../screenshot-output";
 import { ExportArtifact } from "../types";
 
 import { ExportPanel } from "./export-panel";
-import screenshotPreview from "./export-panel-preview.svg";
 import {
   AudioRecordingStoryPanel,
   RecordingStoryPanel,
@@ -108,27 +107,21 @@ const audioPreviewLayout = {
 };
 
 /**
- * Storybook-only. The native Metal compositor that paints the recording
- * preview cannot run outside the desktop app, so the video-preview area is
- * blank in these stories. This decorator marks recording stories so a CSS rule
- * in `.storybook/styles.css` can label that empty region with a placeholder.
+ * Storybook-only. Every preview surface - screenshot and recording alike - is
+ * painted by the native GPU compositor, which cannot run outside the desktop
+ * app, so those areas render as empty `data-recording-preview-viewport`
+ * containers here. This decorator wraps the stories in `.sb-gpu-preview` so a
+ * CSS rule in `.storybook/styles.css` can label that empty region with a
+ * placeholder.
  *
- * Scoping is done here, in the decorator, rather than with a bare
- * `[data-recording-preview-viewport]` selector, because outside the desktop app
- * `usePreviewCapabilities()` reports no native surface, so the screenshot
- * preview falls back to the very same `data-recording-preview-viewport`
- * container (rendering its `<img>` there). A bare selector would therefore also
- * cover the screenshot stories' image preview, which we do not want.
- *
- * Screenshot stories (`artifact.kind === "screenshot"`) and `NothingPending`
- * (`artifact` is `null`) are left unwrapped. The audio recording story is
- * wrapped but renders an audio-waveform visualizer with no viewport element, so
- * the placeholder never appears there — which is correct, since that area is
- * not a blank GPU surface.
+ * `NothingPending` (`artifact` is `null`) has no viewport at all and is left
+ * unwrapped. The audio recording story is wrapped but renders an audio-waveform
+ * visualizer with no viewport element, so the placeholder never appears there -
+ * which is correct, since that area is not a blank GPU surface.
  */
 const withGpuPreviewPlaceholder: Decorator = (Story, context) => {
   const artifact = context.args.artifact as ExportArtifact | null | undefined;
-  if (artifact?.kind !== "recording") return <Story />;
+  if (!artifact) return <Story />;
   return (
     <div className="sb-gpu-preview" style={{ display: "contents" }}>
       <Story />
@@ -141,7 +134,6 @@ const meta = {
     artifact: screenshot,
     directory: "/Users/dom/Desktop",
     fileStem: screenshot.suggestedFileStem,
-    previewUrl: screenshotPreview,
     screenshotOutput: { ...screenshotOutput, items: [] },
   },
   component: ExportPanel,

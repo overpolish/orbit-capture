@@ -7,7 +7,7 @@ import { CircularProgressBar } from "../../../components/base/circular-progress-
 import { Overlay } from "../../../components/base/overlay/overlay";
 
 /** A pane's geometry is expressed in the unscaled workspace coordinate space. */
-export type NativeRecordingWorkspacePane = {
+type NativeRecordingWorkspacePane = {
   height: number;
   index: number;
   label: string;

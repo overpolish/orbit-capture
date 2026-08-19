@@ -64,31 +64,6 @@ export type RecordingPreviewPlayerInfo = {
 export const getExportSnapshot = () =>
   invoke<ExportSnapshot>("get_export_snapshot");
 
-/**
- * Raw PNG bytes. The thumbnail by default; the full capture only when
- * something zooms in far enough to need the real pixels.
- */
-export const getExportPreview = (full = false, itemId?: number) =>
-  invoke<ArrayBuffer>("get_export_preview", { full, itemId });
-
-export const renderScreenshotOutputPreview = ({
-  artifactId,
-  channel,
-  output,
-  requestId,
-}: {
-  artifactId: number;
-  channel: Channel<ArrayBuffer>;
-  output: ScreenshotWorkspaceOutputSettings;
-  requestId: number;
-}) =>
-  invoke<null>("render_screenshot_output_preview", {
-    artifactId,
-    channel,
-    output: normalizedScreenshotWorkspaceOutput(output),
-    requestId,
-  });
-
 export const getRecordingPreview = (artifactId: number) =>
   invoke<RecordingPreview>("get_recording_preview", { artifactId });
 
@@ -100,7 +75,6 @@ export const startRecordingPreviewPlayer = ({
   cursorEffects,
   enabledStreamIndices,
   eventChannel,
-  frameChannel,
   recordingOutput,
   sessionId,
 }: {
@@ -111,14 +85,12 @@ export const startRecordingPreviewPlayer = ({
   cursorEffects: CursorEffectSettings;
   enabledStreamIndices: number[];
   eventChannel: Channel<RecordingPreviewPlayerEvent>;
-  frameChannel: Channel<ArrayBuffer>;
   recordingOutput: RecordingOutputSettings;
   sessionId: number;
 }) =>
   invoke<RecordingPreviewPlayerInfo>("start_recording_preview_player", {
     artifactId,
     eventChannel,
-    frameChannel,
     sessionId,
     settings: {
       audio: {
@@ -320,20 +292,6 @@ export const copyRecordingPreviewFrameToClipboard = ({
       primary: normalizedScreenshotOutput(recordingOutput.primary),
     },
   });
-
-/**
- * What the backend's preview platform can actually do. Probed instead of
- * sniffed, so a platform whose native backend lands one piece at a time flips
- * one flag at a time.
- */
-export type PreviewCapabilities = {
-  nativeRecordingPreview: boolean;
-  nativeScreenshotPreview: boolean;
-  nativeWorkspaceEditor: boolean;
-};
-
-export const previewCapabilities = () =>
-  invoke<PreviewCapabilities>("preview_capabilities");
 
 export const startScreenshotPreview = (artifactId: number, sessionId: number) =>
   invoke<null>("start_screenshot_preview", { artifactId, sessionId });

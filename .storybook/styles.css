@@ -35,15 +35,14 @@ body.sb-main-fullscreen {
 /*
  * Storybook-only placeholder for the native GPU/Metal recording compositor.
  *
- * The recording preview's video surface is painted by the native compositor,
- * which cannot run outside the desktop app, so that area renders blank in
- * Storybook. `withGpuPreviewPlaceholder` (export-panel.stories.tsx) wraps only
- * the recording stories in `.sb-gpu-preview`, so this rule labels the blank
- * viewport without touching the screenshot stories' image preview, which — with
- * no native surface reported in Storybook — falls back to the same
- * `data-recording-preview-viewport` container. The label sits inside the
- * viewport (which is `position: relative`) and is `pointer-events: none`, so it
- * cannot break layout or intercept interaction with the marker canvases.
+ * Every preview surface - screenshot and recording alike - is painted by the
+ * native compositor, which cannot run outside the desktop app, so those areas
+ * render blank in Storybook. `withGpuPreviewPlaceholder`
+ * (export-panel.stories.tsx) wraps the stories that have a viewport in
+ * `.sb-gpu-preview`, and this rule labels the blank container. The label sits
+ * inside the viewport (which is `position: relative`) and is
+ * `pointer-events: none`, so it cannot break layout or intercept interaction
+ * with the marker canvases.
  */
 .sb-gpu-preview [data-recording-preview-viewport]::after {
   content: "GPU compositor renders here (native only)";

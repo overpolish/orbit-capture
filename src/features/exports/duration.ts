@@ -51,7 +51,8 @@ export const formatEta = (seconds: number) => {
   }
 
   const parts: string[] = [];
-  if (allDays > 0) parts.push(`${String(allDays)} day${allDays === 1 ? "" : "s"}`);
+  if (allDays > 0)
+    parts.push(`${String(allDays)} day${allDays === 1 ? "" : "s"}`);
   if (hours > 0) parts.push(`${String(hours)} hr`);
   // Always show minutes unless a larger unit already carries the estimate on
   // its own (e.g. exactly "1 hr remaining").

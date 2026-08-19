@@ -11,18 +11,12 @@
 use tauri::WebviewWindow;
 
 use super::{
-  PreviewCapabilities, PreviewSelection, PreviewSurfaceRect, SelectionCallback,
-  SelectionGestureCallback, SelectionGestureOperation, SelectionGesturePhase, TransformCallback,
+  PreviewSelection, PreviewSurfaceRect, SelectionCallback, SelectionGestureCallback,
+  SelectionGestureOperation, SelectionGesturePhase, TransformCallback,
 };
 use crate::exports::{media_preview, CameraOverlaySettings};
 use crate::screenshots::{
   native_canvas, CapturedImage, NativeCanvas, ScreenshotOutputSettings, StillOverlay,
-};
-
-pub(super) const CAPABILITIES: PreviewCapabilities = PreviewCapabilities {
-  native_workspace_editor: true,
-  native_recording_preview: true,
-  native_screenshot_preview: true,
 };
 
 unsafe extern "C" {

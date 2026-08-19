@@ -19,10 +19,10 @@
 //! # Porting to a new platform
 //!
 //! A backend is a module that exports the same item names with the same
-//! signatures as [`surface_macos`], selected by the `cfg` block below. Four
-//! pieces make up a complete port; a partial port is legitimate, because
-//! [`PreviewCapabilities`] lets a backend admit what it does not do yet and the
-//! frontend falls back to the DOM/canvas preview for whatever is missing.
+//! signatures as [`surface_macos`], selected by the `cfg` block below. Five
+//! pieces make up a complete port, and a port has to be complete: the frontend
+//! has no software preview to fall back to, so a backend that omits any of
+//! them leaves that platform without a preview at all.
 //!
 //! 1. **A compositing surface created from a tauri window, rendering below the
 //!    OS webview.** [`RecordingPreviewSurface::from_window`] takes the export
@@ -65,8 +65,6 @@
 //! formats, coordinate conventions, or window-surface details into shared
 //! preview code.
 
-use serde::Serialize;
-
 pub(crate) mod workspace_editor;
 mod workspace_transform;
 
@@ -75,9 +73,6 @@ mod workspace_transform;
 mod surface;
 #[cfg(target_os = "windows")]
 #[path = "preview_platform/surface_windows.rs"]
-mod surface;
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-#[path = "preview_platform/surface_fallback.rs"]
 mod surface;
 
 #[cfg(target_os = "windows")]
@@ -166,25 +161,4 @@ pub(crate) struct PreviewSelection {
   pub image_y: f64,
   pub image_width: f64,
   pub image_height: f64,
-}
-
-/// What the current platform's preview backend can actually do.
-///
-/// The frontend probes this instead of sniffing the platform, so a partially
-/// implemented backend can enable one preview at a time: a Windows port that
-/// has the still/screenshot path working but not video playback reports
-/// `native_screenshot_preview: true` with `native_recording_preview: false`,
-/// and only the recording preview keeps using the DOM/canvas fallback.
-#[derive(Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewCapabilities {
-  pub native_workspace_editor: bool,
-  pub native_recording_preview: bool,
-  pub native_screenshot_preview: bool,
-}
-
-/// Available on every platform; the fallback backend reports all-false.
-#[tauri::command]
-pub fn preview_capabilities() -> PreviewCapabilities {
-  surface::CAPABILITIES
 }

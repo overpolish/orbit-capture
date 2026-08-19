@@ -3,8 +3,16 @@
 
 use std::io::Cursor;
 
-use super::frame::CursorPreview;
 use crate::exports::cursor_effects::{CursorCompositor, CursorEffectSettings, CursorOverlayCache};
+
+/// One composed cursor layer: its pixels and where they sit on the frame.
+pub(super) struct CursorPreview {
+  pub canvas_height: u32,
+  pub canvas_width: u32,
+  pub pixels: Vec<u8>,
+  pub x: i32,
+  pub y: i32,
+}
 
 pub(super) fn cursor_preview(
   cursor: Option<&CursorCompositor>,

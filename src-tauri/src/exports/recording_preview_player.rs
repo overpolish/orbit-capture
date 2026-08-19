@@ -131,7 +131,6 @@ struct PreviewPlayerManager {
   audio_indices: Vec<usize>,
   audio_volumes: Vec<AudioTrackVolume>,
   event_channel: Option<Channel<RecordingPreviewPlayerEvent>>,
-  frame_channel: Option<Channel>,
   is_playing: bool,
   latest_session_id: u64,
   latest_layout_request: u64,
@@ -195,10 +194,6 @@ impl PreviewPlayerManager {
         surface.hide();
       }
     }
-    let frame_channel = self
-      .frame_channel
-      .clone()
-      .ok_or_else(|| "The recording preview frame channel is unavailable".to_owned())?;
     let event_channel = self
       .event_channel
       .clone()
@@ -222,11 +217,7 @@ impl PreviewPlayerManager {
         }
       }
       if self.still_decoder.is_none() {
-        self.still_decoder = Some(platform::StillDecoder::spawn(
-          sources,
-          event_channel,
-          frame_channel,
-        )?);
+        self.still_decoder = Some(platform::StillDecoder::spawn(sources, event_channel)?);
       }
       return self
         .still_decoder
@@ -253,7 +244,6 @@ impl PreviewPlayerManager {
         request_id: self.latest_seek_request,
         start_ms: self.position_ms,
       },
-      frame_channel,
       event_channel,
     )?);
     Ok(())
@@ -635,7 +625,6 @@ impl PreviewPlayerManager {
     }
     self.artifact_id = None;
     self.event_channel = None;
-    self.frame_channel = None;
     self.is_playing = false;
     self.pane_target_sizes.clear();
     #[cfg(any(target_os = "macos", target_os = "windows"))]

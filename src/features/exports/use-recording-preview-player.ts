@@ -18,8 +18,11 @@ import {
   stopRecordingPreviewPlayer,
 } from "./api";
 import { ScrubPhase } from "./components/scrub-timeline";
-import { AudioTrackVolume, CursorEffectSettings } from "./types";
-import { useRecordingPreviewFrames } from "./use-recording-preview-frames";
+import {
+  AudioTrackVolume,
+  CursorEffectSettings,
+  RecordingPreviewLayout,
+} from "./types";
 import { useRecordingPreviewSettings } from "./use-recording-preview-settings";
 import {
   type RecordingSelectionGestureEvent,
@@ -43,7 +46,6 @@ export function useRecordingPreviewPlayer({
   bakeCamera,
   cameraCanvasRef,
   cameraOverlay,
-  cursorCanvasRef,
   cursorEffects,
   enabledStreamIndices,
   isEditorSuspended,
@@ -66,7 +68,6 @@ export function useRecordingPreviewPlayer({
   bakeCamera: boolean;
   cameraCanvasRef: RefObject<HTMLCanvasElement | null>;
   cameraOverlay: import("./types").CameraOverlaySettings;
-  cursorCanvasRef: RefObject<HTMLCanvasElement | null>;
   cursorEffects: CursorEffectSettings;
   enabledStreamIndices: number[];
   isEditorSuspended: boolean;
@@ -118,12 +119,24 @@ export function useRecordingPreviewPlayer({
   const [durationMs, setDurationMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const frames = useRecordingPreviewFrames({
-    cameraCanvasRef,
-    cursorCanvasRef,
-    onError: setError,
-    screenCanvasRef,
-  });
+  // The native compositor owns the pixels; React only tracks whether the first
+  // frame has been presented and what pane layout the session reported.
+  const [previewLayout, setPreviewLayout] =
+    useState<RecordingPreviewLayout | null>(null);
+  const [isPreparing, setIsPreparing] = useState(true);
+  const beginPreparing = useCallback(() => {
+    // Starting a session is exactly when the preview goes back to "preparing":
+    // the previous frame is gone and nothing has been presented yet.
+    // eslint-disable-next-line @eslint-react/set-state-in-effect
+    setIsPreparing(true);
+  }, []);
+  const finishPreparing = useCallback(() => {
+    setIsPreparing(false);
+  }, []);
+  const applyLayout = useCallback((next: RecordingPreviewLayout) => {
+    setPreviewLayout(next);
+    if (next.panes.length === 0) setIsPreparing(false);
+  }, []);
   onPositionRef.current = onPosition;
   audioTrackVolumesRef.current = audioTrackVolumes;
   cursorEffectsRef.current = cursorEffects;
@@ -132,12 +145,8 @@ export function useRecordingPreviewPlayer({
 
   useRecordingPreviewSettings({
     audioTrackVolumes,
-    bakeCamera,
-    cameraOverlay,
     cursorEffects,
-    enabledStreamIndices,
     isEnabled,
-    recordingOutput,
     sessionIdRef,
     setError,
     startedRef,
@@ -186,17 +195,13 @@ export function useRecordingPreviewPlayer({
     sessionIdRef.current = sessionId;
     seekRequestRef.current = 0;
     lastSentSeekRef.current = null;
-    frames.begin();
-    const frameChannel = new Channel<ArrayBuffer>();
-    frameChannel.onmessage = (frame) => {
-      if (!disposed) frames.receive(frame);
-    };
+    beginPreparing();
     const eventChannel = new Channel<RecordingPreviewPlayerEvent>();
     eventChannel.onmessage = (event) => {
       if (disposed) return;
       if (event.event === "error") {
         setError(event.data.message);
-        frames.setIsPreparing(false);
+        finishPreparing();
         return;
       }
       if (event.event === "ended") {
@@ -209,7 +214,7 @@ export function useRecordingPreviewPlayer({
       }
       if (event.event === "ready") {
         if (event.data.requestId < seekRequestRef.current) return;
-        frames.setIsPreparing(false);
+        finishPreparing();
         positionRef.current = event.data.positionMs;
         onPositionRef.current(event.data.positionMs);
         if (pendingResumeRequestRef.current === event.data.requestId) {
@@ -254,13 +259,12 @@ export function useRecordingPreviewPlayer({
       cursorEffects,
       enabledStreamIndices,
       eventChannel,
-      frameChannel,
       recordingOutput,
       sessionId,
     })
       .then((info) => {
         if (disposed) return;
-        frames.setLayout(info.layout);
+        applyLayout(info.layout);
         durationRef.current = info.durationMs;
         setDurationMs(info.durationMs);
         startedRef.current = true;
@@ -312,13 +316,12 @@ export function useRecordingPreviewPlayer({
       .catch((cause: unknown) => {
         if (!disposed) {
           setError(String(cause));
-          frames.setIsPreparing(false);
+          finishPreparing();
         }
       });
     return () => {
       disposed = true;
       startedRef.current = false;
-      frames.reset();
       lastSentSeekRef.current = null;
       pendingScrubPositionRef.current = null;
       if (pendingScrubFrameRef.current !== null) {
@@ -457,8 +460,8 @@ export function useRecordingPreviewPlayer({
     error,
     getPositionMs,
     isPlaying,
-    isPreparing: frames.isPreparing,
-    layout: frames.layout,
+    isPreparing,
+    layout: previewLayout,
     pause,
     play,
     seek,

@@ -4,13 +4,9 @@
 import { listen } from "@tauri-apps/api/event";
 import { RefObject, useEffect, useRef } from "react";
 
-import {
-  layoutRecordingPreviewSurface,
-  setRecordingPreviewZoom,
-} from "./api";
+import { layoutRecordingPreviewSurface, setRecordingPreviewZoom } from "./api";
 import { RecordingOutputSettings } from "./screenshot-output";
 import { CameraOverlaySettings } from "./types";
-import { usePreviewCapabilities } from "./use-preview-capabilities";
 
 /**
  * The native video panes render BELOW the webview. Every element that paints
@@ -261,7 +257,6 @@ export function useRecordingPreviewSurface({
     | null;
   zoomPercent?: number;
 }) {
-  const nativeSurface = usePreviewCapabilities()?.nativeRecordingPreview;
   const compositionRef = useRef({ bakeCamera, cameraOverlay, recordingOutput });
   const selectionRef = useRef(selection);
   selectionRef.current = isPlaying ? null : selection;
@@ -429,9 +424,7 @@ export function useRecordingPreviewSurface({
   }, [isEnabled, nativeEditorOwnsLayout, sessionIdRef]);
 
   useEffect(() => {
-    // Wait for the capability probe rather than guessing: masking backdrops
-    // for panes that will never render would punch holes through the UI.
-    if (!isEnabled || nativeSurface === undefined) return;
+    if (!isEnabled) return;
     let animation = 0;
     let disposed = false;
     let inFlight = false;
@@ -445,38 +438,16 @@ export function useRecordingPreviewSurface({
     if (nativeEditorActive && editorSuspendedRef.current && startedRef.current)
       pendingZoomRestoreRef.current = true;
     editorSuspendedRef.current = isEditorSuspended;
-    let pendingLayout: {
-      acknowledgeTransform: boolean;
-      value: Parameters<typeof layoutRecordingPreviewSurface>[0];
-    } | null = null;
+    let pendingLayout:
+      Parameters<typeof layoutRecordingPreviewSurface>[0] | null = null;
     const queueLayout = (
       value: Parameters<typeof layoutRecordingPreviewSurface>[0],
-      acknowledgeTransform = false,
     ) => {
       const nextLayout = JSON.stringify(value);
-      if (nextLayout === lastLayout) {
-        if (acknowledgeTransform) {
-          queueMicrotask(() => {
-            if (!disposed) {
-              window.dispatchEvent(
-                new Event("screenwide-preview-transform-committed"),
-              );
-            }
-          });
-        }
-        return;
-      }
+      if (nextLayout === lastLayout) return;
       lastLayout = nextLayout;
       const requestId = ++layoutRequestIdRef.current;
-      pendingLayout = {
-        acknowledgeTransform:
-          acknowledgeTransform ||
-          (pendingLayout?.acknowledgeTransform ?? false),
-        value: {
-          ...value,
-          requestId,
-        },
-      };
+      pendingLayout = { ...value, requestId };
       flush();
     };
     const flush = () => {
@@ -484,17 +455,16 @@ export function useRecordingPreviewSurface({
       const next = pendingLayout;
       pendingLayout = null;
       inFlight = true;
-      void layoutRecordingPreviewSurface(next.value)
+      void layoutRecordingPreviewSurface(next)
         .catch((cause: unknown) => {
           if (!disposed) onError(String(cause));
         })
         .finally(() => {
-          if (!disposed && next.acknowledgeTransform) {
-            window.dispatchEvent(
-              new Event("screenwide-preview-transform-committed"),
-            );
-          }
-          if (!disposed && nativeEditorActive && pendingZoomRestoreRef.current) {
+          if (
+            !disposed &&
+            nativeEditorActive &&
+            pendingZoomRestoreRef.current
+          ) {
             pendingZoomRestoreRef.current = false;
             const zoom = zoomPercentRef.current;
             if (zoom !== undefined) {
@@ -509,7 +479,7 @@ export function useRecordingPreviewSurface({
           flush();
         });
     };
-    const measure = (acknowledgeTransform = false) => {
+    const measure = () => {
       // Pointer-rate recording edits are rendered directly by the retained
       // native workspace. ResizeObserver still sees React's live semantic
       // mirror changing the invisible geometry markers; feeding those bounds
@@ -526,20 +496,17 @@ export function useRecordingPreviewSurface({
           );
         if (connected.length === 0) {
           clearBackdropMasks();
-          queueLayout(
-            {
-              backdrop: effectiveBackdrop(),
-              ...compositionRef.current,
-              nativeEditor: nativeEditorActive,
-              panes: [],
-              requestId: 0,
-              scale: window.devicePixelRatio || 1,
-              selection: null,
-              sessionId: sessionIdRef.current,
-              viewport: { height: 0, width: 0, x: 0, y: 0 },
-            },
-            acknowledgeTransform,
-          );
+          queueLayout({
+            backdrop: effectiveBackdrop(),
+            ...compositionRef.current,
+            nativeEditor: nativeEditorActive,
+            panes: [],
+            requestId: 0,
+            scale: window.devicePixelRatio || 1,
+            selection: null,
+            sessionId: sessionIdRef.current,
+            viewport: { height: 0, width: 0, x: 0, y: 0 },
+          });
           return;
         }
         const viewport = connected[0]?.canvas?.closest<HTMLElement>(
@@ -559,42 +526,38 @@ export function useRecordingPreviewSurface({
               },
             };
           });
-          if (nativeSurface) {
-            // Punch the whole viewport, not the pane rects. The native
-            // container behind the panes paints the same composited backdrop,
-            // so the result looks identical - but a per-pane hole would have
-            // to move in lockstep with the panes, and the webview commits its
-            // layer tree from another process on its own schedule. During a
-            // canvas resize that hole would land a display tick before or
-            // after the native pane and shimmer along its edge.
-            const holes: Hole[] =
-              viewportRect.width >= 1 && viewportRect.height >= 1
-                ? [
-                    {
-                      height: Math.round(viewportRect.height * 100) / 100,
-                      width: Math.round(viewportRect.width * 100) / 100,
-                      x: 0,
-                      y: 0,
-                    },
-                  ]
-                : [];
-            for (const element of document.querySelectorAll<HTMLElement>(
-              "[data-preview-backdrop]",
-            )) {
-              const elementRect = element.getBoundingClientRect();
-              applyBackdropMask(
-                element,
-                holes.map((hole) => ({
-                  ...hole,
-                  x:
-                    Math.round((viewportRect.left - elementRect.left) * 100) /
-                    100,
-                  y:
-                    Math.round((viewportRect.top - elementRect.top) * 100) /
-                    100,
-                })),
-              );
-            }
+          // Punch the whole viewport, not the pane rects. The native container
+          // behind the panes paints the same composited backdrop, so the result
+          // looks identical - but a per-pane hole would have to move in lockstep
+          // with the panes, and the webview commits its layer tree from another
+          // process on its own schedule. During a canvas resize that hole would
+          // land a display tick before or after the native pane and shimmer
+          // along its edge.
+          const holes: Hole[] =
+            viewportRect.width >= 1 && viewportRect.height >= 1
+              ? [
+                  {
+                    height: Math.round(viewportRect.height * 100) / 100,
+                    width: Math.round(viewportRect.width * 100) / 100,
+                    x: 0,
+                    y: 0,
+                  },
+                ]
+              : [];
+          for (const element of document.querySelectorAll<HTMLElement>(
+            "[data-preview-backdrop]",
+          )) {
+            const elementRect = element.getBoundingClientRect();
+            applyBackdropMask(
+              element,
+              holes.map((hole) => ({
+                ...hole,
+                x:
+                  Math.round((viewportRect.left - elementRect.left) * 100) /
+                  100,
+                y: Math.round((viewportRect.top - elementRect.top) * 100) / 100,
+              })),
+            );
           }
           const viewportSurface = {
             height: viewportRect.height,
@@ -606,123 +569,93 @@ export function useRecordingPreviewSurface({
           // One native layout may be in flight at a time. Intermediate DOM
           // positions are replaced by the newest one, and the Rust side also
           // rejects an older request if IPC completion order ever differs.
-          queueLayout(
-            {
-              backdrop: effectiveBackdrop(),
-              ...compositionRef.current,
-              nativeEditor: nativeEditorActive,
-              panes,
-              requestId: 0,
-              scale,
-              selection: selectionRef.current,
-              selectionTargets: selectionTargetsRef.current,
-              sessionId: sessionIdRef.current,
-              viewport: viewportSurface,
-            },
-            acknowledgeTransform,
-          );
+          queueLayout({
+            backdrop: effectiveBackdrop(),
+            ...compositionRef.current,
+            nativeEditor: nativeEditorActive,
+            panes,
+            requestId: 0,
+            scale,
+            selection: selectionRef.current,
+            selectionTargets: selectionTargetsRef.current,
+            sessionId: sessionIdRef.current,
+            viewport: viewportSurface,
+          });
         }
       }
     };
-    measureRef.current = () => {
+    measureRef.current = measure;
+    if (!nativeEditorOwnsLayout || !nativeLayoutHasPanes) {
+      // No panes to mirror (or a fixed Storybook layout): one measure is enough
+      // to hand the native side the empty viewport.
       measure();
-    };
-    if (nativeEditorOwnsLayout && nativeSurface) {
-      if (!nativeLayoutHasPanes) {
-        measure();
-        return () => {
-          disposed = true;
-          clearBackdropMasks();
-          measureRef.current = () => undefined;
-        };
-      }
-      const observer = new ResizeObserver(() => {
-        measure();
-      });
-      let mutationObserver: MutationObserver | undefined;
-      const observeMarkers = () => {
-        if (disposed) return;
-        const canvases = [
-          screenCanvasRef.current,
-          cameraCanvasRef.current,
-        ].filter(
-          (canvas): canvas is HTMLCanvasElement => canvas?.isConnected === true,
-        );
-        if (!startedRef.current || canvases.length === 0) {
-          animation = requestAnimationFrame(observeMarkers);
-          return;
-        }
-        for (const canvas of canvases) observer.observe(canvas);
-        const viewport = canvases[0]?.closest<HTMLElement>(
-          "[data-recording-preview-viewport]",
-        );
-        if (viewport) {
-          observer.observe(viewport);
-          mutationObserver = new MutationObserver((records) => {
-            // measure() writes the backdrop mask's style inside this same
-            // subtree; reacting to that write would loop forever.
-            const relevant = records.some(
-              (record) =>
-                !(record.target instanceof HTMLElement) ||
-                !record.target.closest("[data-preview-backdrop]"),
-            );
-            if (!relevant) return;
-            for (const canvas of [
-              screenCanvasRef.current,
-              cameraCanvasRef.current,
-            ]) {
-              if (canvas?.isConnected) observer.observe(canvas);
-            }
-            measure();
-          });
-          // `attributes` matters as much as `childList`: when the workspace is
-          // width-constrained, a viewport height change (the timeline loading
-          // in) moves the centred marker without resizing it. ResizeObserver
-          // only reports size changes, and the viewport-resize measure runs
-          // before React has repositioned the marker - so the corrected
-          // position only ever reaches native if the marker's style write
-          // itself re-triggers a measure.
-          mutationObserver.observe(viewport, {
-            attributeFilter: ["style"],
-            attributes: true,
-            childList: true,
-            subtree: true,
-          });
-        }
-        measure();
-      };
-      animation = requestAnimationFrame(observeMarkers);
       return () => {
         disposed = true;
-        cancelAnimationFrame(animation);
-        mutationObserver?.disconnect();
-        observer.disconnect();
         clearBackdropMasks();
         measureRef.current = () => undefined;
       };
     }
-    const update = () => {
-      if (disposed) return;
+    const observer = new ResizeObserver(() => {
       measure();
-      animation = requestAnimationFrame(update);
+    });
+    let mutationObserver: MutationObserver | undefined;
+    const observeMarkers = () => {
+      if (disposed) return;
+      const canvases = [
+        screenCanvasRef.current,
+        cameraCanvasRef.current,
+      ].filter(
+        (canvas): canvas is HTMLCanvasElement => canvas?.isConnected === true,
+      );
+      if (!startedRef.current || canvases.length === 0) {
+        animation = requestAnimationFrame(observeMarkers);
+        return;
+      }
+      for (const canvas of canvases) observer.observe(canvas);
+      const viewport = canvases[0]?.closest<HTMLElement>(
+        "[data-recording-preview-viewport]",
+      );
+      if (viewport) {
+        observer.observe(viewport);
+        mutationObserver = new MutationObserver((records) => {
+          // measure() writes the backdrop mask's style inside this same
+          // subtree; reacting to that write would loop forever.
+          const relevant = records.some(
+            (record) =>
+              !(record.target instanceof HTMLElement) ||
+              !record.target.closest("[data-preview-backdrop]"),
+          );
+          if (!relevant) return;
+          for (const canvas of [
+            screenCanvasRef.current,
+            cameraCanvasRef.current,
+          ]) {
+            if (canvas?.isConnected) observer.observe(canvas);
+          }
+          measure();
+        });
+        // `attributes` matters as much as `childList`: when the workspace is
+        // width-constrained, a viewport height change (the timeline loading
+        // in) moves the centred marker without resizing it. ResizeObserver
+        // only reports size changes, and the viewport-resize measure runs
+        // before React has repositioned the marker - so the corrected
+        // position only ever reaches native if the marker's style write
+        // itself re-triggers a measure.
+        mutationObserver.observe(viewport, {
+          attributeFilter: ["style"],
+          attributes: true,
+          childList: true,
+          subtree: true,
+        });
+      }
+      measure();
     };
-    // Pan/zoom transforms dispatch this right after their style write; the
-    // synchronous measure keeps the native pane glued to the webview instead
-    // of trailing by an animation frame of callback ordering.
-    const onTransformed = (event: Event) => {
-      if (disposed || !startedRef.current || !nativeSurface) return;
-      event.preventDefault();
-      measure(true);
-    };
-    window.addEventListener("screenwide-preview-transformed", onTransformed);
-    animation = requestAnimationFrame(update);
+    animation = requestAnimationFrame(observeMarkers);
     return () => {
       disposed = true;
       cancelAnimationFrame(animation);
-      window.removeEventListener(
-        "screenwide-preview-transformed",
-        onTransformed,
-      );
+      mutationObserver?.disconnect();
+      observer.disconnect();
       clearBackdropMasks();
       measureRef.current = () => undefined;
     };
@@ -733,7 +666,6 @@ export function useRecordingPreviewSurface({
     nativeEditorOwnsLayout,
     nativeLayoutHasPanes,
     nativeLayoutKey,
-    nativeSurface,
     onError,
     screenCanvasRef,
     sessionIdRef,
