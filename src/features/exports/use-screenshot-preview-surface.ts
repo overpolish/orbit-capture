@@ -372,6 +372,11 @@ export function useScreenshotPreviewSurface({
           };
           const scale = window.devicePixelRatio || 1;
           const backdrop = effectiveBackdrop();
+          // A fresh capture with the same dimensions and default layout
+          // produces the same geometry as the last one sent, but the native
+          // session behind it is new and holds no selection yet. Keying the
+          // dedupe on the session makes the first layout of every session
+          // reach the surface.
           const nextLayout = JSON.stringify({
             backdrop,
             interactionOutput: interactionOutputRef.current,
@@ -381,6 +386,7 @@ export function useScreenshotPreviewSurface({
             scale,
             selection: selectionRef.current,
             selectionTargets: selectionTargetsRef.current,
+            sessionId: sessionIdRef.current,
             viewportSurface,
           });
           if (nextLayout !== lastLayout) {

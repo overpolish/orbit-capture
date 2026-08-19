@@ -184,6 +184,12 @@ struct Pane {
   /// same pass.
   pending_present: bool,
   position: (i32, i32),
+  /// The last present changed the composed canvas size. The selection overlay
+  /// is fitted to that canvas (`pane_canvas_rect`), so it has to be redrawn
+  /// once the present lands or it keeps the previous canvas's aspect until
+  /// the next layout - a fresh capture of a different shape showed the old
+  /// OSC until the user dragged it.
+  selection_stale: bool,
   scale_transform: IDCompositionScaleTransform,
   seen: bool,
   source: Option<compositor::SourceTexture>,
@@ -438,6 +444,7 @@ impl Gpu {
       pending_present: false,
       position: (0, 0),
       scale_transform,
+      selection_stale: false,
       seen: true,
       source: None,
       source_token: None,
@@ -768,6 +775,7 @@ fn redraw_magnifier(inner: &std::sync::Arc<SurfaceInner>, state: &mut SurfaceSta
     inner: std::sync::Arc::clone(inner),
   };
   let _ = surface.present_cached_source_with_camera(pane, &settings, composition, camera);
+  redraw_stale_selection(inner, state);
 }
 
 fn radius_point(frame: PreviewSurfaceRect, radius_percent: f64) -> (f64, f64) {
@@ -848,6 +856,22 @@ fn selection_pane_rect(state: &SurfaceState, selection: PreviewSelection) -> Pre
       },
       |pane| pane_canvas_rect(pane, state.frame_resize.is_some()),
     )
+}
+
+/// Redraws the selection overlay if a present since the last draw changed a
+/// pane's composed canvas size. Inside an open batch the flush does this once
+/// for every pane, after the deferred geometry has been applied.
+fn redraw_stale_selection(inner: &SurfaceInner, state: &mut SurfaceState) {
+  if inner.batch_depth.load(Ordering::Acquire) > 0 {
+    return;
+  }
+  let mut stale = false;
+  for pane in state.panes.iter_mut().flatten() {
+    stale |= std::mem::take(&mut pane.selection_stale);
+  }
+  if stale {
+    draw_selection(inner, state);
+  }
 }
 
 fn draw_selection(inner: &SurfaceInner, state: &SurfaceState) {
@@ -2095,6 +2119,7 @@ impl RecordingPreviewSurface {
     }
     if resized {
       pane.content_size = output_size;
+      pane.selection_stale = true;
     }
     pane.last_composition = Some(composition);
     pane.last_camera = camera
@@ -2599,7 +2624,9 @@ impl RecordingPreviewSurface {
       .ok_or_else(|| "The preview source texture is unavailable".to_owned())?;
     compositor::Compositor::copy_source(&self.inner.gpu.context, source, texture, subresource)?;
     pane.source_token = None;
-    self.present_cached_source(pane, settings, composition)
+    let staged = self.present_cached_source(pane, settings, composition)?;
+    redraw_stale_selection(&self.inner, &mut state);
+    Ok(staged)
   }
 
   #[allow(clippy::too_many_arguments)]
@@ -2668,7 +2695,9 @@ impl RecordingPreviewSurface {
       if pane.source.is_none() {
         return Ok(true);
       }
-      return self.present_cached_source(pane, settings, composition);
+      let staged = self.present_cached_source(pane, settings, composition)?;
+      redraw_stale_selection(&self.inner, &mut state);
+      return Ok(staged);
     };
     let composition = if index == 1 {
       state.primary_composition.unwrap_or(composition)
@@ -2694,12 +2723,14 @@ impl RecordingPreviewSurface {
     if pane.source.is_none() {
       return Ok(true);
     }
-    self.present_cached_source_with_camera(
+    let staged = self.present_cached_source_with_camera(
       pane,
       settings,
       composition,
       Some((&camera, geometry, drop_shadow, camera_on_top)),
-    )
+    )?;
+    redraw_stale_selection(&self.inner, &mut state);
+    Ok(staged)
   }
 
   /// Redraws the paused stills from their cached full-resolution sources and
@@ -3086,7 +3117,7 @@ impl RecordingPreviewSurface {
       pane.source = Some(texture);
       pane.source_token = Some(source_token);
     }
-    self.present_cached_source(
+    let staged = self.present_cached_source(
       pane,
       settings,
       ComposedFrame {
@@ -3094,7 +3125,9 @@ impl RecordingPreviewSurface {
         foreground_only: false,
         seconds,
       },
-    )
+    )?;
+    redraw_stale_selection(&self.inner, &mut state);
+    Ok(staged)
   }
 
   pub(crate) fn present_screenshot_layer(
@@ -3126,7 +3159,7 @@ impl RecordingPreviewSurface {
       pane.source = Some(texture);
       pane.source_token = Some(source_token);
     }
-    self.present_cached_source(
+    let staged = self.present_cached_source(
       pane,
       settings,
       ComposedFrame {
@@ -3134,7 +3167,9 @@ impl RecordingPreviewSurface {
         foreground_only,
         seconds: 0.0,
       },
-    )
+    )?;
+    redraw_stale_selection(&self.inner, &mut state);
+    Ok(staged)
   }
 
   #[allow(clippy::too_many_arguments)]
@@ -3281,11 +3316,16 @@ impl Drop for PresentBatch<'_> {
         let _ = unsafe { pane.swap_chain.Present(0, DXGI_PRESENT(0)) }.ok();
       }
     }
+    let mut selection_stale = false;
     for pane in state.panes.iter_mut().flatten() {
       if pane.pending_geometry {
         pane.pending_geometry = false;
         let _ = pane.update_geometry();
       }
+      selection_stale |= std::mem::take(&mut pane.selection_stale);
+    }
+    if selection_stale {
+      draw_selection(inner, &state);
     }
     // Unconditional: `finish_layout` leaves its hides to this commit whenever
     // the batch was already open.
