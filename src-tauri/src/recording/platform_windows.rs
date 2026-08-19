@@ -676,7 +676,7 @@ mod tests {
       .into_iter()
       .next()
       .expect("connect a camera before running this test");
-    let format = crate::camera_format::available_camera_formats(info.index(), 30)
+    let format = crate::camera_format::available_camera_formats(info.index(), &[30])
       .unwrap()
       .into_iter()
       .next()
@@ -742,7 +742,7 @@ mod tests {
       .into_iter()
       .next()
       .expect("connect a camera before running this test");
-    let format = crate::camera_format::available_camera_formats(camera.index(), 30)
+    let format = crate::camera_format::available_camera_formats(camera.index(), &[30])
       .unwrap()
       .into_iter()
       .next()

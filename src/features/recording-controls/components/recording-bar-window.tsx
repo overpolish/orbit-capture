@@ -22,6 +22,7 @@ import {
   toggleRecordingOptions,
 } from "../../recording-inputs/api";
 import { useRecordingInputStore } from "../../recording-inputs/store";
+import { cameraRequestFps } from "../../recording-inputs/types";
 import {
   collapseRecordingSourceSelector,
   finishRecordingBarDrag,
@@ -135,6 +136,7 @@ export function RecordingBarWindow() {
     setScreenshotCapture,
   } = useRecordingSourceStore((state) => state);
   const {
+    cameraPalById,
     fps,
     inputs,
     selectedCamera,
@@ -152,8 +154,11 @@ export function RecordingBarWindow() {
       screenshotFeedback.state !== "pending" &&
       status === "idle",
     cameraEnabled: inputs.camera || recordingMode === "camera",
+    cameraFps: cameraRequestFps(
+      fps,
+      selectedCamera ? (cameraPalById[selectedCamera.id] ?? false) : false,
+    ),
     cameraPermissionGranted: hydrated && permissions.camera.granted,
-    fps,
     microphoneEnabled: inputs.microphone,
     microphonePermissionGranted: hydrated && permissions.microphone.granted,
     screenRecordingPermissionGranted:

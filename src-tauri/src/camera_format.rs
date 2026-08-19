@@ -52,10 +52,28 @@ pub(crate) fn preferred_camera_format(
   })
 }
 
+/// How far down the wish list a cadence sits; anything unwished-for ranks last.
+///
+/// Preference order beats raw distance when picking one format per resolution:
+/// under PAL lighting a camera that cannot reach 50 should drop to 25, not to
+/// the nearer 30.
+pub(crate) fn preference_rank(preferred: &[u32], fps: u32) -> usize {
+  preferred
+    .iter()
+    .position(|candidate| *candidate == fps)
+    .unwrap_or(preferred.len())
+}
+
+/// The rate the ranking treats as "the one asked for"; the rest of the list is
+/// fallback, and a mode reached through it is already ordered by preference.
+pub(crate) fn leading_fps(preferred: &[u32]) -> u32 {
+  preferred.first().copied().unwrap_or(30)
+}
+
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn available_camera_formats(
   index: &CameraIndex,
-  requested_fps: u32,
+  preferred_fps: &[u32],
 ) -> Result<Vec<CameraFormat>, String> {
   let fallback = RequestedFormat::new::<RgbAFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
   let mut camera = Camera::new(index.clone(), fallback).map_err(|error| error.to_string())?;
@@ -63,23 +81,32 @@ pub(crate) fn available_camera_formats(
     .compatible_camera_formats()
     .map_err(|error| error.to_string())?;
   formats.retain(|format| RgbAFormat::FORMATS.contains(&format.format()));
+  retain_preferred_per_resolution(&mut formats, preferred_fps);
+  Ok(formats)
+}
+
+/// Keeps one format per native resolution — the earliest advertised preference,
+/// or failing that the cadence closest to the leading one — largest first.
+///
+/// Duplicate pixel formats are not meaningful options to a person, and the
+/// writer receives NV12 either way.
+#[cfg(any(test, not(target_os = "macos")))]
+fn retain_preferred_per_resolution(formats: &mut Vec<CameraFormat>, preferred: &[u32]) {
+  let requested_fps = leading_fps(preferred);
   formats.sort_by_key(|format| {
     let resolution = format.resolution();
     (
       resolution.width(),
       resolution.height(),
+      preference_rank(preferred, format.frame_rate()),
       format.frame_rate().abs_diff(requested_fps),
     )
   });
-  // For each native resolution retain the format whose advertised cadence is
-  // closest to the bar's choice. Duplicate pixel formats are not meaningful
-  // options to a person and AVFoundation produces NV12 for the writer anyway.
   formats.dedup_by(|left, right| left.resolution() == right.resolution());
   formats.sort_by_key(|format| {
     let resolution = format.resolution();
     std::cmp::Reverse(u64::from(resolution.width()) * u64::from(resolution.height()))
   });
-  Ok(formats)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -89,7 +116,7 @@ pub(crate) fn resolve_exact_camera_format(
   height: u32,
   fps: u32,
 ) -> Result<CameraFormat, String> {
-  available_camera_formats(index, fps)?
+  available_camera_formats(index, &[fps])?
     .into_iter()
     .find(|format| {
       let resolution = format.resolution();
@@ -134,5 +161,38 @@ mod tests {
     let selected = preferred_camera_format(&formats, 30).unwrap();
 
     assert_eq!(selected.resolution(), Resolution::new(1920, 1080));
+  }
+
+  #[test]
+  fn keeps_the_earliest_supported_preference_per_resolution() {
+    let mut formats = vec![
+      format(1920, 1080, 25),
+      format(1920, 1080, 50),
+      format(1280, 720, 30),
+      format(1280, 720, 25),
+    ];
+
+    retain_preferred_per_resolution(&mut formats, &[50, 25]);
+
+    assert_eq!(
+      formats
+        .iter()
+        .map(|format| (format.resolution(), format.frame_rate()))
+        .collect::<Vec<_>>(),
+      vec![
+        (Resolution::new(1920, 1080), 50),
+        (Resolution::new(1280, 720), 25),
+      ]
+    );
+  }
+
+  #[test]
+  fn falls_back_to_the_closest_cadence_when_no_preference_is_advertised() {
+    let mut formats = vec![format(1920, 1080, 30), format(1920, 1080, 15)];
+
+    retain_preferred_per_resolution(&mut formats, &[50, 25]);
+
+    assert_eq!(formats.len(), 1);
+    assert_eq!(formats[0].frame_rate(), 30);
   }
 }

@@ -26,22 +26,47 @@ use tauri::{
 
 use crate::recording_inputs::camera_id;
 
+#[cfg(target_os = "macos")]
+use crate::camera_frame_rate;
+
 #[cfg(not(target_os = "macos"))]
 use crate::camera_format::resolve_exact_camera_format;
+
+/// The session most recently taken down, kept so the next start can tell
+/// whether it follows hot on the heels of one on the same device.
+#[derive(Clone)]
+struct EndedSession {
+  device_id: String,
+  fps: u32,
+  ended_at: Instant,
+}
 
 #[derive(Default)]
 struct CameraPreviewManager {
   worker: Option<CameraPreviewWorker>,
   generation: u64,
+  last_ended: Option<EndedSession>,
 }
 
 impl CameraPreviewManager {
   /// Claims the next generation and hands back the worker it supersedes. The
   /// caller tears that worker down off the state lock so a slow camera close
   /// never blocks the thread that is holding it.
-  fn begin_start(&mut self) -> (u64, Option<CameraPreviewWorker>) {
+  fn begin_start(&mut self) -> (u64, Option<CameraPreviewWorker>, Option<EndedSession>) {
     self.generation = self.generation.wrapping_add(1);
-    (self.generation, self.worker.take())
+    let previous = self.worker.take();
+    if let Some(previous) = &previous {
+      self.note_ended(previous);
+    }
+    (self.generation, previous, self.last_ended.clone())
+  }
+
+  fn note_ended(&mut self, worker: &CameraPreviewWorker) {
+    self.last_ended = Some(EndedSession {
+      device_id: worker.device_id.clone(),
+      fps: worker.fps,
+      ended_at: Instant::now(),
+    });
   }
 
   /// Stores the worker when it still matches the current generation, otherwise
@@ -61,7 +86,11 @@ impl CameraPreviewManager {
 
   fn take_worker(&mut self) -> Option<CameraPreviewWorker> {
     self.generation = self.generation.wrapping_add(1);
-    self.worker.take()
+    let worker = self.worker.take();
+    if let Some(worker) = &worker {
+      self.note_ended(worker);
+    }
+    worker
   }
 
   fn cancel(&mut self) {
@@ -74,6 +103,8 @@ impl CameraPreviewManager {
 struct CameraPreviewWorker {
   cancelled: Arc<AtomicBool>,
   delivery: Option<PreviewDelivery>,
+  device_id: String,
+  fps: u32,
   thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -147,6 +178,21 @@ fn frame_payload(frame: Buffer) -> Result<Vec<u8>, String> {
 }
 
 const DELIVERY_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// How long a Continuity Camera takes to close its phone-side stream once the
+/// last session on it ends; only then does it accept a higher frame rate.
+const CONTINUITY_CAMERA_COLD_START: Duration = Duration::from_millis(3500);
+
+/// Whether `device_id` is a camera that keeps its last frame rate across
+/// sessions (Continuity Camera).
+#[cfg(target_os = "macos")]
+fn camera_frame_rate_is_sticky(device_id: &str) -> bool {
+  camera_frame_rate::resolve_device(device_id, "").is_ok_and(|device| device.is_continuity_camera())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn camera_frame_rate_is_sticky(_device_id: &str) -> bool {
+  false
+}
 
 struct PreviewDelivery {
   cancelled: Arc<AtomicBool>,
@@ -250,11 +296,27 @@ fn build_camera_preview(
   // AVFoundation already supplied this exact native mode during passive
   // enumeration. Constructing a Nokhwa Camera here just to enumerate it again
   // opens the device twice in immediate succession and can leave Continuity
-  // cameras busy before the preview worker starts.
+  // cameras busy before the preview worker starts. Reading `formats()` off a
+  // cidre `av::CaptureDevice` is passive and does not open the device.
+  //
+  // Nokhwa's AVFoundation backend only accepts an fps that equals one of the
+  // mode's frame rate range maximums, so a PAL request (25/50) against a 1-30
+  // range is rejected outright. Open at a rate it accepts and pin the real
+  // frame duration with cidre once the stream is running.
   #[cfg(target_os = "macos")]
-  let format = CameraFormat::new(Resolution::new(width, height), FrameFormat::YUYV, fps);
+  let camera_name = camera_info.human_name();
+  #[cfg(target_os = "macos")]
+  let device_id = device_id.to_owned();
+  #[cfg(target_os = "macos")]
+  let open_fps = match camera_frame_rate::resolve_device(&device_id, &camera_name) {
+    Ok(device) => camera_frame_rate::nokhwa_frame_rate(&device, width, height, fps),
+    Err(_) => fps,
+  };
+  #[cfg(target_os = "macos")]
+  let format = CameraFormat::new(Resolution::new(width, height), FrameFormat::YUYV, open_fps);
   #[cfg(not(target_os = "macos"))]
   let format = resolve_exact_camera_format(&camera_index, width, height, fps)?;
+  let worker_device_id = device_id.to_owned();
   let cancelled = Arc::new(AtomicBool::new(false));
   let owner_cancelled = Arc::clone(&cancelled);
   let callback_cancelled = Arc::clone(&cancelled);
@@ -277,10 +339,36 @@ fn build_camera_preview(
           return;
         }
       };
+      // `arc::R<av::CaptureDevice>` is not `Send`, so the device is resolved
+      // here rather than moved in; the lookup is a passive registry hit.
+      // Always pinned, even when nokhwa opened at `fps` itself: the device
+      // keeps its last frame duration across sessions, so a 30 fps preview
+      // following a 25 fps one must state its rate explicitly. A failed pin
+      // leaves the preview running at `open_fps`, which is still a usable
+      // picture, so it is reported and not treated as a start failure.
+      #[cfg(target_os = "macos")]
+      let pin = || {
+        let pinned =
+          camera_frame_rate::resolve_device(&device_id, &camera_name).and_then(|mut device| {
+            camera_frame_rate::pin_frame_rate(&mut device, width, height, fps)
+          });
+        if let Err(error) = pinned {
+          eprintln!("The camera preview stayed at {open_fps} fps instead of {fps} fps: {error}");
+        }
+      };
+      // Pinned on both sides of the session start. A Continuity Camera locks
+      // its rate in when the session starts and will only go lower afterwards,
+      // so the device must already be at `fps` before nokhwa starts running;
+      // the second pin wins back anything nokhwa re-applied during its own
+      // configuration (it resets the duration to the range maximum).
+      #[cfg(target_os = "macos")]
+      pin();
       if let Err(error) = camera.open_stream() {
         let _ = started_tx.send(Err(error.to_string()));
         return;
       }
+      #[cfg(target_os = "macos")]
+      pin();
       if started_tx.send(Ok(())).is_err() {
         return;
       }
@@ -296,6 +384,8 @@ fn build_camera_preview(
   let worker = CameraPreviewWorker {
     cancelled,
     delivery: Some(delivery),
+    device_id: worker_device_id,
+    fps,
     thread: Some(thread),
   };
   started
@@ -313,7 +403,7 @@ pub async fn start_camera_preview(
   fps: u32,
   channel: Channel,
 ) -> Result<(), String> {
-  let (generation, previous) = state
+  let (generation, previous, last_ended) = state
     .0
     .lock()
     .map_err(|_| "Camera preview state is unavailable".to_owned())?
@@ -323,6 +413,20 @@ pub async fn start_camera_preview(
     // opened, otherwise the same device can still be busy.
     if let Some(previous) = previous {
       previous.cancel();
+    }
+    // Continuity Camera keeps the phone-side pipeline warm for a few seconds
+    // after a session ends, and a session started on it in that window
+    // inherits the old frame rate: it follows a lower rate live, but never a
+    // higher one. Letting the phone go fully idle first is what a
+    // close-and-reopen of the options does, and the only thing that works.
+    // The previous session is usually stopped by the front end before this
+    // start arrives, hence the manager's memory rather than `previous`.
+    let cold_start_wait = last_ended
+      .filter(|ended| ended.device_id == device_id && fps > ended.fps)
+      .and_then(|ended| CONTINUITY_CAMERA_COLD_START.checked_sub(ended.ended_at.elapsed()))
+      .filter(|_| camera_frame_rate_is_sticky(&device_id));
+    if let Some(wait) = cold_start_wait {
+      std::thread::sleep(wait);
     }
     build_camera_preview(&device_id, width, height, fps, channel)
   })
@@ -349,7 +453,9 @@ async fn cancel_off_thread(worker: CameraPreviewWorker) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn stop_camera_preview(state: tauri::State<'_, CameraPreviewState>) -> Result<(), String> {
+pub async fn stop_camera_preview(
+  state: tauri::State<'_, CameraPreviewState>,
+) -> Result<(), String> {
   let worker = state
     .0
     .lock()

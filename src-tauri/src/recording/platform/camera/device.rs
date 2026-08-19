@@ -6,45 +6,11 @@ use super::CameraSpec;
 use cidre::{av, ns};
 
 pub(super) fn resolve(spec: &CameraSpec) -> Result<arc::R<av::CaptureDevice>, String> {
-  let unique_id = ns::String::with_str(&spec.device_id);
-  if let Some(device) = av::CaptureDevice::with_unique_id(&unique_id) {
-    return Ok(device);
-  }
-
-  av::CaptureDevice::devices()
-    .iter()
-    .find(|device| device.localized_name().to_string() == spec.device_name)
-    .map(|device| device.retained())
-    .ok_or_else(|| "The selected camera is no longer available".to_owned())
+  crate::camera_frame_rate::resolve_device(&spec.device_id, &spec.device_name)
 }
 
 pub(super) fn configure(device: &mut av::CaptureDevice, spec: &CameraSpec) -> Result<(), String> {
-  let format = device
-    .formats()
-    .iter()
-    .find(|format| {
-      let dimensions = format.format_desc().dims();
-      dimensions.width == spec.width as i32
-        && dimensions.height == spec.height as i32
-        && format
-          .video_supported_frame_rate_ranges()
-          .iter()
-          .any(|range| {
-            range.min_frame_rate() <= spec.fps as f64 && range.max_frame_rate() >= spec.fps as f64
-          })
-    })
-    .map(|format| format.retained())
-    .ok_or_else(|| "The selected camera format is no longer available".to_owned())?;
-  let frame_duration = cm::Time::new(1, spec.fps as cm::TimeScale);
-  let mut lock = device.config_lock().map_err(|error| error.to_string())?;
-  lock.set_active_format(&format);
-  lock
-    .set_active_video_min_frame_duration(frame_duration)
-    .map_err(|error| error.to_string())?;
-  lock
-    .set_active_video_max_frame_duration(frame_duration)
-    .map_err(|error| error.to_string())?;
-  Ok(())
+  crate::camera_frame_rate::pin_frame_rate(device, spec.width, spec.height, spec.fps)
 }
 
 pub(super) fn configure_output(

@@ -68,6 +68,7 @@ function StatefulOptions(props: RecordingOptionsProps) {
     props.selectedCameraResolution,
   );
   const [cameraFlipped, setCameraFlipped] = useState(props.cameraFlipped);
+  const [cameraPal, setCameraPal] = useState(props.cameraPal);
   const [microphone, setMicrophone] = useState(props.selectedMicrophone);
   const [systemAudio, setSystemAudio] = useState(props.selectedSystemAudio);
   const cameraPreviewRef = useRef<HTMLCanvasElement>(null);
@@ -95,9 +96,11 @@ function StatefulOptions(props: RecordingOptionsProps) {
     <RecordingOptions
       {...props}
       cameraFlipped={cameraFlipped}
+      cameraPal={cameraPal}
       cameraPreviewRef={cameraPreviewRef}
       onCameraChange={setCamera}
       onCameraFlippedChange={setCameraFlipped}
+      onCameraPalChange={setCameraPal}
       onCameraResolutionChange={setCameraResolution}
       onMicrophoneChange={setMicrophone}
       onSystemAudioChange={setSystemAudio}
@@ -147,6 +150,14 @@ export const Default: Story = {};
 
 export const CameraFlipped: Story = {
   args: { cameraFlipped: true },
+};
+
+export const PalCamera: Story = {
+  args: { cameraPal: true },
+};
+
+export const CameraPreviewStarting: Story = {
+  args: { cameraPreviewStarting: true },
 };
 
 export const PortraitCameraPreview: Story = {

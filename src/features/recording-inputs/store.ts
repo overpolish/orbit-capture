@@ -72,6 +72,7 @@ const isCameraDevice = (value: unknown): value is CameraDevice => {
 type RecordingInputStore = {
   cameraFlippedById: Record<string, boolean>;
   cameraModeIdById: Record<string, string>;
+  cameraPalById: Record<string, boolean>;
   fps: RecordingFps;
   inputs: RecordingInputs;
   selectedCamera: CameraDevice | null;
@@ -79,6 +80,7 @@ type RecordingInputStore = {
   selectedMicrophone: InputDevice | null;
   selectedSystemAudio: SystemAudioSource[];
   setCameraFlipped: (cameraId: string, flipped: boolean) => void;
+  setCameraPal: (cameraId: string, pal: boolean) => void;
   setFps: (fps: RecordingFps) => void;
   setInput: (input: keyof RecordingInputs, selected: boolean) => void;
   setSelectedCameraMode: (mode: CameraResolution | null) => void;
@@ -95,6 +97,7 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
     (set) => ({
       cameraFlippedById: {},
       cameraModeIdById: {},
+      cameraPalById: {},
       fps: DEFAULT_FPS,
       inputs: {
         camera: false,
@@ -111,6 +114,14 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
           cameraFlippedById: {
             ...state.cameraFlippedById,
             [cameraId]: flipped,
+          },
+        }));
+      },
+      setCameraPal: (cameraId, pal) => {
+        set((state) => ({
+          cameraPalById: {
+            ...state.cameraPalById,
+            [cameraId]: pal,
           },
         }));
       },
@@ -169,6 +180,11 @@ export const useRecordingInputStore = create<RecordingInputStore>()(
             persisted.cameraModeIdById &&
             typeof persisted.cameraModeIdById === "object"
               ? persisted.cameraModeIdById
+              : {},
+          cameraPalById:
+            persisted.cameraPalById &&
+            typeof persisted.cameraPalById === "object"
+              ? persisted.cameraPalById
               : {},
           fps: recordingFpsOptions.includes(persisted.fps as RecordingFps)
             ? (persisted.fps as RecordingFps)

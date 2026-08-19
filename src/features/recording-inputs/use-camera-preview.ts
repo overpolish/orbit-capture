@@ -60,6 +60,7 @@ export const useCameraPreview = ({
   const latestFrameRef = useRef<ArrayBuffer | null>(null);
   const operationsRef = useRef(Promise.resolve());
   const [hasFrame, setHasFrame] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let decodeInFlight = false;
@@ -97,6 +98,7 @@ export const useCameraPreview = ({
     operationsRef.current = operationsRef.current
       .then(async () => {
         setHasFrame(false);
+        setFailed(false);
         await stopCameraPreview();
         if (!active || !deviceId || cancelled) return;
         if (fps === undefined || height === undefined || width === undefined)
@@ -110,7 +112,10 @@ export const useCameraPreview = ({
       })
       .catch((error: unknown) => {
         console.error("Could not start camera preview", error);
-        if (!cancelled) setHasFrame(false);
+        if (!cancelled) {
+          setHasFrame(false);
+          setFailed(true);
+        }
       });
 
     return () => {
@@ -122,5 +127,16 @@ export const useCameraPreview = ({
     };
   }, [active, deviceId, fps, height, width]);
 
-  return { canvasRef, hasFrame };
+  // A preview that is wanted, fully specified, and neither drawing nor failed
+  // is still on its way: a Continuity Camera can take seconds to come back.
+  const isStarting =
+    active &&
+    deviceId !== undefined &&
+    fps !== undefined &&
+    height !== undefined &&
+    width !== undefined &&
+    !hasFrame &&
+    !failed;
+
+  return { canvasRef, hasFrame, isStarting };
 };

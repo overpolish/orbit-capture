@@ -11,7 +11,6 @@ import {
 import {
   CameraDevice,
   InputDevice,
-  RecordingFps,
   SystemAudioSource,
 } from "../recording-inputs/types";
 
@@ -44,8 +43,8 @@ const initialDetection: DetectionState = {
 export function useRecordingInputAvailability({
   active,
   cameraEnabled,
+  cameraFps,
   cameraPermissionGranted,
-  fps,
   microphoneEnabled,
   microphonePermissionGranted,
   screenRecordingPermissionGranted,
@@ -56,8 +55,8 @@ export function useRecordingInputAvailability({
 }: {
   active: boolean;
   cameraEnabled: boolean;
+  cameraFps: number[];
   cameraPermissionGranted: boolean;
-  fps: RecordingFps;
   microphoneEnabled: boolean;
   microphonePermissionGranted: boolean;
   screenRecordingPermissionGranted: boolean;
@@ -69,6 +68,13 @@ export function useRecordingInputAvailability({
   const selectedApplications = useMemo(
     () => selectedSystemAudio.filter((source) => source.kind === "application"),
     [selectedSystemAudio],
+  );
+  // The caller rebuilds the preference list on every render, so the polling
+  // effect keys off its text and re-derives the array from that instead.
+  const cameraFpsKey = cameraFps.join("/");
+  const preferredFps = useMemo(
+    () => cameraFpsKey.split("/").map(Number),
+    [cameraFpsKey],
   );
   const checkCamera =
     active &&
@@ -85,7 +91,7 @@ export function useRecordingInputAvailability({
     systemAudioEnabled &&
     screenRecordingPermissionGranted &&
     selectedApplications.length > 0;
-  const cameraKey = checkCamera ? `${selectedCamera.id}:${String(fps)}` : null;
+  const cameraKey = checkCamera ? `${selectedCamera.id}:${cameraFpsKey}` : null;
   const microphoneKey = checkMicrophone ? selectedMicrophone.id : null;
   const systemAudioKey = checkSystemAudio
     ? selectedApplications
@@ -103,7 +109,7 @@ export function useRecordingInputAvailability({
       if (refreshing) return;
       refreshing = true;
       const [cameras, microphones, applications] = await Promise.all([
-        checkCamera ? listCameras(fps).catch(() => null) : null,
+        checkCamera ? listCameras(preferredFps).catch(() => null) : null,
         checkMicrophone ? listMicrophones().catch(() => null) : null,
         checkSystemAudio ? listSystemAudioSources().catch(() => null) : null,
       ]);
@@ -159,8 +165,8 @@ export function useRecordingInputAvailability({
     checkMicrophone,
     checkSystemAudio,
     cameraKey,
-    fps,
     microphoneKey,
+    preferredFps,
     selectedApplications,
     selectedCamera,
     selectedMicrophone,

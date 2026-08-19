@@ -3,12 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-import {
-  CameraDevice,
-  InputDevice,
-  RecordingFps,
-  SystemAudioSource,
-} from "./types";
+import { CameraDevice, InputDevice, SystemAudioSource } from "./types";
 
 type ApplicationDetails = {
   iconPath: string | null;
@@ -17,8 +12,8 @@ type ApplicationDetails = {
   processIds: number[];
 };
 
-export const listCameras = (fps: RecordingFps) =>
-  invoke<CameraDevice[]>("list_cameras", { fps });
+export const listCameras = (preferredFps: number[]) =>
+  invoke<CameraDevice[]>("list_cameras", { preferredFps });
 
 export const listMicrophones = () => invoke<InputDevice[]>("list_microphones");
 

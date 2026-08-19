@@ -3,6 +3,8 @@
 
 mod audio_preview;
 mod camera_format;
+#[cfg(target_os = "macos")]
+mod camera_frame_rate;
 mod camera_frames;
 mod camera_preview;
 mod capture_geometry;

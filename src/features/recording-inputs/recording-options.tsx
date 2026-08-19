@@ -11,11 +11,14 @@ import {
   Volume2,
 } from "lucide-react";
 import { RefObject } from "react";
+import { TooltipTrigger } from "react-aria-components";
 
 import { Button } from "../../components/base/button/button";
 import { ToggleButton } from "../../components/base/button/toggle-button";
+import { CircularProgressBar } from "../../components/base/circular-progress-bar/circular-progress-bar";
 import { ListBoxItem } from "../../components/base/listbox-item/listbox-item";
 import { Select } from "../../components/base/select/select";
+import { Tooltip } from "../../components/base/tooltip/tooltip";
 import { cn } from "../../lib/styling";
 import { AudioMeter } from "../audio-inputs/components/audio-meter";
 import { StandaloneMultiSelect } from "../standalone-listbox/standalone-multi-select";
@@ -196,8 +199,11 @@ export type RecordingOptionsProps = {
   selectedSystemAudio: SystemAudioSource[];
   cameraFlipped?: boolean;
   cameraLocked?: boolean;
+  cameraPal?: boolean;
   cameraPreviewActive?: boolean;
   cameraPreviewRef?: RefObject<HTMLCanvasElement | null>;
+  /** The preview is wanted but has not drawn a frame yet. */
+  cameraPreviewStarting?: boolean;
   microphoneDecibels?: number;
   microphoneLocked?: boolean;
   microphonePeak?: number;
@@ -205,6 +211,7 @@ export type RecordingOptionsProps = {
   onCameraFlippedChange?: (flipped: boolean) => void;
   onCameraLockedPress?: () => void;
   onCameraOptionsOpen?: () => Promise<CameraDevice[]>;
+  onCameraPalChange?: (pal: boolean) => void;
   onMicrophoneLockedPress?: () => void;
   onMicrophoneOptionsOpen?: () => Promise<InputDevice[]>;
   onSystemAudioOptionsOpen?: () => Promise<SystemAudioSource[]>;
@@ -218,8 +225,10 @@ export function RecordingOptions({
   audioSources,
   cameraFlipped = false,
   cameraLocked = false,
+  cameraPal = false,
   cameraPreviewActive = false,
   cameraPreviewRef,
+  cameraPreviewStarting = false,
   cameras,
   microphoneDecibels = -Infinity,
   microphoneLocked = false,
@@ -230,6 +239,7 @@ export function RecordingOptions({
   onCameraFlippedChange,
   onCameraLockedPress,
   onCameraOptionsOpen,
+  onCameraPalChange,
   onCameraResolutionChange,
   onMicrophoneChange,
   onMicrophoneLockedPress,
@@ -275,7 +285,18 @@ export function RecordingOptions({
               role="img"
             />
           </div>
-          {!cameraPreviewActive ? <CameraOff size={24} /> : null}
+          {!cameraPreviewActive ? (
+            cameraPreviewStarting ? (
+              <CircularProgressBar
+                aria-label="Starting camera preview"
+                isIndeterminate
+                size={24}
+                strokeWidth={12}
+              />
+            ) : (
+              <CameraOff size={24} />
+            )
+          ) : null}
           {selectedCamera && onCameraFlippedChange ? (
             <ToggleButton
               aria-label="Flip camera horizontally"
@@ -302,16 +323,35 @@ export function RecordingOptions({
           selected={selectedCamera}
           standalone={standalone}
         />
-        <InputSelect
-          icon={<Scan size={14} />}
-          id="camera-resolution"
-          items={selectedCamera?.modes ?? []}
-          label="Camera resolution"
-          onChange={onCameraResolutionChange}
-          placeholder="No resolution"
-          selected={selectedCameraResolution}
-          standalone={standalone}
-        />
+        <div className="flex items-center gap-1">
+          <div className="min-w-0 flex-1">
+            <InputSelect
+              icon={<Scan size={14} />}
+              id="camera-resolution"
+              items={selectedCamera?.modes ?? []}
+              label="Camera resolution"
+              onChange={onCameraResolutionChange}
+              placeholder="No resolution"
+              selected={selectedCameraResolution}
+              standalone={standalone}
+            />
+          </div>
+          {selectedCamera && onCameraPalChange ? (
+            <TooltipTrigger delay={400}>
+              <ToggleButton
+                aria-label="Anti-flicker"
+                isSelected={cameraPal}
+                onChange={onCameraPalChange}
+                showFocus={false}
+                size="sm"
+                variant="ghost"
+              >
+                <span className="text-xxs font-medium tabular-nums">PAL</span>
+              </ToggleButton>
+              <Tooltip placement="top">Anti-flicker</Tooltip>
+            </TooltipTrigger>
+          ) : null}
+        </div>
       </section>
 
       <section className="relative flex flex-col gap-1">

@@ -11,6 +11,8 @@ use nokhwa::{
 };
 use serde::Serialize;
 
+use crate::camera_format::leading_fps;
+
 #[cfg(target_os = "macos")]
 use cidre::{av, ns};
 
@@ -107,25 +109,32 @@ pub(crate) fn resolve_microphone(
   Ok((device, config.into(), sample_format))
 }
 
+/// `preferred_fps` is an ordered wish list, best first: a PAL request for 50 has
+/// to fall back to 25 rather than to the nearer-but-flickering 30, which a
+/// single requested rate cannot express.
 #[tauri::command]
-pub async fn list_cameras(fps: u32) -> Result<Vec<CameraDeviceDetails>, String> {
-  tauri::async_runtime::spawn_blocking(move || enumerate_cameras(fps))
+pub async fn list_cameras(preferred_fps: Vec<u32>) -> Result<Vec<CameraDeviceDetails>, String> {
+  if preferred_fps.is_empty() {
+    return Err("No camera frame rate was requested".to_owned());
+  }
+  tauri::async_runtime::spawn_blocking(move || enumerate_cameras(&preferred_fps))
     .await
     .map_err(|error| error.to_string())?
 }
 
-fn enumerate_cameras(fps: u32) -> Result<Vec<CameraDeviceDetails>, String> {
+fn enumerate_cameras(preferred_fps: &[u32]) -> Result<Vec<CameraDeviceDetails>, String> {
+  let requested_fps = leading_fps(preferred_fps);
   let cameras = query(ApiBackend::Auto).map_err(|error| error.to_string())?;
   let mut result = Vec::new();
   let mut has_default = false;
   for camera in cameras {
     let device_id = camera_id(&camera);
     let device_label = camera.human_name();
-    let formats = camera_modes(&camera, fps);
+    let formats = camera_modes(&camera, preferred_fps);
     if formats.is_empty() {
       continue;
     }
-    let preferred = preferred_mode(&formats, fps);
+    let preferred = preferred_mode(&formats, requested_fps);
     let is_default = !has_default;
     has_default = true;
     let modes = formats
@@ -148,6 +157,38 @@ fn enumerate_cameras(fps: u32) -> Result<Vec<CameraDeviceDetails>, String> {
   }
   result.sort_by_cached_key(|camera| (!camera.is_default, camera.label.to_lowercase()));
   Ok(result)
+}
+
+/// Picks the first preference a device can actually deliver.
+///
+/// Each range is `(min, max)` fps. A preference is deliverable when some range
+/// brackets it; the earliest such preference wins. When the device brackets
+/// none of them the leading preference is clamped into the closest range, which
+/// is the historical behaviour for cameras that advertise one fixed cadence.
+#[cfg(any(test, target_os = "macos"))]
+fn choose_fps(ranges: &[(f64, f64)], preferred: &[u32]) -> u32 {
+  for candidate in preferred {
+    let target = f64::from(*candidate);
+    if ranges
+      .iter()
+      .any(|(min, max)| *min <= target && *max >= target)
+    {
+      return *candidate;
+    }
+  }
+  let requested = leading_fps(preferred);
+  let target = f64::from(requested);
+  ranges
+    .iter()
+    .map(|(min, max)| {
+      if target < *min {
+        min.ceil().max(1.0) as u32
+      } else {
+        max.floor().max(1.0) as u32
+      }
+    })
+    .min_by_key(|fps| fps.abs_diff(requested))
+    .unwrap_or(requested)
 }
 
 fn preferred_mode(modes: &[(u32, u32, u32)], requested_fps: u32) -> Option<(u32, u32, u32)> {
@@ -182,7 +223,7 @@ fn sort_camera_modes(modes: &mut [(u32, u32, u32)], requested_fps: u32) {
 }
 
 #[cfg(target_os = "macos")]
-fn camera_modes(camera: &CameraInfo, requested_fps: u32) -> Vec<(u32, u32, u32)> {
+fn camera_modes(camera: &CameraInfo, preferred_fps: &[u32]) -> Vec<(u32, u32, u32)> {
   let backend_id = ns::String::with_str(&camera_id(camera));
   let device = av::CaptureDevice::with_unique_id(&backend_id).or_else(|| {
     av::CaptureDevice::devices()
@@ -194,6 +235,7 @@ fn camera_modes(camera: &CameraInfo, requested_fps: u32) -> Vec<(u32, u32, u32)>
     return Vec::new();
   };
 
+  let requested_fps = leading_fps(preferred_fps);
   let mut modes = device
     .formats()
     .iter()
@@ -201,32 +243,37 @@ fn camera_modes(camera: &CameraInfo, requested_fps: u32) -> Vec<(u32, u32, u32)>
       let dimensions = format.format_desc().dims();
       let width = u32::try_from(dimensions.width).ok()?;
       let height = u32::try_from(dimensions.height).ok()?;
-      let fps = format
+      let ranges = format
         .video_supported_frame_rate_ranges()
         .iter()
-        .map(|range| {
-          let requested = f64::from(requested_fps);
-          if range.min_frame_rate() <= requested && range.max_frame_rate() >= requested {
-            requested_fps
-          } else if requested < range.min_frame_rate() {
-            range.min_frame_rate().ceil().max(1.0) as u32
-          } else {
-            range.max_frame_rate().floor().max(1.0) as u32
-          }
-        })
-        .min_by_key(|fps| fps.abs_diff(requested_fps))?;
-      Some((width, height, fps))
+        .map(|range| (range.min_frame_rate(), range.max_frame_rate()))
+        .collect::<Vec<_>>();
+      if ranges.is_empty() {
+        return None;
+      }
+      Some((width, height, choose_fps(&ranges, preferred_fps)))
     })
     .collect::<Vec<_>>();
-  modes.sort_by_key(|(width, height, fps)| (*width, *height, fps.abs_diff(requested_fps)));
+  // A camera often advertises the same dimensions twice — one format capped at
+  // 25, another reaching 50. Ranking by preference order before raw distance
+  // keeps the earliest satisfied wish, so PAL at 60 keeps the 50 fps format.
+  modes.sort_by_key(|(width, height, fps)| {
+    (
+      *width,
+      *height,
+      crate::camera_format::preference_rank(preferred_fps, *fps),
+      fps.abs_diff(requested_fps),
+    )
+  });
   modes.dedup_by(|left, right| left.0 == right.0 && left.1 == right.1);
   sort_camera_modes(&mut modes, requested_fps);
   modes
 }
 
 #[cfg(not(target_os = "macos"))]
-fn camera_modes(camera: &CameraInfo, requested_fps: u32) -> Vec<(u32, u32, u32)> {
-  let mut modes = crate::camera_format::available_camera_formats(camera.index(), requested_fps)
+fn camera_modes(camera: &CameraInfo, preferred_fps: &[u32]) -> Vec<(u32, u32, u32)> {
+  let requested_fps = leading_fps(preferred_fps);
+  let mut modes = crate::camera_format::available_camera_formats(camera.index(), preferred_fps)
     .map_or_else(
       |_| Vec::new(),
       |formats| {
@@ -280,5 +327,20 @@ mod tests {
         (640, 480, 60),
       ]
     );
+  }
+
+  #[test]
+  fn falls_back_to_the_next_preference_rather_than_the_nearest_rate() {
+    // A 30 fps-only camera under PAL lighting must land on 25, not on the
+    // numerically closer 30, which flickers.
+    assert_eq!(choose_fps(&[(1.0, 30.0)], &[50, 25]), 25);
+    assert_eq!(choose_fps(&[(1.0, 60.0)], &[50, 25]), 50);
+    assert_eq!(choose_fps(&[(1.0, 60.0)], &[60, 30]), 60);
+    assert_eq!(choose_fps(&[(15.0, 30.0)], &[60, 30]), 30);
+  }
+
+  #[test]
+  fn clamps_to_the_closest_rate_when_no_preference_is_supported() {
+    assert_eq!(choose_fps(&[(30.0, 30.0)], &[25]), 30);
   }
 }

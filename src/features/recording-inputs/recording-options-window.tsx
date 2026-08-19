@@ -17,7 +17,12 @@ import {
 } from "./devices-api";
 import { RecordingOptions } from "./recording-options";
 import { ALL_SYSTEM_AUDIO, useRecordingInputStore } from "./store";
-import { CameraDevice, InputDevice, SystemAudioSource } from "./types";
+import {
+  CameraDevice,
+  cameraRequestFps,
+  InputDevice,
+  SystemAudioSource,
+} from "./types";
 import { useAudioPreview } from "./use-audio-preview";
 import { useCameraPreview } from "./use-camera-preview";
 
@@ -47,12 +52,14 @@ export function RecordingOptionsWindow() {
   const [isOpen, setIsOpen] = useState(false);
   const {
     cameraFlippedById,
+    cameraPalById,
     fps,
     selectedCamera,
     selectedCameraMode,
     selectedMicrophone,
     selectedSystemAudio,
     setCameraFlipped,
+    setCameraPal,
     setSelectedCameraMode,
     setSelectedCameraSelection,
     setSelectedMicrophone,
@@ -60,6 +67,9 @@ export function RecordingOptionsWindow() {
   } = useRecordingInputStore((state) => state);
   const cameraFlipped = selectedCamera
     ? (cameraFlippedById[selectedCamera.id] ?? false)
+    : false;
+  const cameraPal = selectedCamera
+    ? (cameraPalById[selectedCamera.id] ?? false)
     : false;
   const previewsAllSystemAudio = selectedSystemAudio.some(
     (source) => source.id === ALL_SYSTEM_AUDIO.id,
@@ -101,8 +111,17 @@ export function RecordingOptionsWindow() {
   });
 
   const refreshCameras = useCallback(async () => {
+    // PAL is read from the store at call time rather than the closure: a camera
+    // switch and a PAL toggle both refresh before this component re-renders.
+    const requested = useRecordingInputStore.getState();
+    const preferredFps = cameraRequestFps(
+      fps,
+      requested.selectedCamera
+        ? (requested.cameraPalById[requested.selectedCamera.id] ?? false)
+        : false,
+    );
     const nextCameras = cameraGranted
-      ? await listCameras(fps).catch(() => [])
+      ? await listCameras(preferredFps).catch(() => [])
       : [];
     setCameras(nextCameras);
     const current = useRecordingInputStore.getState();
@@ -135,9 +154,10 @@ export function RecordingOptionsWindow() {
 
   const selectCamera = useCallback(
     (camera: CameraDevice) => {
-      const currentMode = useRecordingInputStore.getState().selectedCameraMode;
-      const rememberedModeId =
-        useRecordingInputStore.getState().cameraModeIdById[camera.id];
+      const state = useRecordingInputStore.getState();
+      const currentMode = state.selectedCameraMode;
+      const rememberedModeId = state.cameraModeIdById[camera.id];
+      const previousCamera = state.selectedCamera;
       const mode =
         camera.modes.find((item) => item.id === rememberedModeId) ??
         camera.modes.find(
@@ -148,8 +168,15 @@ export function RecordingOptionsWindow() {
         camera.modes.find((item) => item.isDefault) ??
         firstOrNull(camera.modes);
       setSelectedCameraSelection(camera, mode);
+      // The listed modes were enumerated for the previous camera's frame rate;
+      // a camera whose PAL flag differs needs its modes fetched again.
+      const previousPal = previousCamera
+        ? (state.cameraPalById[previousCamera.id] ?? false)
+        : false;
+      if ((state.cameraPalById[camera.id] ?? false) !== previousPal)
+        void refreshCameras();
     },
-    [setSelectedCameraSelection],
+    [refreshCameras, setSelectedCameraSelection],
   );
 
   const refreshMicrophones = useCallback(async () => {
@@ -245,8 +272,10 @@ export function RecordingOptionsWindow() {
         audioSources={audioSources}
         cameraFlipped={cameraFlipped}
         cameraLocked={!hydrated || !permissions.camera.granted}
+        cameraPal={cameraPal}
         cameraPreviewActive={cameraPreview.hasFrame}
         cameraPreviewRef={cameraPreview.canvasRef}
+        cameraPreviewStarting={cameraPreview.isStarting}
         cameras={cameras}
         microphoneDecibels={microphonePreview.decibels}
         microphoneLocked={!hydrated || !permissions.microphone.granted}
@@ -263,6 +292,13 @@ export function RecordingOptionsWindow() {
           grantPermission("camera", permissions.camera);
         }}
         onCameraOptionsOpen={refreshCameras}
+        onCameraPalChange={(pal) => {
+          if (!selectedCamera) return;
+          setCameraPal(selectedCamera.id, pal);
+          // Modes carry their frame rate, so the list - and with it the
+          // selected mode and the preview - must be fetched again at 25/50.
+          void refreshCameras();
+        }}
         onCameraResolutionChange={setSelectedCameraMode}
         onMicrophoneChange={setSelectedMicrophone}
         onMicrophoneLockedPress={() => {
