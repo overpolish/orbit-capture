@@ -285,6 +285,7 @@ fn build_camera_preview(
   width: u32,
   height: u32,
   fps: u32,
+  #[cfg_attr(not(target_os = "windows"), allow(unused_variables))] pal: bool,
   channel: Channel,
 ) -> Result<CameraPreviewWorker, String> {
   let camera_info = query(ApiBackend::Auto)
@@ -316,6 +317,13 @@ fn build_camera_preview(
   let format = CameraFormat::new(Resolution::new(width, height), FrameFormat::YUYV, open_fps);
   #[cfg(not(target_os = "macos"))]
   let format = resolve_exact_camera_format(&camera_index, width, height, fps)?;
+  // Windows cannot reach a PAL cadence through Media Foundation, so anti-flicker
+  // is the camera's own power line frequency control instead. Applied before
+  // the device opens; a camera without the control still previews.
+  #[cfg(target_os = "windows")]
+  if let Err(error) = crate::camera_power_line::apply_power_line_frequency(device_id, pal) {
+    eprintln!("The camera's power line frequency was not set: {error}");
+  }
   let worker_device_id = device_id.to_owned();
   let cancelled = Arc::new(AtomicBool::new(false));
   let owner_cancelled = Arc::clone(&cancelled);
@@ -401,6 +409,7 @@ pub async fn start_camera_preview(
   width: u32,
   height: u32,
   fps: u32,
+  pal: bool,
   channel: Channel,
 ) -> Result<(), String> {
   let (generation, previous, last_ended) = state
@@ -428,7 +437,7 @@ pub async fn start_camera_preview(
     if let Some(wait) = cold_start_wait {
       std::thread::sleep(wait);
     }
-    build_camera_preview(&device_id, width, height, fps, channel)
+    build_camera_preview(&device_id, width, height, fps, pal, channel)
   })
   .await
   .map_err(|error| error.to_string())??;

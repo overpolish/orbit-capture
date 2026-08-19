@@ -9,7 +9,10 @@ import { CameraResolution } from "./types";
 export type CameraPreviewMode = Pick<
   CameraResolution,
   "fps" | "height" | "width"
->;
+> & {
+  /** Anti-flicker for 50 Hz mains. */
+  pal: boolean;
+};
 
 export const startCameraPreview = async (
   deviceId: string,
@@ -21,6 +24,7 @@ export const startCameraPreview = async (
     deviceId,
     fps: mode.fps,
     height: mode.height,
+    pal: mode.pal,
     width: mode.width,
   });
 };

@@ -1880,6 +1880,31 @@ fn handle_editor_input(input: editor::Input) {
         emit_gesture(inner, SelectionGesturePhase::Update, gesture);
       }
     }
+    editor::Input::PanDown { x, y } => {
+      let point = logical(x, y);
+      if let Ok(mut state) = inner.state.lock() {
+        state.last_pointer = point;
+        // A selection drag already in flight on the primary button keeps
+        // going; the middle button only pans from rest.
+        if state.gesture.is_none() {
+          state.gesture = Some(ActiveGesture::Pan {
+            pointer_start: point,
+            transform_start: state.workspace_transform,
+          });
+        }
+      }
+      refresh_editor_cursor();
+    }
+    editor::Input::PanUp { x, y } => {
+      let point = logical(x, y);
+      if let Ok(mut state) = inner.state.lock() {
+        state.last_pointer = point;
+        if matches!(state.gesture, Some(ActiveGesture::Pan { .. })) {
+          state.gesture = None;
+        }
+        editor::EditorWindow::set_cursor(cursor_for_state(&state, point));
+      }
+    }
     editor::Input::Up { x, y } => {
       let point = logical(x, y);
       let mut ended = None;

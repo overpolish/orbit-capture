@@ -19,9 +19,9 @@ use windows::{
       IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, MA_NOACTIVATE, SWP_ASYNCWINDOWPOS,
       SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
       SW_SHOWNOACTIVATE, WM_CANCELMODE, WM_CAPTURECHANGED, WM_DESTROY, WM_LBUTTONDBLCLK,
-      WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST,
-      WM_SETCURSOR, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_NOACTIVATE,
-      WS_EX_NOREDIRECTIONBITMAP,
+      WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+      WM_MOUSEWHEEL, WM_NCHITTEST, WM_SETCURSOR, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
+      WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
     },
   },
 };
@@ -58,6 +58,17 @@ pub(super) enum Input {
     snapping: bool,
   },
   Cancel,
+  /// Middle button: pans from wherever it lands, like any non-primary button
+  /// on macOS. Trackpads are rare on Windows and the primary button is taken
+  /// by selection over a pane.
+  PanDown {
+    x: f64,
+    y: f64,
+  },
+  PanUp {
+    x: f64,
+    y: f64,
+  },
   Up {
     x: f64,
     y: f64,
@@ -189,7 +200,9 @@ fn raise(hwnd: HWND) {
 }
 
 static CLASS: OnceLock<u16> = OnceLock::new();
+const MK_LBUTTON_MASK: usize = 0x0001;
 const MK_CONTROL_MASK: usize = 0x0008;
+const MK_MBUTTON_MASK: usize = 0x0010;
 
 fn option_pressed() -> bool {
   (unsafe { GetKeyState(VK_MENU.0 as i32) }) < 0
@@ -242,7 +255,7 @@ unsafe extern "system" fn window_proc(
         centered: option_pressed(),
         x,
         y,
-        pressed: wparam.0 & 1 != 0,
+        pressed: wparam.0 & (MK_LBUTTON_MASK | MK_MBUTTON_MASK) != 0,
         snapping: wparam.0 & MK_CONTROL_MASK != 0,
       });
       LRESULT(0)
@@ -250,6 +263,18 @@ unsafe extern "system" fn window_proc(
     WM_LBUTTONUP => {
       let (x, y) = point(lparam);
       dispatch(Input::Up { x, y });
+      let _ = ReleaseCapture();
+      LRESULT(0)
+    }
+    WM_MBUTTONDOWN => {
+      SetCapture(hwnd);
+      let (x, y) = point(lparam);
+      dispatch(Input::PanDown { x, y });
+      LRESULT(0)
+    }
+    WM_MBUTTONUP => {
+      let (x, y) = point(lparam);
+      dispatch(Input::PanUp { x, y });
       let _ = ReleaseCapture();
       LRESULT(0)
     }

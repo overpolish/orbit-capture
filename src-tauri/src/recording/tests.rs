@@ -276,6 +276,7 @@ fn screen_options() -> StartRecordingOptions {
     camera_height: None,
     camera_fps: None,
     camera_flipped: false,
+    camera_pal: false,
     fps: 60,
   }
 }

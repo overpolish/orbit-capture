@@ -45,12 +45,15 @@ type UseCameraPreviewOptions = {
   active: boolean;
   deviceId?: string;
   mode?: CameraResolution;
+  /** Anti-flicker for 50 Hz mains; restarts the preview when toggled. */
+  pal?: boolean;
 };
 
 export const useCameraPreview = ({
   active,
   deviceId,
   mode,
+  pal = false,
 }: UseCameraPreviewOptions) => {
   // Keyed on the mode's primitive fields, not the object: the camera list is
   // re-fetched (and its mode objects rebuilt) every time the selector opens, so
@@ -108,7 +111,11 @@ export const useCameraPreview = ({
         channel.onmessage = (frame) => {
           if (!cancelled) latestFrameRef.current = frame;
         };
-        await startCameraPreview(deviceId, { fps, height, width }, channel);
+        await startCameraPreview(
+          deviceId,
+          { fps, height, pal, width },
+          channel,
+        );
       })
       .catch((error: unknown) => {
         console.error("Could not start camera preview", error);
@@ -125,7 +132,7 @@ export const useCameraPreview = ({
         .then(stopCameraPreview)
         .catch(() => undefined);
     };
-  }, [active, deviceId, fps, height, width]);
+  }, [active, deviceId, fps, height, pal, width]);
 
   // A preview that is wanted, fully specified, and neither drawing nor failed
   // is still on its way: a Continuity Camera can take seconds to come back.

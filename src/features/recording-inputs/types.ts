@@ -38,9 +38,21 @@ export type RecordingFps = (typeof recordingFpsOptions)[number];
  * flicker, so PAL asks for 50/25 — and a camera that cannot reach 50 must fall
  * back to 25 rather than to the nearer-but-flickering 30. Outside PAL the
  * recording fps leads, with its half as the fallback for 30 fps-only cameras.
+ *
+ * A camera that offers no PAL cadence at all (Media Foundation only lists the
+ * discrete rates a webcam advertises, typically without 25 or 50) takes the
+ * standard rates last rather than whatever happens to sit nearest 25, such as
+ * 24; on Windows the camera's own power line frequency control handles the
+ * flicker there.
  */
 export const cameraRequestFps = (fps: RecordingFps, pal: boolean): number[] =>
-  pal ? (fps === 60 ? [50, 25] : [25]) : fps === 60 ? [60, 30] : [30];
+  pal
+    ? fps === 60
+      ? [50, 25, 60, 30]
+      : [25, 30]
+    : fps === 60
+      ? [60, 30]
+      : [30];
 
 export type RecordingInputs = {
   camera: boolean;

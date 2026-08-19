@@ -42,10 +42,12 @@ const WARMUP_DURATION: Duration = Duration::from_millis(500);
 const WARMUP_MIN_FRAMES: u64 = 4;
 
 pub(super) struct CameraSpec {
+  device_id: String,
   index: nokhwa::utils::CameraIndex,
   pub(super) flipped: bool,
   pub(super) fps: u32,
   pub(super) height: u32,
+  pal: bool,
   pub(super) width: u32,
 }
 
@@ -62,10 +64,12 @@ impl CameraSpec {
       return Err("The selected camera mode has no recordable area".to_owned());
     }
     Ok(Self {
+      device_id: mode.device_id,
       index: info.index().clone(),
       flipped: mode.flipped,
       fps: mode.fps.max(1),
       height,
+      pal: mode.pal,
       width,
     })
   }
@@ -120,6 +124,13 @@ pub(super) fn start(
   on_failure: FailureReport,
 ) -> Result<CameraStream, String> {
   let format = resolve_exact_camera_format(&spec.index, spec.width, spec.height, spec.fps)?;
+  // Anti-flicker lives in the camera on Windows, not in the cadence; a camera
+  // without the control (virtual cameras) still records, so this only reports.
+  if let Err(error) =
+    crate::camera_power_line::apply_power_line_frequency(&spec.device_id, spec.pal)
+  {
+    eprintln!("The camera's power line frequency was not set: {error}");
+  }
   let confidence = confidence::ConfidenceWorker::spawn(Arc::clone(&monitor))?;
   let confidence_frames = confidence.sender();
   let cancelled = Arc::new(AtomicBool::new(false));

@@ -6,6 +6,8 @@ mod camera_format;
 #[cfg(target_os = "macos")]
 mod camera_frame_rate;
 mod camera_frames;
+#[cfg(target_os = "windows")]
+mod camera_power_line;
 mod camera_preview;
 mod capture_geometry;
 #[cfg(target_os = "macos")]

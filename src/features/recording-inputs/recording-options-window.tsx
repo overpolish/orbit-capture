@@ -108,6 +108,7 @@ export function RecordingOptionsWindow() {
       selectedCameraMode !== null,
     deviceId: selectedCamera?.id,
     mode: selectedCameraMode ?? undefined,
+    pal: cameraPal,
   });
 
   const refreshCameras = useCallback(async () => {

@@ -12,6 +12,7 @@ export const startRecordingOptions = (): StartRecordingOptions => {
     useRecordingSourceStore.getState();
   const {
     cameraFlippedById,
+    cameraPalById,
     fps,
     inputs,
     selectedCamera,
@@ -36,6 +37,10 @@ export const startRecordingOptions = (): StartRecordingOptions => {
     cameraFps: wantsCamera ? (selectedCameraMode?.fps ?? null) : null,
     cameraHeight: wantsCamera ? (selectedCameraMode?.height ?? null) : null,
     cameraId: wantsCamera ? (selectedCamera?.id ?? null) : null,
+    cameraPal:
+      wantsCamera && selectedCamera
+        ? (cameraPalById[selectedCamera.id] ?? false)
+        : false,
     cameraWidth: wantsCamera ? (selectedCameraMode?.width ?? null) : null,
     fps,
     microphoneId: inputs.microphone ? (selectedMicrophone?.id ?? null) : null,

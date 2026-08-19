@@ -86,6 +86,10 @@ pub struct StartRecordingOptions {
   pub camera_fps: Option<u32>,
   #[serde(default)]
   pub camera_flipped: bool,
+  /// Anti-flicker for 50 Hz mains (PAL): the camera runs at a PAL cadence on
+  /// macOS and has its power line frequency control set on Windows.
+  #[serde(default)]
+  pub camera_pal: bool,
   #[serde(default = "default_fps")]
   pub fps: u32,
 }
@@ -96,6 +100,8 @@ pub(crate) struct CameraCaptureMode {
   pub(super) flipped: bool,
   pub(super) fps: u32,
   pub(super) height: u32,
+  #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+  pub(super) pal: bool,
   pub(super) width: u32,
 }
 

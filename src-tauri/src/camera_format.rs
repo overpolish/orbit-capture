@@ -187,6 +187,18 @@ mod tests {
   }
 
   #[test]
+  fn takes_a_trailing_standard_rate_over_the_cadence_nearest_the_leading_one() {
+    // A Media Foundation webcam lists 24 and 30 but no PAL rate; the wish list
+    // ends in the standard rates so it lands on 30, not the nearer 24.
+    let mut formats = vec![format(1920, 1080, 24), format(1920, 1080, 30)];
+
+    retain_preferred_per_resolution(&mut formats, &[25, 30]);
+
+    assert_eq!(formats.len(), 1);
+    assert_eq!(formats[0].frame_rate(), 30);
+  }
+
+  #[test]
   fn falls_back_to_the_closest_cadence_when_no_preference_is_advertised() {
     let mut formats = vec![format(1920, 1080, 30), format(1920, 1080, 15)];
 

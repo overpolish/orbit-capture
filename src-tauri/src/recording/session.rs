@@ -91,6 +91,7 @@ pub(super) fn drop_unavailable_inputs(
         options.camera_height = None;
         options.camera_fps = None;
         options.camera_flipped = false;
+        options.camera_pal = false;
         skipped.push("camera");
       }
     }
@@ -215,6 +216,7 @@ pub(super) fn begin_capture(
       flipped: options.camera_flipped,
       fps: options.camera_fps.expect("validated above"),
       height: options.camera_height.expect("validated above"),
+      pal: options.camera_pal,
       width: options.camera_width.expect("validated above"),
     });
   let directory = recordings_directory(app)?;
