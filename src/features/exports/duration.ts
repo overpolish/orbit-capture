@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+/**
+ * One frame of the recording preview. The native player renders at
+ * `PREVIEW_FPS` (src-tauri/src/exports/recording_preview_player/video.rs), which
+ * it never reports to the frontend, so keyboard stepping mirrors it here.
+ */
+export const PREVIEW_FRAME_MS = 1_000 / 30;
+
 /** `01:04:07`, or `04:07` for anything under an hour. */
 export const formatDuration = (durationMs: number) => {
   const total = Math.max(0, Math.floor(durationMs / 1000));

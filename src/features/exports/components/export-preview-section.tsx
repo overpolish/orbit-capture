@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { Crop, MousePointer2, ScanSquare } from "lucide-react";
-import { MouseEvent as ReactMouseEvent, ReactNode, useState } from "react";
+import {
+  MouseEvent as ReactMouseEvent,
+  ReactNode,
+  useRef,
+  useState,
+} from "react";
 import { TooltipTrigger } from "react-aria-components";
 
 import { ToggleButton } from "../../../components/base/button/toggle-button";
@@ -119,6 +124,63 @@ export function ScreenshotSection({
     onSelectedItemChange?.(result.nextSelectedItemId);
     setContextMenu(null);
   };
+  const outputDimensions = screenshotOutput
+    ? screenshotOutputDimensions(screenshotOutput)
+    : { height: artifact.height, width: artifact.width };
+  const selectedItem = artifact.items.find(
+    (item) => item.id === selectedItemId,
+  );
+  const selectedOutput =
+    screenshotOutput && selectedItem
+      ? screenshotWorkspaceItemOutput(screenshotOutput, selectedItem.id)
+      : null;
+  // A keyboard nudge writes exactly the fields a select-tool drag writes - the
+  // `move` branch of `selectionGesture` in preview-viewport.tsx. It is not
+  // wrapped in an edit gesture on purpose: the history hook already groups
+  // same-key edits that land within its grouping delay, so a held arrow folds
+  // into one undo step while a pause starts the next. No snapping: the arrows
+  // are the way to place a layer precisely.
+  const nudgeRef = useRef<{
+    after: ScreenshotOutputSettings;
+    beforeX: number;
+    beforeY: number;
+    itemId: number;
+  } | null>(null);
+  const nudgeSelectedLayer = (
+    directionX: number,
+    directionY: number,
+    coarse: boolean,
+  ) => {
+    if (!selectedItem || !selectedOutput) return;
+    const pixels = coarse ? 10 : 1;
+    const deltaX = (directionX * pixels * 100) / outputDimensions.width;
+    const deltaY = (directionY * pixels * 100) / outputDimensions.height;
+    // Key repeat can outrun React. While the committed settings have not come
+    // back yet the props still hold the previous press's starting point, so
+    // continue from what that press sent instead of repeating it.
+    const pending = nudgeRef.current;
+    const base =
+      pending &&
+      pending.itemId === selectedItem.id &&
+      pending.beforeX === selectedOutput.screenshotCropXPercent &&
+      pending.beforeY === selectedOutput.screenshotCropYPercent
+        ? pending.after
+        : selectedOutput;
+    const next = {
+      ...base,
+      screenshotCropXPercent: base.screenshotCropXPercent + deltaX,
+      screenshotCropYPercent: base.screenshotCropYPercent + deltaY,
+      screenshotImageXPercent: base.screenshotImageXPercent + deltaX,
+      screenshotImageYPercent: base.screenshotImageYPercent + deltaY,
+    };
+    nudgeRef.current = {
+      after: next,
+      beforeX: selectedOutput.screenshotCropXPercent,
+      beforeY: selectedOutput.screenshotCropYPercent,
+      itemId: selectedItem.id,
+    };
+    onOutputChange?.(next, selectedItem.id);
+  };
   useExportWindowShortcuts({
     onDelete: deleteSelectedLayer,
     onMoveBackward: () => {
@@ -127,6 +189,10 @@ export function ScreenshotSection({
     onMoveForward: () => {
       moveSelectedLayer("forward");
     },
+    onNudge:
+      tool === "select" && selectedItem && selectedOutput
+        ? nudgeSelectedLayer
+        : undefined,
     onResizeCanvas: () => {
       setTool((current) => (current === "canvas" ? null : "canvas"));
     },
@@ -138,16 +204,6 @@ export function ScreenshotSection({
       setTool((current) => (current === "crop" ? null : "crop"));
     },
   });
-  const outputDimensions = screenshotOutput
-    ? screenshotOutputDimensions(screenshotOutput)
-    : { height: artifact.height, width: artifact.width };
-  const selectedItem = artifact.items.find(
-    (item) => item.id === selectedItemId,
-  );
-  const selectedOutput =
-    screenshotOutput && selectedItem
-      ? screenshotWorkspaceItemOutput(screenshotOutput, selectedItem.id)
-      : null;
 
   return (
     <div className="flex min-h-0 min-w-0 grow flex-col">

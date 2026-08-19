@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 
-import { formatDuration } from "../duration";
+import { PREVIEW_FRAME_MS, formatDuration } from "../duration";
 import { PreparedAudioTrack } from "../types";
 
 import { decibelGain } from "./audio-level";
@@ -210,8 +210,13 @@ export function TimelineRuler({
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
         event.preventDefault();
+        // The window shortcut handles the arrows everywhere else; matching its
+        // one frame / one second steps keeps a focused ruler consistent.
+        const stepMs = event.shiftKey ? 1_000 : PREVIEW_FRAME_MS;
         const ratio = clamp(
-          ratioRef.current + (event.key === "ArrowRight" ? 0.01 : -0.01),
+          ratioRef.current +
+            (event.key === "ArrowRight" ? stepMs : -stepMs) /
+              Math.max(1, durationMs),
           0,
           1,
         );

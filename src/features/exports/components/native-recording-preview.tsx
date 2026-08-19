@@ -17,6 +17,7 @@ import {
   cameraOverlayGeometry,
   uncroppedCameraPreviewOverlay,
 } from "../camera-overlay-geometry";
+import { PREVIEW_FRAME_MS } from "../duration";
 import { defaultCameraOverlay } from "../recording-export-settings";
 import {
   RecordingOutputSettings,
@@ -55,7 +56,7 @@ import {
   LayerContextMenu,
   LayerContextMenuState,
 } from "./screenshot-layer-context-menu";
-import { createPlayhead } from "./scrub-playhead";
+import { clamp, createPlayhead } from "./scrub-playhead";
 import { useCameraOverlayHistory } from "./use-camera-overlay-history";
 
 import type { RecordingSelectionGestureEvent } from "../use-recording-preview-surface";
@@ -860,6 +861,95 @@ export function NativeRecordingPreview({
       });
     }
   };
+  // A keyboard nudge replays the native move gesture so it reuses the same
+  // snapshot, camera-overlay-versus-output routing and undo grouping as a drag.
+  // The gesture reads the geometry React last rendered, so consecutive presses
+  // that land before a re-render have to accumulate into one growing delta;
+  // keying the accumulator on that geometry's identity resets it as soon as the
+  // committed settings arrive.
+  const editsBakedCameraOverlay =
+    canPreviewBakedCamera && activeVideoTrack === "camera";
+  const nudgeContextRef = useRef<{
+    applyGesture: (event: RecordingSelectionGestureEvent) => void;
+    origin: object | null;
+    outputSize: { height: number; width: number } | undefined;
+    paneIndex: number;
+  }>({
+    applyGesture: selectionGesture,
+    origin: null,
+    outputSize: undefined,
+    paneIndex: 0,
+  });
+  nudgeContextRef.current = {
+    applyGesture: selectionGesture,
+    origin: !activeVideoTrack
+      ? null
+      : editsBakedCameraOverlay
+        ? cameraOverlay
+        : effectiveRecordingOutput[activeVideoTrack],
+    // A baked camera moves in percentages of the primary output it sits in, so
+    // one "output pixel" there is one pixel of the primary frame.
+    outputSize: activeVideoTrack
+      ? previewOutputDimensions?.[
+          editsBakedCameraOverlay ? "primary" : activeVideoTrack
+        ]
+      : undefined,
+    paneIndex: activeVideoTrack === "camera" ? 1 : 0,
+  };
+  const nudgeRef = useRef<{
+    deltaX: number;
+    deltaY: number;
+    origin: object;
+  } | null>(null);
+  const nudgeActiveTrack = useCallback(
+    (directionX: number, directionY: number, coarse: boolean) => {
+      const { applyGesture, origin, outputSize, paneIndex } =
+        nudgeContextRef.current;
+      if (!origin) return;
+      const pixels = coarse ? 10 : 1;
+      // Without the output size the fraction cannot be a pixel, so fall back to
+      // a proportional step of the frame.
+      const stepX = outputSize
+        ? pixels / Math.max(1, outputSize.width)
+        : pixels / 1_000;
+      const stepY = outputSize
+        ? pixels / Math.max(1, outputSize.height)
+        : pixels / 1_000;
+      const gesture = {
+        edges: 0,
+        operation: "move" as const,
+        paneIndex,
+        scale: 1,
+      };
+      applyGesture({ ...gesture, deltaX: 0, deltaY: 0, phase: "begin" });
+      // The begin phase refuses gestures the current tool does not allow; bail
+      // before accumulating so a rejected press cannot skew the next one.
+      if (!selectionGestureRef.current) return;
+      const accumulated =
+        nudgeRef.current?.origin === origin
+          ? nudgeRef.current
+          : { deltaX: 0, deltaY: 0, origin };
+      // Replay the deltas already applied to this geometry as the gesture's
+      // live frame, so the closing frame is compared against them: an arrow
+      // that walks the layer back onto its origin still commits.
+      applyGesture({
+        ...gesture,
+        deltaX: accumulated.deltaX,
+        deltaY: accumulated.deltaY,
+        phase: "update",
+      });
+      accumulated.deltaX += directionX * stepX;
+      accumulated.deltaY += directionY * stepY;
+      nudgeRef.current = accumulated;
+      applyGesture({
+        ...gesture,
+        deltaX: accumulated.deltaX,
+        deltaY: accumulated.deltaY,
+        phase: "end",
+      });
+    },
+    [],
+  );
   const player = useRecordingPreviewPlayer({
     artifactId,
     audioTrackVolumes,
@@ -1029,19 +1119,6 @@ export function NativeRecordingPreview({
     setCanvasTool((current) => (current === "crop" ? null : "crop"));
   }, []);
 
-  useExportWindowShortcuts({
-    onMoveBackward: canMoveActiveVideoTrack
-      ? moveActiveVideoTrackBackward
-      : undefined,
-    onMoveForward: canMoveActiveVideoTrack
-      ? moveActiveVideoTrackForward
-      : undefined,
-    onResizeCanvas: canResizeActiveTrack ? toggleCanvasTool : undefined,
-    onSelectTool: hasVisiblePanes ? toggleSelectTool : undefined,
-    onToggleCrop: hasVisiblePanes ? toggleCropTool : undefined,
-    onTogglePlayback: layout ? togglePlayback : undefined,
-  });
-
   // The tools read the committed `recordingOutput`, never the resize draft, so
   // holding the element keeps the memoized toolbar's props stable mid-gesture.
   const cropToggle = useMemo(
@@ -1109,6 +1186,45 @@ export function NativeRecordingPreview({
     },
     [playhead],
   );
+  // The player re-creates its reader per render, and the shortcut hook re-binds
+  // its listener whenever a handler identity changes, so this goes through a ref.
+  const playerPositionRef = useRef(player.getPositionMs);
+  playerPositionRef.current = player.getPositionMs;
+  const stepPlayhead = useCallback(
+    (direction: -1 | 1, coarse: boolean) => {
+      const total = totalDurationRef.current;
+      if (total <= 0) return;
+      const positionMs = clamp(
+        playerPositionRef.current() +
+          direction * (coarse ? 1_000 : PREVIEW_FRAME_MS),
+        0,
+        total,
+      );
+      const ratio = positionMs / total;
+      seek(ratio, "start");
+      seek(ratio, "end");
+    },
+    [seek],
+  );
+  // Arrows either move the selected layer or the playhead, never both: nudging
+  // needs the selection tool, a movable layer and a parked playhead.
+  const canNudgeActiveTrack =
+    canvasTool === "select" && canMoveActiveVideoTrack && !isPlaying;
+  useExportWindowShortcuts({
+    onMoveBackward: canMoveActiveVideoTrack
+      ? moveActiveVideoTrackBackward
+      : undefined,
+    onMoveForward: canMoveActiveVideoTrack
+      ? moveActiveVideoTrackForward
+      : undefined,
+    onNudge: canNudgeActiveTrack ? nudgeActiveTrack : undefined,
+    onResizeCanvas: canResizeActiveTrack ? toggleCanvasTool : undefined,
+    onSelectTool: hasVisiblePanes ? toggleSelectTool : undefined,
+    onStep: !canNudgeActiveTrack && layout ? stepPlayhead : undefined,
+    onToggleCrop: hasVisiblePanes ? toggleCropTool : undefined,
+    onTogglePlayback: layout ? togglePlayback : undefined,
+  });
+
   const changeEnabledTracks = useCallback(
     (tracks: Set<number>) => {
       onEnabledTracksChange?.([...tracks]);

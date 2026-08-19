@@ -3,7 +3,14 @@
 
 import { useEffect } from "react";
 
-import { ownsTextEditingKeys } from "./keyboard-target";
+import { ownsArrowKeys, ownsTextEditingKeys } from "./keyboard-target";
+
+const arrowDirections = new Map([
+  ["ArrowDown", { x: 0, y: 1 }],
+  ["ArrowLeft", { x: -1, y: 0 }],
+  ["ArrowRight", { x: 1, y: 0 }],
+  ["ArrowUp", { x: 0, y: -1 }],
+]);
 
 export function useExportWindowShortcuts({
   onCopy,
@@ -11,8 +18,10 @@ export function useExportWindowShortcuts({
   onExport,
   onMoveBackward,
   onMoveForward,
+  onNudge,
   onResizeCanvas,
   onSelectTool,
+  onStep,
   onToggleCrop,
   onTogglePlayback,
 }: {
@@ -21,13 +30,48 @@ export function useExportWindowShortcuts({
   onExport?: () => void;
   onMoveBackward?: () => void;
   onMoveForward?: () => void;
+  /** Moves the selected layer by one arrow press; `coarse` is the Shift jump. */
+  onNudge?: (directionX: number, directionY: number, coarse: boolean) => void;
   onResizeCanvas?: () => void;
   onSelectTool?: () => void;
+  /** Moves the playhead by one arrow press; `coarse` is the Shift jump. */
+  onStep?: (direction: -1 | 1, coarse: boolean) => void;
   onToggleCrop?: () => void;
   onTogglePlayback?: () => void;
 }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // Arrows run before the shared guards: holding one has to repeat, and
+      // Shift only picks the bigger jump rather than naming another shortcut.
+      const arrow = arrowDirections.get(event.code);
+      if (arrow) {
+        if (
+          event.isComposing ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          ownsTextEditingKeys(event.target) ||
+          ownsArrowKeys(event.target)
+        )
+          return;
+        const handled = onNudge
+          ? () => {
+              onNudge(arrow.x, arrow.y, event.shiftKey);
+            }
+          : onStep && arrow.x !== 0
+            ? () => {
+                onStep(arrow.x > 0 ? 1 : -1, event.shiftKey);
+              }
+            : null;
+        if (!handled) return;
+        event.preventDefault();
+        // The timeline ruler keeps its own arrow handler for when it has focus;
+        // stop the event here so a bubbling copy cannot seek a second time.
+        event.stopPropagation();
+        handled();
+        return;
+      }
+
       if (event.repeat || event.isComposing || event.altKey) return;
 
       const commandKey = event.ctrlKey || event.metaKey;
@@ -117,8 +161,10 @@ export function useExportWindowShortcuts({
     onExport,
     onMoveBackward,
     onMoveForward,
+    onNudge,
     onResizeCanvas,
     onSelectTool,
+    onStep,
     onToggleCrop,
     onTogglePlayback,
   ]);
