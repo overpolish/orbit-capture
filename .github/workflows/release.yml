@@ -49,13 +49,16 @@ jobs:
         include:
           - name: macOS Apple Silicon
             os: macos-15
-            args: --bundles app,dmg
-          - name: macOS Intel
-            os: macos-15-intel
-            args: --bundles app,dmg
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles app,dmg
           - name: Windows x64
             os: windows-latest
-            args: --bundles nsis
+            target: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc --bundles nsis
+          - name: Windows ARM64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            args: --target aarch64-pc-windows-msvc --bundles nsis
 
     steps:
       - name: Check out repository
@@ -72,10 +75,8 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Intel FFmpeg build tools
-        if: matrix.name == 'macOS Intel'
-        run: brew install nasm
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -132,8 +133,8 @@ jobs:
               (.platforms[$platform].signature | type == "string" and length > 0);
             .version == $version and
             valid("darwin-aarch64") and
-            valid("darwin-x86_64") and
-            valid("windows-x86_64-nsis")
+            valid("windows-x86_64-nsis") and
+            valid("windows-aarch64-nsis")
           ' latest.json > /dev/null
 
       - name: Verify updater downloads
@@ -141,8 +142,8 @@ jobs:
           jq --raw-output '
             .platforms[
               "darwin-aarch64",
-              "darwin-x86_64",
-              "windows-x86_64-nsis"
+              "windows-x86_64-nsis",
+              "windows-aarch64-nsis"
             ].url
           ' latest.json | while IFS= read -r url; do
             curl --fail --location --silent --show-error \

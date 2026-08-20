@@ -29,7 +29,7 @@ const copyIfChanged = async (sourcePath, destinationPath, expectedHash) => {
 
 const triples = {
   "darwin-arm64": "aarch64-apple-darwin",
-  "darwin-x64": "x86_64-apple-darwin",
+  "win32-arm64": "aarch64-pc-windows-msvc",
   "win32-x64": "x86_64-pc-windows-msvc",
 };
 const nodeArchitectures = {

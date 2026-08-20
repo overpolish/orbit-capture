@@ -8,6 +8,10 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "The Screenwide macOS FFmpeg builder must run on macOS" >&2
   exit 1
 fi
+if [ "$(uname -m)" != "arm64" ]; then
+  echo "Screenwide packages FFmpeg only for Apple Silicon macOS" >&2
+  exit 1
+fi
 if [ "$#" -ne 1 ]; then
   echo "usage: build-ffmpeg-macos.sh OUTPUT" >&2
   exit 1
@@ -50,20 +54,8 @@ tar -xf "$x264_archive" -C "$work_dir"
 x264_source="$work_dir/x264-$x264_revision"
 (
   cd "$x264_source"
-  case "$(uname -m)" in
-    arm64)
-      set -- "--extra-asflags=-mmacosx-version-min=$deployment_target"
-      ;;
-    x86_64)
-      set --
-      ;;
-    *)
-      echo "Unsupported macOS architecture: $(uname -m)" >&2
-      exit 1
-      ;;
-  esac
   MACOSX_DEPLOYMENT_TARGET=$deployment_target ./configure \
-    "$@" \
+    "--extra-asflags=-mmacosx-version-min=$deployment_target" \
     --prefix="$prefix" \
     --enable-static \
     --enable-pic \

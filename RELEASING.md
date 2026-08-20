@@ -5,7 +5,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # Releasing Screenwide
 
-Screenwide publishes installers and signed Tauri updater bundles through GitHub Releases. A pushed version tag builds native Apple Silicon macOS, Intel macOS, and x64 Windows artifacts. The workflow creates a draft release so the files and release notes can be checked before users' apps see it.
+Screenwide publishes installers and signed Tauri updater bundles through GitHub Releases. A pushed version tag builds native Apple Silicon macOS, Windows x64, and Windows ARM64 artifacts. Intel macOS is not supported. The workflow creates a draft release so the files and release notes can be checked before users' apps see it.
 
 ## User update flow
 
@@ -75,7 +75,7 @@ Windows installers are updater-signed but not yet Authenticode code-signed, so W
    git push origin v0.2.0
    ```
 
-4. Wait for the Release workflow to finish, including the **Verify updater assets** job. In the draft GitHub Release, verify both macOS DMGs, the Windows NSIS installer, signed updater bundles, and `latest.json`.
+4. Wait for the Release workflow to finish, including the **Verify updater assets** job. In the draft GitHub Release, verify the Apple Silicon macOS DMG, both Windows NSIS installers, signed updater bundles, and `latest.json`.
 5. Edit the generated notes if needed, then publish the draft. Publishing makes it the endpoint served by `releases/latest/download/latest.json`, so installed copies can offer it.
 
 Do not publish a partially successful release. Rerun failed jobs or delete the draft and tag, correct the issue, and create a new version.

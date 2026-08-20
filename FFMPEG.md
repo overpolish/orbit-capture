@@ -16,7 +16,7 @@ The script records and verifies the source archive hashes and contains the full 
 
 ## Windows
 
-The x86-64 release uses BtbN's pinned static GPL build `n8.1.2-44-g7c533d0f86` from release `autobuild-2026-08-20-13-45`:
+The x86-64 and ARM64 releases use BtbN's pinned static GPL builds `n8.1.2-44-g7c533d0f86` from release `autobuild-2026-08-20-13-45`:
 
 <https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-20-13-45>
 
