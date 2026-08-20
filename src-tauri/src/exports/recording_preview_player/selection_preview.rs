@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use super::{worker::PlaybackMode, PreviewCompositionSettings, PreviewPlayerManager};
+#[cfg(target_os = "macos")]
+use super::worker::PlaybackMode;
+use super::{PreviewCompositionSettings, PreviewPlayerManager};
 
 impl PreviewPlayerManager {
   pub(super) fn selection_composition(&self) -> Option<PreviewCompositionSettings> {

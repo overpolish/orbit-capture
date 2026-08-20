@@ -42,4 +42,6 @@ pub use state::ScreenshotPreviewState;
 
 // Native screenshot document extensions enter through presentation; React
 // remains the semantic settings, history, and command/event transport layer.
-pub(super) use super::{preview_platform, preview_workspace_model};
+#[cfg(target_os = "macos")]
+pub(super) use super::preview_platform;
+pub(super) use super::preview_workspace_model;

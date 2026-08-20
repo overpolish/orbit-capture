@@ -4,9 +4,9 @@
 use tauri::AppHandle;
 
 use super::super::preview_platform::workspace_editor::WorldRect;
-use super::super::preview_platform::{
-  PreviewSelection, PreviewSurfaceRect, SelectionGestureOperation,
-};
+#[cfg(target_os = "macos")]
+use super::super::preview_platform::SelectionGestureOperation;
+use super::super::preview_platform::{PreviewSelection, PreviewSurfaceRect};
 use super::super::ScreenshotWorkspaceOutputSettings;
 use super::payloads::{ScreenshotSelectionOverlay, ScreenshotSurfacePane};
 use super::state::{PreviewManager, ScreenshotPreviewState};

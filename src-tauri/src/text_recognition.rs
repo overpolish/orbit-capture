@@ -96,10 +96,10 @@ pub fn dismiss(app: &AppHandle) {
   }
 }
 
-pub async fn start(app: &AppHandle) -> Result<(), String> {
-  dismiss(app);
-  let generation = app.state::<TextRecognitionState>().begin();
-
+// xcap::Monitor wraps a raw display handle that is not Send on every
+// platform, so the command future may never hold one across an await.
+// Enumerating synchronously drops the handles before the first snapshot.
+fn monitor_layout(app: &AppHandle) -> Result<Vec<(u32, f64, tauri::Monitor)>, String> {
   let capture_monitors = xcap::Monitor::all().map_err(|error| error.to_string())?;
   let tauri_monitors = app
     .available_monitors()
@@ -108,7 +108,7 @@ pub async fn start(app: &AppHandle) -> Result<(), String> {
     return Err("Tauri and xcap returned different monitor counts".to_owned());
   }
 
-  let monitors = capture_monitors
+  capture_monitors
     .into_iter()
     .zip(tauri_monitors)
     .map(|(capture_monitor, monitor)| {
@@ -116,7 +116,14 @@ pub async fn start(app: &AppHandle) -> Result<(), String> {
       let scale = monitor.scale_factor();
       Ok((monitor_id, scale, monitor))
     })
-    .collect::<Result<Vec<_>, String>>()?;
+    .collect()
+}
+
+pub async fn start(app: &AppHandle) -> Result<(), String> {
+  dismiss(app);
+  let generation = app.state::<TextRecognitionState>().begin();
+
+  let monitors = monitor_layout(app)?;
   let mut snapshots = Vec::with_capacity(monitors.len());
   for (monitor_id, scale, _) in &monitors {
     let image = screenshots::capture_text_recognition_snapshot(*monitor_id).await?;
