@@ -3,7 +3,6 @@
 
 allowBuilds:
   esbuild: true
-  ffmpeg-static: true
   unrs-resolver: true
 minimumReleaseAgeExclude:
   - "@storybook/addon-themes@10.5.7"

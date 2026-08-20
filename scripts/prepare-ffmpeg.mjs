@@ -1,15 +1,12 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, copyFile, mkdir } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { arch, platform } from "node:process";
+import { arch as hostArch, env, platform as hostPlatform } from "node:process";
 import { dirname, resolve } from "node:path";
-
-const require = createRequire(import.meta.url);
-const source = require("ffmpeg-static");
 
 const sha256 = (path) =>
   new Promise((resolveDigest, reject) => {
@@ -27,7 +24,7 @@ const copyIfChanged = async (sourcePath, destinationPath, expectedHash) => {
   if (unchanged) return;
   await mkdir(dirname(destinationPath), { recursive: true });
   await copyFile(sourcePath, destinationPath);
-  if (platform !== "win32") await chmod(destinationPath, 0o755);
+  if (hostPlatform !== "win32") await chmod(destinationPath, 0o755);
 };
 
 const triples = {
@@ -35,35 +32,47 @@ const triples = {
   "darwin-x64": "x86_64-apple-darwin",
   "win32-x64": "x86_64-pc-windows-msvc",
 };
-const hashes = {
-  "darwin-arm64":
-    "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584",
-  "darwin-x64":
-    "ebdddc936f61e14049a2d4b549a412b8a40deeff6540e58a9f2a2da9e6b18894",
-  "win32-x64":
-    "04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00",
+const nodeArchitectures = {
+  aarch64: "arm64",
+  arm64: "arm64",
+  x86_64: "x64",
+  x64: "x64",
 };
-const target = triples[`${platform}-${arch}`];
+const nodePlatforms = {
+  darwin: "darwin",
+  win32: "win32",
+  windows: "win32",
+};
+const requestedPlatform = nodePlatforms[env.TAURI_ENV_PLATFORM ?? hostPlatform];
+const requestedArch = nodeArchitectures[env.TAURI_ENV_ARCH ?? hostArch];
+const requestedHost = `${requestedPlatform}-${requestedArch}`;
+const actualHost = `${hostPlatform}-${hostArch}`;
+const target = triples[requestedHost];
 
 if (!target) {
-  throw new Error(`Screenwide does not package FFmpeg for ${platform}-${arch}`);
+  throw new Error(`Screenwide does not package FFmpeg for ${requestedHost}`);
 }
-if (typeof source !== "string" || source.length === 0) {
-  throw new Error("ffmpeg-static did not provide a binary for this platform");
+if (requestedHost !== actualHost) {
+  throw new Error(
+    `FFmpeg preparation cannot use the ${actualHost} dependency for the requested ${requestedHost} target`,
+  );
 }
-
-const digest = await sha256(source);
-if (digest !== hashes[`${platform}-${arch}`]) {
-  throw new Error(`The downloaded FFmpeg binary failed SHA-256 verification`);
-}
-
-const extension = platform === "win32" ? ".exe" : "";
+const extension = requestedPlatform === "win32" ? ".exe" : "";
 const destination = resolve(
   "src-tauri",
   "binaries",
   `ffmpeg-${target}${extension}`,
 );
-await copyIfChanged(source, destination, digest);
+if (requestedPlatform === "darwin") {
+  execFileSync("sh", ["scripts/build-ffmpeg-macos.sh", destination], {
+    stdio: "inherit",
+  });
+} else {
+  execFileSync("node", ["scripts/build-ffmpeg-windows.mjs", destination], {
+    stdio: "inherit",
+  });
+}
+const digest = await sha256(destination);
 
 // Tauri's externalBin copy is what release bundles use. Keeping the current
 // development target beside the app as well makes a hot-restarted `tauri dev`
@@ -74,6 +83,6 @@ const debugDestination = resolve(
   "debug",
   `ffmpeg${extension}`,
 );
-await copyIfChanged(source, debugDestination, digest);
+await copyIfChanged(destination, debugDestination, digest);
 
 console.log(`Prepared bundled FFmpeg for ${target}`);

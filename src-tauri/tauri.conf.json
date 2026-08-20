@@ -7,6 +7,7 @@
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build",
+    "beforeBundleCommand": "pnpm ffmpeg:verify-release",
     "frontendDist": "../dist"
   },
   "app": {
@@ -214,6 +215,10 @@
   "bundle": {
     "active": true,
     "externalBin": ["binaries/ffmpeg"],
+    "resources": {
+      "../FFMPEG.md": "licenses/FFMPEG.md",
+      "../LICENSE": "licenses/GPL-3.0.txt"
+    },
     "macOS": {
       "minimumSystemVersion": "14.2"
     },
