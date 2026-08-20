@@ -15,12 +15,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Prepare draft release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create_release.outputs.release_id }}
+    steps:
+      - name: Create or find draft release
+        id: create_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          release_id="$(gh release view "$TAG_NAME" --json databaseId --jq .databaseId 2>/dev/null || true)"
+          if [ -z "$release_id" ]; then
+            release_id="$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$TAG_NAME" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f name="Screenwide $TAG_NAME" \
+              -F draft=true \
+              -F generate_release_notes=true \
+              --jq .id)"
+          fi
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.name }}
+    needs: prepare
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
         include:
           - name: macOS Apple Silicon
@@ -73,9 +97,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           args: ${{ matrix.args }}
-          generateReleaseNotes: true
+          releaseId: ${{ needs.prepare.outputs.release_id }}
           releaseDraft: true
-          releaseName: Screenwide ${{ github.ref_name }}
           tagName: ${{ github.ref_name }}
           updaterJsonPreferNsis: true
           uploadUpdaterJson: true
