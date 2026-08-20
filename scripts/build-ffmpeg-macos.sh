@@ -50,15 +50,27 @@ tar -xf "$x264_archive" -C "$work_dir"
 x264_source="$work_dir/x264-$x264_revision"
 (
   cd "$x264_source"
-  MACOSX_DEPLOYMENT_TARGET=$deployment_target ./configure \
-    --prefix="$prefix" \
-    --enable-static \
-    --enable-pic \
-    --extra-asflags="-mmacosx-version-min=$deployment_target" \
-    --extra-cflags="-mmacosx-version-min=$deployment_target" \
-    --extra-ldflags="-mmacosx-version-min=$deployment_target" \
-    --disable-opencl \
-    --disable-cli
+  if ! MACOSX_DEPLOYMENT_TARGET=$deployment_target ./configure \
+      --prefix="$prefix" \
+      --enable-static \
+      --enable-pic \
+      --extra-asflags="-mmacosx-version-min=$deployment_target" \
+      --extra-cflags="-mmacosx-version-min=$deployment_target" \
+      --extra-ldflags="-mmacosx-version-min=$deployment_target" \
+      --disable-opencl \
+      --disable-cli; then
+    echo "x264 configure diagnostics:" >&2
+    uname -a >&2
+    command -v nasm >&2 || true
+    nasm -v >&2 || true
+    clang --version >&2 || true
+    if [ -f config.log ]; then
+      tail -n 160 config.log >&2
+    else
+      echo "x264 did not produce config.log" >&2
+    fi
+    exit 1
+  fi
   make -s -j"$(sysctl -n hw.logicalcpu)"
   make -s install
 )
