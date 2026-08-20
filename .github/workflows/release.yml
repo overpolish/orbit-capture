@@ -49,6 +49,10 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Intel FFmpeg build tools
+        if: matrix.name == 'macOS Intel'
+        run: brew install nasm
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
