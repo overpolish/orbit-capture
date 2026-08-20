@@ -185,7 +185,7 @@ pub async fn set_recording_preview_composition(
     .ok_or_else(|| "The recording preview composition is unavailable".to_owned())?;
   let next = PreviewCompositionSettings {
     bake_camera,
-    camera_overlay: camera_overlay.clone(),
+    camera_overlay,
     recording_output: recording_output.clone(),
   };
   let current = settings

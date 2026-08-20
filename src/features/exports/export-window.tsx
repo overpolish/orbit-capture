@@ -17,8 +17,7 @@ import {
   setScreenshotRadius,
 } from "./api";
 import {
-  cameraOverlayHasCrop,
-  cameraOutputWithOverlayCrop,
+  cameraOutputWithCameraOverlay,
   cameraOverlayWithCameraCrop,
 } from "./camera-overlay-geometry";
 import { ExportPanel } from "./components/export-panel";
@@ -468,20 +467,12 @@ export function ExportWindow() {
         artifact?.kind === "recording" &&
         artifact.camera &&
         includePrimaryVideo &&
-        includeCamera &&
-        cameraOverlayHasCrop({
-          cameraSource: {
-            height: artifact.camera.height,
-            width: artifact.camera.width,
-          },
-          screenOutput: recordingOutput.primary,
-          settings: cameraOverlay,
-        })
+        includeCamera
       ) {
         const camera = artifact.camera;
         setRecordingOutput((current) => ({
           ...current,
-          camera: cameraOutputWithOverlayCrop({
+          camera: cameraOutputWithCameraOverlay({
             cameraOutput: current.camera,
             cameraSource: {
               height: camera.height,

@@ -5,23 +5,19 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-const DEFAULT_LIMIT = 400;
+const DEFAULT_LIMIT = 300;
 const TEST_LIMIT = 650;
 const roots = ["src", "src-tauri/src", "scripts"];
-const extensions = new Set([".mjs", ".rs", ".ts", ".tsx"]);
+const extensions = new Set([".h", ".m", ".mjs", ".rs", ".ts", ".tsx"]);
 
-// These are cohesive state-machine/controller seams that were deliberately
-// kept together during the architecture pass. Their caps match the current
-// shape closely, so they cannot become a place to quietly add more concerns.
-const exceptions = new Map([
-  ["src-tauri/src/windows.rs", 600],
-  ["src/features/exports/components/preview-viewport.tsx", 525],
-  ["src/features/exports/components/scrub-preview.tsx", 700],
-  ["src/features/exports/export-window.tsx", 555],
-  ["src-tauri/src/screenshots/output.rs", 435],
-  ["src/features/exports/components/export-inspector.tsx", 405],
-  ["src/features/exports/components/native-recording-preview.tsx", 410],
-]);
+// Oversized legacy files are frozen at their surveyed size. Refactors remove
+// entries rather than raising ceilings, so new code and completed splits use
+// the normal limit while the remaining debt cannot quietly grow.
+const debtCeilings = new Map(
+  Object.entries(
+    JSON.parse(await readFile("scripts/source-size-debt.json", "utf8")),
+  ),
+);
 
 const files = [];
 
@@ -37,17 +33,27 @@ async function visit(directory) {
 await Promise.all(roots.map(visit));
 
 const failures = [];
+const visited = new Set();
 for (const file of files.sort()) {
   const source = await readFile(file, "utf8");
   const lines = source.length === 0 ? 0 : source.split(/\r?\n/u).length;
   const normalized = file.split(path.sep).join("/");
+  visited.add(normalized);
   const isTest = /(?:^|\/)(?:tests?\.rs|[^/]+_tests\.rs|tests\/)/u.test(
     normalized,
   );
-  const limit =
-    exceptions.get(normalized) ?? (isTest ? TEST_LIMIT : DEFAULT_LIMIT);
+  const standardLimit = isTest ? TEST_LIMIT : DEFAULT_LIMIT;
+  const debtCeiling = debtCeilings.get(normalized);
+  const limit = debtCeiling ?? standardLimit;
   if (lines > limit)
     failures.push(`${normalized}: ${lines.toString()} > ${limit.toString()}`);
+  else if (debtCeiling !== undefined && lines <= standardLimit)
+    failures.push(`${normalized}: remove its cleared source-size debt entry`);
+}
+
+for (const file of debtCeilings.keys()) {
+  if (!visited.has(file))
+    failures.push(`${file}: remove its stale source-size debt entry`);
 }
 
 if (failures.length > 0) {

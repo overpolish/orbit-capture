@@ -15,6 +15,13 @@ type OverlayRect = {
   y: number;
 };
 
+type CameraModeBoundaryOptions = {
+  cameraOutput: ScreenshotOutputSettings;
+  cameraSource: { height: number; width: number };
+  screenOutput: { height: number; width: number };
+  settings: CameraOverlaySettings;
+};
+
 export type CameraOverlayGeometry = {
   camera: OverlayRect;
   frame: OverlayRect;
@@ -74,7 +81,8 @@ export const uncroppedCameraPreviewOverlay = (
 };
 
 /**
- * Carry a camera crop from split-track output into the baked overlay frame.
+ * Carry camera crop and corner radius from split-track output into the baked
+ * overlay frame.
  *
  * The split preview stores the camera crop in the camera track's output
  * settings, while baked preview stores the same visible window as the
@@ -138,21 +146,17 @@ export const cameraOverlayWithCameraCrop = ({
     frameWidthPercent: (cropWidth * 100) / Math.max(1, screen.width),
     frameXPercent: (cropLeft * 100) / Math.max(1, screen.width),
     frameYPercent: (cropTop * 100) / Math.max(1, screen.height),
+    radiusPercent: cameraOutput.radiusPercent,
   };
 };
 
-/** Convert the baked overlay frame back into the split camera crop settings. */
-export const cameraOutputWithOverlayCrop = ({
+/** Convert baked overlay crop and radius back into split camera settings. */
+const cameraOutputWithOverlayCrop = ({
   cameraOutput,
   cameraSource,
   screenOutput,
   settings,
-}: {
-  cameraOutput: ScreenshotOutputSettings;
-  cameraSource: { height: number; width: number };
-  screenOutput: { height: number; width: number };
-  settings: CameraOverlaySettings;
-}): ScreenshotOutputSettings => {
+}: CameraModeBoundaryOptions): ScreenshotOutputSettings => {
   const screen = {
     height: screenOutput.height,
     kind: "screen" as const,
@@ -196,6 +200,7 @@ export const cameraOutputWithOverlayCrop = ({
   const output = screenshotOutputDimensions(cameraOutput);
   return {
     ...cameraOutput,
+    radiusPercent: settings.radiusPercent,
     screenshotCropHeightPercent:
       (cropHeight * 100) / Math.max(1, output.height),
     screenshotCropWidthPercent: (cropWidth * 100) / Math.max(1, output.width),
@@ -205,7 +210,7 @@ export const cameraOutputWithOverlayCrop = ({
 };
 
 /** Whether the overlay frame is acting as a crop window rather than the full image. */
-export const cameraOverlayHasCrop = ({
+const cameraOverlayHasCrop = ({
   cameraSource,
   screenOutput,
   settings,
@@ -241,6 +246,17 @@ export const cameraOverlayHasCrop = ({
     Math.abs(geometry.frame.height - geometry.camera.height) > epsilon
   );
 };
+
+/** Preserve the baked camera's crop and radius when returning to split mode. */
+export const cameraOutputWithCameraOverlay = (
+  options: CameraModeBoundaryOptions,
+): ScreenshotOutputSettings =>
+  cameraOverlayHasCrop(options)
+    ? cameraOutputWithOverlayCrop(options)
+    : {
+        ...options.cameraOutput,
+        radiusPercent: options.settings.radiusPercent,
+      };
 
 /** Uniformly reframe a baked camera with the shared output dimensions. */
 export const resizeCameraOverlayCentered = (

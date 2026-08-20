@@ -157,7 +157,7 @@ pub async fn layout_recording_preview_surface(
     .map_err(|_| "The recording preview composition is unavailable".to_owned())? =
     PreviewCompositionSettings {
       bake_camera,
-      camera_overlay: camera_overlay.clone(),
+      camera_overlay,
       recording_output: recording_output.clone(),
     };
   let scale = if scale.is_finite() && scale > 0.0 {
@@ -223,7 +223,7 @@ pub async fn layout_recording_preview_surface(
       },
       &workspace_panes,
       bake_camera,
-      camera_overlay.clone(),
+      camera_overlay,
       &recording_output,
       revision,
     )?);

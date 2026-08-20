@@ -11,19 +11,38 @@ fn main() {
   // macOS to Windows must not hand the Objective-C sources to the MSVC target.
   if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
     println!("cargo:rerun-if-changed=src/exports/cursor_export/gpu_compositor_macos.m");
+    println!("cargo:rerun-if-changed=src/exports/cursor_export/gpu_compositor_macos+presenter.m");
+    println!(
+      "cargo:rerun-if-changed=src/exports/cursor_export/gpu_compositor_macos_shader_source.h"
+    );
     println!("cargo:rerun-if-changed=src/exports/recording_preview_surface_macos.m");
+    println!("cargo:rerun-if-changed=src/exports/recording_preview_surface_macos+editor.m");
+    println!("cargo:rerun-if-changed=src/exports/recording_preview_surface_macos+osc.m");
+    println!("cargo:rerun-if-changed=src/exports/recording_preview_surface_macos+selection.m");
+    println!("cargo:rerun-if-changed=src/exports/recording_preview_surface_macos+workspace.m");
+    println!("cargo:rerun-if-changed=src/exports/recording_preview_surface_macos+layout.m");
+    println!("cargo:rerun-if-changed=src/exports/recording_preview_surface_macos_private.h");
     println!("cargo:rerun-if-changed=src/exports/cursor_export/gpu_compositor_macos.h");
     println!("cargo:rerun-if-changed=src/exports/recording_preview_reader_macos.m");
     println!("cargo:rerun-if-changed=src/exports/recording_preview_scrubber_macos.m");
     println!("cargo:rerun-if-changed=src/recording/platform/camera/confidence_scaler_macos.m");
     cc::Build::new()
       .file("src/exports/cursor_export/gpu_compositor_macos.m")
+      .file("src/exports/cursor_export/gpu_compositor_macos+presenter.m")
       .file("src/recording/platform/camera/confidence_scaler_macos.m")
       .file("src/exports/recording_preview_reader_macos.m")
       .file("src/exports/recording_preview_scrubber_macos.m")
       .file("src/exports/recording_preview_surface_macos.m")
+      .file("src/exports/recording_preview_surface_macos+editor.m")
+      .file("src/exports/recording_preview_surface_macos+osc.m")
+      .file("src/exports/recording_preview_surface_macos+selection.m")
+      .file("src/exports/recording_preview_surface_macos+workspace.m")
+      .file("src/exports/recording_preview_surface_macos+layout.m")
       .flag("-fobjc-arc")
       .compile("screenwide_gpu_compositor");
+    // Objective-C categories do not define a class symbol, so the linker will
+    // otherwise leave their object files inside the static native archive.
+    println!("cargo:rustc-link-arg=-ObjC");
     for framework in [
       "AVFoundation",
       "AppKit",
