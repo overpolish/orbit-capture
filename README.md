@@ -3,8 +3,7 @@
 
 # Screenwide
 
-A focused screen and audio recorder for macOS and Windows. Screenwide records;
-editing will live outside the app.
+A focused screen and audio recorder for macOS and Windows. Screenwide records; editing will live outside the app.
 
 ## Development
 
@@ -21,11 +20,10 @@ Create a production bundle with `pnpm tauri build`.
 - Rust
 - React 19
 - TypeScript
-- Vite 7
+- Vite 8
 
 ## License
 
 Copyright (C) 2026 overpolish.
 
-Screenwide is free software licensed under the GNU General Public License,
-version 3 or any later version. See [LICENSE](LICENSE).
+Screenwide is free software licensed under the GNU General Public License, version 3 or any later version. See [LICENSE](LICENSE).

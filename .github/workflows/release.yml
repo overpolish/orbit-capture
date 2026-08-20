@@ -49,10 +49,10 @@ jobs:
         include:
           - name: macOS Apple Silicon
             os: macos-15
-            args: --bundles dmg
+            args: --bundles app,dmg
           - name: macOS Intel
             os: macos-15-intel
-            args: --bundles dmg
+            args: --bundles app,dmg
           - name: Windows x64
             os: windows-latest
             args: --bundles nsis
@@ -102,3 +102,51 @@ jobs:
           tagName: ${{ github.ref_name }}
           updaterJsonPreferNsis: true
           uploadUpdaterJson: true
+
+  verify:
+    name: Verify updater assets
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Download updater manifest
+        run: |
+          asset_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            --jq '.assets[] | select(.name == "latest.json") | .id')"
+          if [ -z "$asset_id" ]; then
+            echo "The draft release does not contain latest.json" >&2
+            exit 1
+          fi
+          gh api -H "Accept: application/octet-stream" \
+            "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > latest.json
+
+      - name: Verify updater platforms
+        run: |
+          expected_version="${RELEASE_TAG#v}"
+          jq --exit-status --arg version "$expected_version" '
+            def valid($platform):
+              (.platforms[$platform].url | type == "string" and length > 0) and
+              (.platforms[$platform].signature | type == "string" and length > 0);
+            .version == $version and
+            valid("darwin-aarch64") and
+            valid("darwin-x86_64") and
+            valid("windows-x86_64-nsis")
+          ' latest.json > /dev/null
+
+      - name: Verify updater downloads
+        run: |
+          jq --raw-output '
+            .platforms[
+              "darwin-aarch64",
+              "darwin-x86_64",
+              "windows-x86_64-nsis"
+            ].url
+          ' latest.json | while IFS= read -r url; do
+            curl --fail --location --silent --show-error \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/octet-stream" \
+              --range 0-0 "$url" > /dev/null
+          done

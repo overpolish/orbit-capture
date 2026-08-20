@@ -22,10 +22,14 @@ if (!["darwin", "win32"].includes(platform)) {
 }
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+const releaseVersion = tag.slice(1);
+const clientVersion =
+  releaseVersion === packageJson.version ? "0.0.1" : packageJson.version;
 const endpoint = `https://github.com/overpolish/screenwide/releases/download/${encodeURIComponent(tag)}/latest.json`;
 const override = JSON.stringify({
   bundle: { createUpdaterArtifacts: false },
   plugins: { updater: { endpoints: [endpoint] } },
+  version: clientVersion,
 });
 const extraOptions = arguments_.slice(1);
 const hasBundleOption = extraOptions.some(
@@ -40,7 +44,7 @@ const defaultBundles = hasBundleOption
 const command = platform === "win32" ? "pnpm.cmd" : "pnpm";
 
 console.log(
-  `Building Screenwide ${String(packageJson.version)} as an updater test client`,
+  `Building Screenwide ${clientVersion} as an updater test client (source version ${String(packageJson.version)})`,
 );
 console.log(`Staging update endpoint: ${endpoint}`);
 console.log(
