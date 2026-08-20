@@ -14,7 +14,7 @@ if [ "$#" -ne 1 ]; then
 fi
 
 output=$1
-build_id=ffmpeg-9.0.1-x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55-macos-v3
+build_id=ffmpeg-9.0.1-x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55-macos-v5
 stamp="$output.build-id"
 if [ -x "$output" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$build_id" ] && \
   "$output" -hide_banner -version 2>/dev/null | grep -q "ffmpeg version 9.0.1" && \
@@ -50,27 +50,27 @@ tar -xf "$x264_archive" -C "$work_dir"
 x264_source="$work_dir/x264-$x264_revision"
 (
   cd "$x264_source"
-  if ! MACOSX_DEPLOYMENT_TARGET=$deployment_target ./configure \
-      --prefix="$prefix" \
-      --enable-static \
-      --enable-pic \
-      --extra-asflags="-mmacosx-version-min=$deployment_target" \
-      --extra-cflags="-mmacosx-version-min=$deployment_target" \
-      --extra-ldflags="-mmacosx-version-min=$deployment_target" \
-      --disable-opencl \
-      --disable-cli; then
-    echo "x264 configure diagnostics:" >&2
-    uname -a >&2
-    command -v nasm >&2 || true
-    nasm -v >&2 || true
-    clang --version >&2 || true
-    if [ -f config.log ]; then
-      tail -n 160 config.log >&2
-    else
-      echo "x264 did not produce config.log" >&2
-    fi
-    exit 1
-  fi
+  case "$(uname -m)" in
+    arm64)
+      set -- "--extra-asflags=-mmacosx-version-min=$deployment_target"
+      ;;
+    x86_64)
+      set --
+      ;;
+    *)
+      echo "Unsupported macOS architecture: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+  MACOSX_DEPLOYMENT_TARGET=$deployment_target ./configure \
+    "$@" \
+    --prefix="$prefix" \
+    --enable-static \
+    --enable-pic \
+    --extra-cflags="-mmacosx-version-min=$deployment_target" \
+    --extra-ldflags="-mmacosx-version-min=$deployment_target" \
+    --disable-opencl \
+    --disable-cli
   make -s -j"$(sysctl -n hw.logicalcpu)"
   make -s install
 )
