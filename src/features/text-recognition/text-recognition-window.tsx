@@ -25,6 +25,8 @@ import {
   CapturedTextRegion,
   TextRecognitionResult,
 } from "./api";
+import { FrozenMonitorSnapshot } from "./frozen-monitor-snapshot";
+import { capturedTextImageUrl } from "./image-url";
 import {
   TextRecognitionActions,
   TextRecognitionCloseAction,
@@ -47,11 +49,6 @@ const monitorId = Number(
 );
 const isMac = navigator.userAgent.includes("Mac");
 const TOOLBAR_MARGIN = 8;
-
-const imageUrl = (bytes: number[]) =>
-  URL.createObjectURL(
-    new Blob([Uint8Array.from(bytes)], { type: "image/png" }),
-  );
 
 export function TextRecognitionWindow() {
   const [start, setStart] = useState<Point>();
@@ -77,7 +74,7 @@ export function TextRecognitionWindow() {
     width: 280,
   });
   const frozenUrl = useMemo(
-    () => (capture ? imageUrl(capture.imagePng) : undefined),
+    () => (capture ? capturedTextImageUrl(capture.imagePng) : undefined),
     [capture],
   );
 
@@ -248,6 +245,7 @@ export function TextRecognitionWindow() {
       onPointerMove={move}
       onPointerUp={finish}
     >
+      <FrozenMonitorSnapshot monitorId={monitorId} />
       {status === "selecting" && (
         <div className="pointer-events-none absolute inset-0 bg-black/20" />
       )}

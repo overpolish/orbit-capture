@@ -175,9 +175,7 @@ fn run_action(app: &AppHandle, action: ShortcutAction) {
       }
     }
     ShortcutAction::RecognizeText => {
-      if let Err(error) = crate::text_recognition::start(app) {
-        eprintln!("Could not start text recognition: {error}");
-      }
+      crate::text_recognition::start_detached(app);
     }
   }
 }

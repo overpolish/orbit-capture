@@ -2,19 +2,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use serde::Serialize;
-use std::sync::Mutex;
-
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::recording::Region;
-use crate::screenshots::{self, ScreenshotTarget};
+use crate::screenshots;
 use crate::windows::WindowLabel;
 
 #[cfg(target_os = "macos")]
 mod platform_macos;
 #[cfg(target_os = "windows")]
 mod platform_windows;
+pub(crate) mod snapshot;
+
+pub use snapshot::TextRecognitionState;
 
 const WINDOW_PREFIX: &str = "text-recognition-";
 
@@ -59,9 +60,6 @@ pub struct CapturedTextRegion {
   pub height: u32,
 }
 
-#[derive(Default)]
-pub struct TextRecognitionState(Mutex<Option<screenshots::CapturedImage>>);
-
 fn recognition_windows(app: &AppHandle) -> Vec<tauri::WebviewWindow> {
   app
     .webview_windows()
@@ -88,13 +86,7 @@ fn close_recognition_windows(app: &AppHandle, except: Option<&str>) {
 pub fn dismiss(app: &AppHandle) {
   let had_windows = !recognition_windows(app).is_empty();
   close_recognition_windows(app, None);
-  let had_capture = app
-    .state::<TextRecognitionState>()
-    .0
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner())
-    .take()
-    .is_some();
+  let had_capture = app.state::<TextRecognitionState>().cancel();
   if had_windows || had_capture {
     let _ = app.emit_to(
       WindowLabel::RecordingBar.as_str(),
@@ -104,19 +96,9 @@ pub fn dismiss(app: &AppHandle) {
   }
 }
 
-#[cfg(target_os = "windows")]
-fn set_recognition_capture_protected(
-  window: &tauri::WebviewWindow,
-  protected: bool,
-) -> Result<(), String> {
-  window
-    .set_content_protected(protected)
-    .map_err(|error| error.to_string())?;
-  unsafe { windows::Win32::Graphics::Dwm::DwmFlush() }.map_err(|error| error.to_string())
-}
-
-pub fn start(app: &AppHandle) -> Result<(), String> {
+pub async fn start(app: &AppHandle) -> Result<(), String> {
   dismiss(app);
+  let generation = app.state::<TextRecognitionState>().begin();
 
   let capture_monitors = xcap::Monitor::all().map_err(|error| error.to_string())?;
   let tauri_monitors = app
@@ -126,11 +108,28 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
     return Err("Tauri and xcap returned different monitor counts".to_owned());
   }
 
-  for (index, (capture_monitor, monitor)) in
-    capture_monitors.into_iter().zip(tauri_monitors).enumerate()
+  let monitors = capture_monitors
+    .into_iter()
+    .zip(tauri_monitors)
+    .map(|(capture_monitor, monitor)| {
+      let monitor_id = capture_monitor.id().map_err(|error| error.to_string())?;
+      let scale = monitor.scale_factor();
+      Ok((monitor_id, scale, monitor))
+    })
+    .collect::<Result<Vec<_>, String>>()?;
+  let mut snapshots = Vec::with_capacity(monitors.len());
+  for (monitor_id, scale, _) in &monitors {
+    let image = screenshots::capture_text_recognition_snapshot(*monitor_id).await?;
+    snapshots.push((*monitor_id, *scale, image));
+  }
+  if !app
+    .state::<TextRecognitionState>()
+    .install(generation, snapshots)
   {
-    let monitor_id = capture_monitor.id().map_err(|error| error.to_string())?;
-    let scale = monitor.scale_factor();
+    return Ok(());
+  }
+
+  for (index, (monitor_id, scale, monitor)) in monitors.into_iter().enumerate() {
     let position = monitor.position().to_logical::<f64>(scale);
     let size = monitor.size().to_logical::<f64>(scale);
     let label = format!("{WINDOW_PREFIX}{index}");
@@ -169,9 +168,18 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
   Ok(())
 }
 
+pub fn start_detached(app: &AppHandle) {
+  let app = app.clone();
+  tauri::async_runtime::spawn(async move {
+    if let Err(error) = start(&app).await {
+      eprintln!("Could not start text recognition: {error}");
+    }
+  });
+}
+
 #[tauri::command]
-pub fn start_text_recognition(app: AppHandle) -> Result<(), String> {
-  start(&app)
+pub async fn start_text_recognition(app: AppHandle) -> Result<(), String> {
+  start(&app).await
 }
 
 #[tauri::command]
@@ -188,7 +196,7 @@ pub fn copy_recognized_text(app: AppHandle, text: String) -> Result<(), String> 
 }
 
 #[tauri::command]
-pub async fn capture_text_region(
+pub fn capture_text_region(
   app: AppHandle,
   window: tauri::WebviewWindow,
   state: tauri::State<'_, TextRecognitionState>,
@@ -200,35 +208,13 @@ pub async fn capture_text_region(
   }
 
   close_recognition_windows(&app, Some(window.label()));
-  let excluded_window_ids = recognition_windows(&app)
-    .iter()
-    .filter_map(platform_window_id)
-    .collect::<Vec<_>>();
-
-  #[cfg(target_os = "windows")]
-  set_recognition_capture_protected(&window, true)?;
-  let image = screenshots::capture_for_text_recognition(
-    &app,
-    ScreenshotTarget::Region { monitor_id, region },
-    &excluded_window_ids,
-  )
-  .await;
-  #[cfg(target_os = "windows")]
-  set_recognition_capture_protected(
-    &window,
-    !crate::settings::current(&app).record_screenwide_windows,
-  )?;
-  let image = image?;
+  let image = state.select_region(monitor_id, region)?;
   let image_png = screenshots::encoding::encode_truecolor_png(&image)?;
   let result = CapturedTextRegion {
     height: image.height,
     image_png,
     width: image.width,
   };
-  *state
-    .0
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(image);
   Ok(result)
 }
 
@@ -237,10 +223,7 @@ pub async fn recognize_captured_text(
   state: tauri::State<'_, TextRecognitionState>,
 ) -> Result<TextRecognitionResult, String> {
   let image = state
-    .0
-    .lock()
-    .unwrap_or_else(|poisoned| poisoned.into_inner())
-    .clone()
+    .selected()
     .ok_or_else(|| "The selected image is no longer available".to_owned())?;
   let lines = recognize(image.rgba, image.width, image.height).await?;
   let text = lines
@@ -264,18 +247,4 @@ async fn recognize(rgba: Vec<u8>, width: u32, height: u32) -> Result<Vec<Recogni
   })
   .await
   .map_err(|error| error.to_string())?
-}
-
-#[cfg(target_os = "macos")]
-fn platform_window_id(window: &tauri::WebviewWindow) -> Option<u32> {
-  use objc2::msg_send;
-  let ns_window = window.ns_window().ok()?;
-  let number: isize =
-    unsafe { msg_send![ns_window.cast::<objc2::runtime::AnyObject>(), windowNumber] };
-  u32::try_from(number).ok()
-}
-
-#[cfg(not(target_os = "macos"))]
-fn platform_window_id(_window: &tauri::WebviewWindow) -> Option<u32> {
-  None
 }

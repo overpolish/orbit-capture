@@ -110,9 +110,7 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
         PAUSE_MENU_ID => report("pause", crate::recording::toggle_pause(app)),
         QUIT_MENU_ID => app.exit(0),
         RECOGNIZE_TEXT_MENU_ID => {
-          if let Err(error) = crate::text_recognition::start(app) {
-            eprintln!("Could not start text recognition: {error}");
-          }
+          crate::text_recognition::start_detached(app);
         }
         SETTINGS_MENU_ID => {
           crate::text_recognition::dismiss(app);

@@ -131,6 +131,7 @@ pub fn run() {
       text_recognition::cancel_text_recognition,
       text_recognition::capture_text_region,
       text_recognition::copy_recognized_text,
+      text_recognition::snapshot::get_text_recognition_snapshot,
       text_recognition::recognize_captured_text,
       text_recognition::start_text_recognition,
       settings::hide_settings,

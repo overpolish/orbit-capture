@@ -189,18 +189,15 @@ pub(crate) async fn capture(
   }
 }
 
-pub(crate) async fn capture_for_text_recognition(
-  app: &AppHandle,
-  target: ScreenshotTarget,
-  excluded_window_ids: &[u32],
+/// Freezes a whole monitor before OCR surfaces appear. Screenwide's own
+/// windows deliberately remain in the image so text can be recognized there.
+pub(crate) async fn capture_text_recognition_snapshot(
+  monitor_id: u32,
 ) -> Result<CapturedImage, String> {
-  let _ = app;
-
   #[cfg(target_os = "macos")]
   {
-    let excluded_window_ids = excluded_window_ids.to_vec();
     tauri::async_runtime::spawn_blocking(move || {
-      platform::capture_for_text_recognition_blocking(target, &excluded_window_ids)
+      platform::capture_blocking(ScreenshotTarget::Screen { monitor_id }, true, false)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -208,13 +205,16 @@ pub(crate) async fn capture_for_text_recognition(
 
   #[cfg(target_os = "windows")]
   {
-    let _ = excluded_window_ids;
-    capture(app, target, false).await
+    tauri::async_runtime::spawn_blocking(move || {
+      platform_windows::capture(ScreenshotTarget::Screen { monitor_id }, false)
+    })
+    .await
+    .map_err(|error| error.to_string())?
   }
 
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
-    let _ = (target, excluded_window_ids);
+    let _ = monitor_id;
     Err("Text recognition is not available on this platform".to_owned())
   }
 }

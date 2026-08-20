@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 export type TextRecognitionResult = {
   lines: {
@@ -23,6 +23,11 @@ export type CapturedTextRegion = {
   width: number;
 };
 
+export type TextRecognitionSnapshot = {
+  height: number;
+  width: number;
+};
+
 export const cancelTextRecognition = () =>
   invoke<null>("cancel_text_recognition");
 
@@ -36,6 +41,15 @@ export const captureTextRegion = (
   invoke<CapturedTextRegion>("capture_text_region", {
     monitorId,
     region,
+  });
+
+export const getTextRecognitionSnapshot = (
+  monitorId: number,
+  channel: Channel<ArrayBuffer>,
+) =>
+  invoke<TextRecognitionSnapshot>("get_text_recognition_snapshot", {
+    channel,
+    monitorId,
   });
 
 export const recognizeCapturedText = () =>
