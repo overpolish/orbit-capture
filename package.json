@@ -11,6 +11,7 @@
     "build-storybook": "storybook build",
     "check": "pnpm license:check && pnpm architecture:check && pnpm knip && pnpm format:check && pnpm build && pnpm build-storybook && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings && cargo build --manifest-path src-tauri/Cargo.toml",
     "dev": "pnpm ffmpeg:prepare && vite",
+    "dev:updater": "node scripts/dev-updater-preview.mjs",
     "ffmpeg:prepare": "node scripts/prepare-ffmpeg.mjs",
     "ffmpeg:verify-release": "node scripts/verify-ffmpeg-release.mjs",
     "format": "prettier --write . && eslint . --fix && cargo fmt --manifest-path src-tauri/Cargo.toml --all",
@@ -20,13 +21,19 @@
     "knip": "knip",
     "license:check": "node scripts/check-spdx.mjs",
     "preview": "vite preview",
+    "release:check-version": "node scripts/check-release-version.mjs",
     "storybook": "storybook dev -p 6006",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "update:preview": "storybook dev -p 6006 --initial-path=/story/features-update-prompt--available",
+    "update:staging": "node scripts/build-staging-update-client.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
     "@icons-pack/react-simple-icons": "^13.13.0",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.28.0",
     "motion": "^13.0.0",

@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Keyboard, Settings } from "lucide-react";
+import { Info, Keyboard, Settings } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { OverflowShadow } from "../../components/base/overflow-shadow/overflow-shadow";
 import { PillGroup } from "../../components/base/pill-group/pill-group";
 import { WindowTitlebar } from "../../components/shared/window-titlebar/window-titlebar";
+import { UpdatePanel } from "../updates/update-panel";
 
 import {
   getGeneralSettings,
@@ -115,6 +116,7 @@ export function SettingsWindow() {
             items={[
               { icon: <Settings size={15} />, id: "general", label: "General" },
               { icon: <Keyboard size={15} />, id: "hotkeys", label: "Hotkeys" },
+              { icon: <Info size={15} />, id: "about", label: "About" },
             ]}
             onSelectionChange={setSection}
             selected={section}
@@ -126,12 +128,18 @@ export function SettingsWindow() {
       <div className="flex min-h-0 grow flex-col">
         <header className="mx-auto w-full max-w-2xl shrink-0 px-6 pt-3 pb-4">
           <h1 className="text-lg font-semibold">
-            {section === "general" ? "General" : "Hotkeys"}
+            {section === "general"
+              ? "General"
+              : section === "hotkeys"
+                ? "Hotkeys"
+                : "About"}
           </h1>
           <p className="mt-1 text-xs text-muted">
             {section === "general"
               ? "Defaults for capture, export and launch behaviour."
-              : "These work globally while Screenwide is running."}
+              : section === "hotkeys"
+                ? "These work globally while Screenwide is running."
+                : "Version information and software updates."}
           </p>
         </header>
         <section className="min-h-0 min-w-0 grow px-6 pb-6">
@@ -180,6 +188,14 @@ export function SettingsWindow() {
                     );
                   })}
                 </div>
+              </OverflowShadow>
+            ) : null}
+            {section === "about" ? (
+              <OverflowShadow
+                rootClassName="min-h-0 grow rounded-lg border border-muted/20 bg-neutral/15"
+                shadowRadius="md"
+              >
+                <UpdatePanel />
               </OverflowShadow>
             ) : null}
             {error ? <p className="mt-3 text-xs text-error">{error}</p> : null}

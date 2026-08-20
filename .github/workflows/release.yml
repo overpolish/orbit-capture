@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: 2026 overpolish
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            os: macos-15
+            args: --bundles dmg
+          - name: macOS Intel
+            os: macos-15-intel
+            args: --bundles dmg
+          - name: Windows x64
+            os: windows-latest
+            args: --bundles nsis
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          node-version-file: .nvmrc
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release version
+        run: pnpm release:check-version ${{ github.ref_name }}
+
+      - name: Build and upload signed bundles
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          args: ${{ matrix.args }}
+          generateReleaseNotes: true
+          releaseDraft: true
+          releaseName: Screenwide ${{ github.ref_name }}
+          tagName: ${{ github.ref_name }}
+          updaterJsonPreferNsis: true
+          uploadUpdaterJson: true

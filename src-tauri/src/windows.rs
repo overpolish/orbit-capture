@@ -26,8 +26,8 @@ use geometry::monitor_with_most_overlap;
 #[cfg(target_os = "macos")]
 pub use lifecycle::get_or_create;
 pub use lifecycle::{
-  contain_export, contain_normal_window, initialize_export, initialize_normal_window,
-  initialize_recording_bar_position, show, sync_dock_visibility,
+  contain_export, contain_normal_window, hide_instead_of_close, initialize_export,
+  initialize_normal_window, initialize_recording_bar_position, show, sync_dock_visibility,
 };
 #[cfg(not(target_os = "macos"))]
 pub use lifecycle::{
@@ -77,6 +77,7 @@ pub enum WindowLabel {
   RegionSelector,
   RecordingSourceSelector,
   StandaloneListbox,
+  Update,
 }
 
 impl WindowLabel {
@@ -93,6 +94,7 @@ impl WindowLabel {
       Self::RegionSelector => "region-selector",
       Self::RecordingSourceSelector => "recording-source-selector",
       Self::StandaloneListbox => "standalone-listbox",
+      Self::Update => "update",
     }
   }
 }
@@ -624,33 +626,4 @@ pub fn is_recording_ui_visible() -> bool {
 #[tauri::command]
 pub fn recording_ui_visible() -> bool {
   is_recording_ui_visible()
-}
-pub fn hide_instead_of_close(app: &AppHandle, label: WindowLabel) {
-  if let Some(window) = app.get_webview_window(label.as_str()) {
-    let app = app.clone();
-    let window_to_hide = window.clone();
-    window.on_window_event(move |event| {
-      if let WindowEvent::CloseRequested { api, .. } = event {
-        api.prevent_close();
-        match label {
-          WindowLabel::RecordingOptions => {
-            let _ = hide_recording_options(app.clone());
-          }
-          // Closing an export window cancels only its own pending capture.
-          WindowLabel::ExportRecording => {
-            crate::exports::discard(&app, crate::exports::ExportKind::Recording);
-          }
-          WindowLabel::ExportScreenshot => {
-            crate::exports::discard(&app, crate::exports::ExportKind::Screenshot);
-          }
-          WindowLabel::Settings => {
-            let _ = crate::settings::hide_settings(app.clone());
-          }
-          _ => {
-            let _ = window_to_hide.hide();
-          }
-        }
-      }
-    });
-  }
 }

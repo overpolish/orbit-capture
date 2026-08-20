@@ -18,6 +18,36 @@ use super::{
 /// and a drag of one must not swallow the containment pass of the other.
 static EXPORT_DRAGS_ACTIVE: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
+pub fn hide_instead_of_close(app: &AppHandle, label: WindowLabel) {
+  if let Some(window) = app.get_webview_window(label.as_str()) {
+    let app = app.clone();
+    let window_to_hide = window.clone();
+    window.on_window_event(move |event| {
+      if let WindowEvent::CloseRequested { api, .. } = event {
+        api.prevent_close();
+        match label {
+          WindowLabel::RecordingOptions => {
+            let _ = super::hide_recording_options(app.clone());
+          }
+          // Closing an export window cancels only its own pending capture.
+          WindowLabel::ExportRecording => {
+            crate::exports::discard(&app, crate::exports::ExportKind::Recording);
+          }
+          WindowLabel::ExportScreenshot => {
+            crate::exports::discard(&app, crate::exports::ExportKind::Screenshot);
+          }
+          WindowLabel::Settings => {
+            let _ = crate::settings::hide_settings(app.clone());
+          }
+          _ => {
+            let _ = window_to_hide.hide();
+          }
+        }
+      }
+    });
+  }
+}
+
 /// Claims the drag watch for `label`, reporting whether one was already running.
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 fn export_drag_begin(label: &str) -> bool {
@@ -216,6 +246,7 @@ pub fn sync_dock_visibility(_app: &AppHandle) -> tauri::Result<()> {
       WindowLabel::ExportRecording,
       WindowLabel::ExportScreenshot,
       WindowLabel::Settings,
+      WindowLabel::Update,
     ]
     .iter()
     .filter_map(|label| _app.get_webview_window(label.as_str()))

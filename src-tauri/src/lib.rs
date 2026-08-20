@@ -26,6 +26,7 @@ mod shortcuts;
 mod text_recognition;
 #[cfg(desktop)]
 mod tray;
+mod updates;
 mod windows;
 
 use tauri::Manager;
@@ -40,6 +41,9 @@ pub fn run() {
     .plugin(tauri_plugin_clipboard_manager::init())
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+    .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_process::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(
       tauri_plugin_window_state::Builder::default()
         .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
@@ -134,6 +138,9 @@ pub fn run() {
       text_recognition::snapshot::get_text_recognition_snapshot,
       text_recognition::recognize_captured_text,
       text_recognition::start_text_recognition,
+      updates::update_checks_enabled,
+      updates::hide_update_prompt,
+      updates::show_update_prompt,
       settings::hide_settings,
       settings::preferences::browse_default_location,
       settings::preferences::get_general_settings,
@@ -189,6 +196,9 @@ pub fn run() {
         windows::initialize_recording_dock(app.handle())?;
       }
       if let Some(window) = app.get_webview_window(windows::WindowLabel::Settings.as_str()) {
+        windows::initialize_normal_window(&window)?;
+      }
+      if let Some(window) = app.get_webview_window(windows::WindowLabel::Update.as_str()) {
         windows::initialize_normal_window(&window)?;
       }
       for label in [

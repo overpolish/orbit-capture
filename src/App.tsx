@@ -17,6 +17,7 @@ import { SettingsWindow } from "./features/settings/settings-window";
 import { StandaloneListboxSync } from "./features/standalone-listbox/standalone-listbox-sync";
 import { StandaloneListboxWindow } from "./features/standalone-listbox/standalone-listbox-window";
 import { TextRecognitionWindow } from "./features/text-recognition/text-recognition-window";
+import { UpdatePromptWindow } from "./features/updates/update-prompt-window";
 
 export function App() {
   const content = (() => {
@@ -39,6 +40,8 @@ export function App() {
         return <StandaloneListboxWindow />;
       case "/text-recognition":
         return <TextRecognitionWindow />;
+      case "/update":
+        return <UpdatePromptWindow />;
       default:
         return <RecordingBarWindow />;
     }

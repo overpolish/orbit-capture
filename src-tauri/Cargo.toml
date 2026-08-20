@@ -49,6 +49,9 @@ tauri-plugin-autostart = "2.5.1"
 wgpu = "30.0.0"
 pollster = "1.0.1"
 bytemuck = { version = "1.25.2", features = ["derive"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+tauri-plugin-opener = "2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 xcap = { version = "0.9.8", features = ["wgc"] }

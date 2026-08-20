@@ -47,34 +47,38 @@ export function WindowTitlebar({
       ) : null}
       <div className="min-w-4 grow" data-tauri-drag-region />
       {actions}
-      <Button
-        aria-label="Minimize"
-        className="group"
-        icon
-        onPress={onMinimize}
-        showFocus={false}
-        size="sm"
-        variant="ghost"
-      >
-        <Minus
-          className="transform-gpu text-muted transition-[color,transform,scale] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg"
-          size={18}
-        />
-      </Button>
-      <Button
-        aria-label="Close"
-        className="group"
-        icon
-        onPress={onClose}
-        showFocus={false}
-        size="sm"
-        variant="ghost"
-      >
-        <X
-          className="transform-gpu text-muted transition-[color,transform,scale] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg"
-          size={18}
-        />
-      </Button>
+      {onMinimize ? (
+        <Button
+          aria-label="Minimize"
+          className="group"
+          icon
+          onPress={onMinimize}
+          showFocus={false}
+          size="sm"
+          variant="ghost"
+        >
+          <Minus
+            className="transform-gpu text-muted transition-[color,transform,scale] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg"
+            size={18}
+          />
+        </Button>
+      ) : null}
+      {onClose ? (
+        <Button
+          aria-label="Close"
+          className="group"
+          icon
+          onPress={onClose}
+          showFocus={false}
+          size="sm"
+          variant="ghost"
+        >
+          <X
+            className="transform-gpu text-muted transition-[color,transform,scale] group-data-[hovered]:scale-110 group-data-[hovered]:text-content-fg"
+            size={18}
+          />
+        </Button>
+      ) : null}
     </header>
   );
 }

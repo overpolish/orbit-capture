@@ -80,6 +80,29 @@
         "visible": false
       },
       {
+        "label": "update",
+        "title": "Screenwide Software Update",
+        "url": "/update",
+        "width": 620,
+        "height": 520,
+        "minWidth": 560,
+        "minHeight": 460,
+        "center": true,
+        "acceptFirstMouse": true,
+        "alwaysOnTop": false,
+        "decorations": false,
+        "resizable": true,
+        "shadow": true,
+        "skipTaskbar": false,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["underWindowBackground", "mica"],
+          "radius": 10,
+          "state": "active"
+        },
+        "visible": false
+      },
+      {
         "label": "recording-bar",
         "title": "Screenwide Recording Bar",
         "url": "/recording-bar",
@@ -214,6 +237,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "externalBin": ["binaries/ffmpeg"],
     "resources": {
       "../FFMPEG.md": "licenses/FFMPEG.md",
@@ -230,5 +254,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/overpolish/screenwide/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM2NjJENjY0NDY1QkYyNTcKUldSWDhsdEdaTlppeHFFUUpodWVHbHZtbHZvM2pRTnRYckZTZVBQNXVjMkJYQnM2cUxGOUhlRU8K",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
