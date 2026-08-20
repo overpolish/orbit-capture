@@ -78,6 +78,14 @@ Add these GitHub Actions repository secrets:
 - `APPLE_PASSWORD`: an app-specific password for that Apple ID.
 - `APPLE_TEAM_ID`: the Apple Developer Team ID.
 
+For the currently installed Screenwide signing certificate, use these exact
+values without surrounding quotes:
+
+```text
+APPLE_SIGNING_IDENTITY=Developer ID Application: Domingas Pleckauskas (378WQ9W95U)
+APPLE_TEAM_ID=378WQ9W95U
+```
+
 The updater public key is intentionally committed in `src-tauri/tauri.conf.json`.
 Never commit the private key. Back it up securely: losing it prevents existing
 installations from accepting future updates.

@@ -24,6 +24,7 @@ const CHECKED_EXTENSIONS = new Set([
   ".yml",
 ]);
 const EXCLUDED_FILES = new Set(["pnpm-lock.yaml"]);
+const EXCLUDED_DIRECTORIES = ["src-tauri/vendor/"];
 
 const trackedFiles = execFileSync(
   "git",
@@ -37,6 +38,7 @@ const missingHeaders = trackedFiles.filter((file) => {
   if (
     !existsSync(file) ||
     EXCLUDED_FILES.has(file) ||
+    EXCLUDED_DIRECTORIES.some((directory) => file.startsWith(directory)) ||
     !CHECKED_EXTENSIONS.has(extname(file))
   ) {
     return false;

@@ -5,6 +5,14 @@
   "license": "GPL-3.0-or-later",
   "packageManager": "pnpm@11.21.0",
   "type": "module",
+  "knip": {
+    "entry": [
+      "scripts/build-ffmpeg-windows.mjs"
+    ],
+    "ignoreBinaries": [
+      "otool"
+    ]
+  },
   "scripts": {
     "build": "pnpm ffmpeg:prepare && pnpm ffmpeg:verify-release && tsc && vite build",
     "architecture:check": "node scripts/check-source-size.mjs",
