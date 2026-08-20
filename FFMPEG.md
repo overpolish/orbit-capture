@@ -14,6 +14,8 @@ The release build is compiled locally by `scripts/build-ffmpeg-macos.sh` from:
 
 The script records and verifies the source archive hashes and contains the full configuration used to produce the executable.
 
+Source downloads are retried only when their pinned SHA-256 does not match. If VideoLAN's x264 archive endpoint remains unavailable or inconsistent, the script downloads the identical commit archive from the GitHub x264 mirror and applies the same checksum verification.
+
 ## Windows
 
 The x86-64 and ARM64 releases use BtbN's pinned static GPL builds `n8.1.2-44-g7c533d0f86` from release `autobuild-2026-08-20-13-45`:

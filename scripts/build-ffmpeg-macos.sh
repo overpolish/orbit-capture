@@ -40,15 +40,40 @@ prefix="$work_dir/prefix"
 ffmpeg_archive="$work_dir/ffmpeg.tar.xz"
 x264_archive="$work_dir/x264.tar.gz"
 
-curl --fail --location --silent --show-error \
-  "https://ffmpeg.org/releases/ffmpeg-$ffmpeg_version.tar.xz" \
-  --output "$ffmpeg_archive"
-curl --fail --location --silent --show-error \
-  "https://code.videolan.org/videolan/x264/-/archive/$x264_revision/x264-$x264_revision.tar.gz" \
-  --output "$x264_archive"
+download_verified() {
+  expected_hash=$1
+  output_path=$2
+  shift 2
 
-printf '%s  %s\n' "$ffmpeg_sha256" "$ffmpeg_archive" | shasum -a 256 -c -
-printf '%s  %s\n' "$x264_sha256" "$x264_archive" | shasum -a 256 -c -
+  for source_url in "$@"; do
+    attempt=1
+    while [ "$attempt" -le 3 ]; do
+      if curl --fail --location --silent --show-error \
+        --retry 3 --retry-all-errors \
+        "$source_url" --output "$output_path" && \
+        printf '%s  %s\n' "$expected_hash" "$output_path" | \
+          shasum -a 256 -c -; then
+        return 0
+      fi
+      actual_hash=$(shasum -a 256 "$output_path" 2>/dev/null | awk '{print $1}')
+      echo "Verified download attempt $attempt failed for $source_url (received ${actual_hash:-no file})" >&2
+      attempt=$((attempt + 1))
+    done
+  done
+
+  echo "No source URL produced the expected SHA-256 for $output_path" >&2
+  return 1
+}
+
+download_verified \
+  "$ffmpeg_sha256" \
+  "$ffmpeg_archive" \
+  "https://ffmpeg.org/releases/ffmpeg-$ffmpeg_version.tar.xz"
+download_verified \
+  "$x264_sha256" \
+  "$x264_archive" \
+  "https://code.videolan.org/videolan/x264/-/archive/$x264_revision/x264-$x264_revision.tar.gz" \
+  "https://github.com/mirror/x264/archive/$x264_revision.tar.gz"
 
 tar -xf "$x264_archive" -C "$work_dir"
 x264_source="$work_dir/x264-$x264_revision"
