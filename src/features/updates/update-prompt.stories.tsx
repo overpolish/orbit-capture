@@ -10,6 +10,57 @@ const previewWidth = 620;
 const previewHeight = 520;
 const previewPadding = 24;
 
+// Mirrors GitHub's sanitized `body_html` for the v0.1.0 formatting test
+// release. Keep the original attachment URL because GitHub's rendered response
+// replaces it with a signed URL that expires after a few minutes.
+const githubFormattingReleaseNotes = `
+  <h1>Heading 1</h1>
+  <h2>Heading 2</h2>
+  <h3>Heading 3</h3>
+  <h4>Heading 4</h4>
+  <h5>Heading 5</h5>
+  <h6>Heading 6</h6>
+  <ul>
+    <li><del>Testing</del> <code>release</code></li>
+    <li>
+      Some other <strong>item</strong>
+      <ul>
+        <li><em>Nested</em></li>
+      </ul>
+    </li>
+  </ul>
+  <a href="https://github.com/user-attachments/assets/1180102d-d7a1-408c-9a9a-05cc413828df" rel="noopener noreferrer" target="_blank">
+    <img alt="image" height="120" src="https://github.com/user-attachments/assets/1180102d-d7a1-408c-9a9a-05cc413828df" width="227" />
+  </a>
+  <ol>
+    <li>Numbered</li>
+    <li>List</li>
+  </ol>
+  <ul class="contains-task-list">
+    <li class="task-list-item">
+      <input aria-label="Incomplete task" class="task-list-item-checkbox" disabled type="checkbox" />
+      Task list
+    </li>
+    <li class="task-list-item">
+      <input aria-label="Completed task" checked class="task-list-item-checkbox" disabled type="checkbox" />
+      List
+    </li>
+  </ul>
+  <blockquote>
+    <p>Record before you run. This is a blockquote with enough text to demonstrate how longer quoted release notes wrap across lines.</p>
+  </blockquote>
+  <p>Use <code>CommandOrControl+Shift+R</code> to start recording.</p>
+  <pre><code>const recording = await startRecording({
+  captureSystemAudio: true,
+  showCursor: true,
+});</code></pre>
+  <p><a href="https://google.com" rel="nofollow">Custom Url</a></p>
+  <p>
+    <strong>Full Changelog</strong>:
+    <a href="https://github.com/overpolish/screenwide/commits/v0.1.0">https://github.com/overpolish/screenwide/commits/v0.1.0</a>
+  </p>
+`;
+
 const getPreviewScale = () =>
   Math.max(
     Math.min(
@@ -53,6 +104,12 @@ function UpdatePromptPreviewFrame({ children }: { children: ReactNode }) {
   );
 }
 
+const applyPreviewTheme = (theme: unknown) => {
+  const selectedTheme = theme === "light" ? "light" : "dark";
+  document.documentElement.classList.remove("dark", "light");
+  document.documentElement.classList.add(selectedTheme);
+};
+
 const meta = {
   args: {
     currentVersion: "0.1.0",
@@ -69,8 +126,9 @@ const meta = {
   },
   component: UpdatePrompt,
   decorators: [
-    (Story, context) =>
-      context.viewMode === "docs" ? (
+    (Story, context) => {
+      applyPreviewTheme(context.globals.theme);
+      return context.viewMode === "docs" ? (
         <div className="h-[520px] w-[620px] max-w-full overflow-hidden">
           <Story />
         </div>
@@ -78,7 +136,8 @@ const meta = {
         <UpdatePromptPreviewFrame>
           <Story />
         </UpdatePromptPreviewFrame>
-      ),
+      );
+    },
   ],
   parameters: { layout: "centered" },
   title: "Features/Update Prompt",
@@ -88,6 +147,16 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Available: Story = {};
+
+export const GitHubFormatting: Story = {
+  args: {
+    currentVersion: "0.0.1",
+    releaseDate: "2026-08-21T05:24:02Z",
+    releaseNotes: githubFormattingReleaseNotes,
+    updateVersion: "0.1.0",
+  },
+  name: "GitHub Formatting",
+};
 
 export const Installing: Story = {
   args: {
