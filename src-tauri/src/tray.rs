@@ -14,6 +14,7 @@ const OPEN_MENU_ID: &str = "open-screenwide";
 const PAUSE_MENU_ID: &str = "pause-recording";
 const QUIT_MENU_ID: &str = "quit-screenwide";
 const RECOGNIZE_TEXT_MENU_ID: &str = "recognize-text";
+const RULER_OVERLAY_MENU_ID: &str = "ruler-overlay";
 const SETTINGS_MENU_ID: &str = "open-settings";
 const STOP_MENU_ID: &str = "stop-recording";
 const TRAY_ID: &str = "screenwide";
@@ -82,9 +83,18 @@ fn build_menu(app: &AppHandle, status: RecordingStatus) -> tauri::Result<Menu<Wr
   }
   let recognize_text = recognize_text.build(app)?;
 
+  let mut ruler_overlay = MenuItemBuilder::with_id(RULER_OVERLAY_MENU_ID, "Ruler Overlay");
+  if let Some(shortcut) =
+    crate::shortcuts::shortcut_for(app, crate::shortcuts::ShortcutAction::RulerOverlay)
+  {
+    ruler_overlay = ruler_overlay.accelerator(shortcut);
+  }
+  let ruler_overlay = ruler_overlay.build(app)?;
+
   builder
     .separator()
     .item(&recognize_text)
+    .item(&ruler_overlay)
     .text(SETTINGS_MENU_ID, "Settings…")
     .separator()
     .text(QUIT_MENU_ID, "Quit Screenwide")
@@ -101,9 +111,12 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
     .show_menu_on_left_click(false)
     .tooltip(status_tooltip(RecordingStatus::Idle))
     .on_menu_event(|app, event| {
-      if event.id().as_ref() != RECOGNIZE_TEXT_MENU_ID {
-        crate::text_recognition::dismiss(app);
-      }
+      let preserved = match event.id().as_ref() {
+        RECOGNIZE_TEXT_MENU_ID => Some(crate::capture_overlays::CaptureOverlay::TextRecognition),
+        RULER_OVERLAY_MENU_ID => Some(crate::capture_overlays::CaptureOverlay::Ruler),
+        _ => None,
+      };
+      crate::capture_overlays::dismiss_except(app, preserved);
       match event.id().as_ref() {
         DISCARD_MENU_ID => report("discard", crate::recording::cancel(app)),
         OPEN_MENU_ID => show_main_window(app),
@@ -112,8 +125,10 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
         RECOGNIZE_TEXT_MENU_ID => {
           crate::text_recognition::start_detached(app);
         }
+        RULER_OVERLAY_MENU_ID => {
+          crate::ruler::start_detached(app);
+        }
         SETTINGS_MENU_ID => {
-          crate::text_recognition::dismiss(app);
           if let Err(error) = crate::settings::show(app) {
             eprintln!("Could not open settings from the tray: {error}");
           }
@@ -174,7 +189,7 @@ fn report(action: &str, result: Result<(), String>) {
 }
 
 fn show_main_window(app: &AppHandle) {
-  crate::text_recognition::dismiss(app);
+  crate::capture_overlays::dismiss_all(app);
   #[cfg(target_os = "macos")]
   if !crate::permissions::has_required_recording_permissions(app) {
     let _ = crate::permissions::show_permissions_window(app);

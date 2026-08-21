@@ -129,7 +129,7 @@ export function RecordingBarWindow() {
     action: ScreenshotAction;
     state: ScreenshotState;
   }>({ action: "export", state: "idle" });
-  const [isOcrActive, setIsOcrActive] = useState(false);
+  const [isCaptureOverlayActive, setIsCaptureOverlayActive] = useState(false);
   const [isRecordingUiVisible, setIsRecordingUiVisible] = useState(false);
   const screenshotResetRef = useRef<number | undefined>(undefined);
   const {
@@ -154,7 +154,7 @@ export function RecordingBarWindow() {
   const inputAvailability = useRecordingInputAvailability({
     active:
       isRecordingUiVisible &&
-      !isOcrActive &&
+      !isCaptureOverlayActive &&
       !isRegionEditing &&
       !isScreenshotCapture &&
       screenshotFeedback.state !== "pending" &&
@@ -198,8 +198,8 @@ export function RecordingBarWindow() {
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
     let unlistenHidden: UnlistenFn | undefined;
-    let unlistenOcrEnded: UnlistenFn | undefined;
-    let unlistenOcrStarted: UnlistenFn | undefined;
+    let unlistenCaptureEnded: UnlistenFn | undefined;
+    let unlistenCaptureStarted: UnlistenFn | undefined;
     let disposed = false;
     let receivedVisibilityEvent = false;
 
@@ -214,23 +214,23 @@ export function RecordingBarWindow() {
         receivedVisibilityEvent = true;
         setIsRecordingUiVisible(false);
       }),
-      listen("text-recognition://started", () => {
-        setIsOcrActive(true);
+      listen("capture-overlay://started", () => {
+        setIsCaptureOverlayActive(true);
       }),
-      listen("text-recognition://ended", () => {
-        setIsOcrActive(false);
+      listen("capture-overlay://ended", () => {
+        setIsCaptureOverlayActive(false);
       }),
-    ]).then(([shown, hidden, ocrStarted, ocrEnded]) => {
+    ]).then(([shown, hidden, captureStarted, captureEnded]) => {
       if (disposed) {
         shown();
         hidden();
-        ocrStarted();
-        ocrEnded();
+        captureStarted();
+        captureEnded();
       } else {
         unlisten = shown;
         unlistenHidden = hidden;
-        unlistenOcrStarted = ocrStarted;
-        unlistenOcrEnded = ocrEnded;
+        unlistenCaptureStarted = captureStarted;
+        unlistenCaptureEnded = captureEnded;
       }
       void recordingUiVisible()
         .then((visible) => {
@@ -246,8 +246,8 @@ export function RecordingBarWindow() {
       disposed = true;
       unlisten?.();
       unlistenHidden?.();
-      unlistenOcrEnded?.();
-      unlistenOcrStarted?.();
+      unlistenCaptureEnded?.();
+      unlistenCaptureStarted?.();
     };
   }, []);
 

@@ -80,7 +80,7 @@ fn abandon_start(app: &AppHandle, error: &str) {
 }
 
 pub fn start(app: &AppHandle, options: StartRecordingOptions) -> Result<(), String> {
-  crate::text_recognition::dismiss(app);
+  crate::capture_overlays::dismiss_all(app);
   validate_options(&options)?;
   crate::exports::reserve_recording_workspace(app)?;
   // A second start while `Starting` is rejected here, not merely by a

@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-use crate::recording::Region;
-use crate::screenshots;
-use crate::windows::WindowLabel;
+use crate::{capture_overlays, recording::Region, screenshots};
 
 #[cfg(target_os = "macos")]
 mod platform_macos;
@@ -61,26 +59,16 @@ pub struct CapturedTextRegion {
 }
 
 fn recognition_windows(app: &AppHandle) -> Vec<tauri::WebviewWindow> {
-  app
-    .webview_windows()
-    .into_values()
-    .filter(|window| window.label().starts_with(WINDOW_PREFIX))
-    .collect()
+  capture_overlays::windows(app, WINDOW_PREFIX)
 }
 
 fn close_recognition_windows(app: &AppHandle, except: Option<&str>) {
-  for window in recognition_windows(app) {
-    if Some(window.label()) != except {
-      // Windows animates hiding/destruction of a visible top-level window.
-      // Because the OCR surface spans the monitor, that transition makes the
-      // blue text selection visibly slide and shrink. Clear the layered alpha
-      // before either visibility operation so the compositor has no OCR
-      // pixels left to animate. macOS keeps its established close path.
-      #[cfg(target_os = "windows")]
-      let _ = crate::windows::conceal_disposable_overlay(&window);
-      let _ = window.close();
-    }
-  }
+  // Windows animates hiding/destruction of a visible top-level window.
+  // Because the OCR surface spans the monitor, that transition makes the
+  // blue text selection visibly slide and shrink. Clear the layered alpha
+  // before either visibility operation so the compositor has no OCR
+  // pixels left to animate. macOS keeps its established close path.
+  capture_overlays::close_windows(app, WINDOW_PREFIX, except);
 }
 
 pub fn dismiss(app: &AppHandle) {
@@ -88,42 +76,16 @@ pub fn dismiss(app: &AppHandle) {
   close_recognition_windows(app, None);
   let had_capture = app.state::<TextRecognitionState>().cancel();
   if had_windows || had_capture {
-    let _ = app.emit_to(
-      WindowLabel::RecordingBar.as_str(),
-      "text-recognition://ended",
-      (),
-    );
+    capture_overlays::emit_lifecycle(app, false);
   }
-}
-
-// xcap::Monitor wraps a raw display handle that is not Send on every
-// platform, so the command future may never hold one across an await.
-// Enumerating synchronously drops the handles before the first snapshot.
-fn monitor_layout(app: &AppHandle) -> Result<Vec<(u32, f64, tauri::Monitor)>, String> {
-  let capture_monitors = xcap::Monitor::all().map_err(|error| error.to_string())?;
-  let tauri_monitors = app
-    .available_monitors()
-    .map_err(|error| error.to_string())?;
-  if capture_monitors.len() != tauri_monitors.len() {
-    return Err("Tauri and xcap returned different monitor counts".to_owned());
-  }
-
-  capture_monitors
-    .into_iter()
-    .zip(tauri_monitors)
-    .map(|(capture_monitor, monitor)| {
-      let monitor_id = capture_monitor.id().map_err(|error| error.to_string())?;
-      let scale = monitor.scale_factor();
-      Ok((monitor_id, scale, monitor))
-    })
-    .collect()
 }
 
 pub async fn start(app: &AppHandle) -> Result<(), String> {
   dismiss(app);
+  capture_overlays::dismiss_except(app, Some(capture_overlays::CaptureOverlay::TextRecognition));
   let generation = app.state::<TextRecognitionState>().begin();
 
-  let monitors = monitor_layout(app)?;
+  let monitors = capture_overlays::monitor_layout(app)?;
   let mut snapshots = Vec::with_capacity(monitors.len());
   for (monitor_id, scale, _) in &monitors {
     let image = screenshots::capture_text_recognition_snapshot(*monitor_id).await?;
@@ -166,11 +128,7 @@ pub async fn start(app: &AppHandle) -> Result<(), String> {
     crate::windows::show(&window, index == 0).map_err(|error| error.to_string())?;
   }
 
-  let _ = app.emit_to(
-    WindowLabel::RecordingBar.as_str(),
-    "text-recognition://started",
-    (),
-  );
+  capture_overlays::emit_lifecycle(app, true);
 
   Ok(())
 }

@@ -19,6 +19,15 @@
 
   --animate-gradient: gradient 10s ease-in-out infinite;
   --animate-mesh-drift: mesh-drift 18s ease-in-out infinite alternate;
+  /* Selection halo breathing; entry/exit fades come from an opacity
+     transition on the always-mounted halo element. */
+  --animate-halo: halo-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+
+  @keyframes halo-pulse {
+    50% {
+      opacity: 0.55;
+    }
+  }
 
   @keyframes gradient {
     0% {

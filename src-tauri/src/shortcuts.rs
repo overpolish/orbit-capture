@@ -20,6 +20,7 @@ pub enum ShortcutAction {
   PauseResumeRecording,
   TakeScreenshot,
   RecognizeText,
+  RulerOverlay,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -58,6 +59,10 @@ impl Default for ShortcutSettings {
         ShortcutBinding {
           action: ShortcutAction::RecognizeText,
           shortcut: Some("CommandOrControl+Shift+KeyT".to_owned()),
+        },
+        ShortcutBinding {
+          action: ShortcutAction::RulerOverlay,
+          shortcut: Some("CommandOrControl+Shift+KeyR".to_owned()),
         },
       ],
     }
@@ -111,7 +116,8 @@ const fn action_window(action: ShortcutAction) -> Option<WindowLabel> {
     ShortcutAction::TakeScreenshot => Some(WindowLabel::RegionSelector),
     ShortcutAction::ToggleRecordingBar
     | ShortcutAction::PauseResumeRecording
-    | ShortcutAction::RecognizeText => None,
+    | ShortcutAction::RecognizeText
+    | ShortcutAction::RulerOverlay => None,
   }
 }
 
@@ -121,10 +127,20 @@ fn notify_frontend(app: &AppHandle, action: ShortcutAction) {
   }
 }
 
-fn run_action(app: &AppHandle, action: ShortcutAction) {
-  if action != ShortcutAction::RecognizeText {
-    crate::text_recognition::dismiss(app);
+const fn preserved_capture_overlay(
+  action: ShortcutAction,
+) -> Option<crate::capture_overlays::CaptureOverlay> {
+  match action {
+    ShortcutAction::RecognizeText => Some(crate::capture_overlays::CaptureOverlay::TextRecognition),
+    ShortcutAction::TakeScreenshot | ShortcutAction::RulerOverlay => {
+      Some(crate::capture_overlays::CaptureOverlay::Ruler)
+    }
+    _ => None,
   }
+}
+
+fn run_action(app: &AppHandle, action: ShortcutAction) {
+  crate::capture_overlays::dismiss_except(app, preserved_capture_overlay(action));
   match action {
     ShortcutAction::ToggleRecordingBar => {
       if crate::recording::is_idle(app) {
@@ -176,6 +192,9 @@ fn run_action(app: &AppHandle, action: ShortcutAction) {
     }
     ShortcutAction::RecognizeText => {
       crate::text_recognition::start_detached(app);
+    }
+    ShortcutAction::RulerOverlay => {
+      crate::ruler::start_detached(app);
     }
   }
 }
@@ -326,75 +345,4 @@ pub fn set_shortcut_binding(
 }
 
 #[cfg(test)]
-mod tests {
-  use std::collections::HashSet;
-
-  use super::*;
-
-  #[test]
-  fn defaults_open_the_recording_bar_take_screenshots_and_recognize_text() {
-    let settings = ShortcutSettings::default();
-    let assigned = settings
-      .bindings
-      .iter()
-      .filter(|binding| binding.shortcut.is_some())
-      .collect::<Vec<_>>();
-    assert_eq!(assigned.len(), 3);
-    assert_eq!(assigned[0].action, ShortcutAction::ToggleRecordingBar);
-    assert_eq!(assigned[1].action, ShortcutAction::TakeScreenshot);
-    assert_eq!(
-      assigned[1].shortcut.as_deref(),
-      Some("CommandOrControl+Shift+Digit8")
-    );
-    assert_eq!(assigned[2].action, ShortcutAction::RecognizeText);
-    assert_eq!(
-      assigned[2].shortcut.as_deref(),
-      Some("CommandOrControl+Shift+KeyT")
-    );
-  }
-
-  #[test]
-  fn each_frontend_action_goes_to_the_window_that_performs_it() {
-    assert_eq!(
-      action_window(ShortcutAction::StartStopRecording).map(WindowLabel::as_str),
-      Some(WindowLabel::RecordingBar.as_str())
-    );
-    assert_eq!(
-      action_window(ShortcutAction::TakeScreenshot).map(WindowLabel::as_str),
-      Some(WindowLabel::RegionSelector.as_str())
-    );
-  }
-
-  #[test]
-  fn taking_a_screenshot_never_reaches_the_recording_bar() {
-    // The bar starts recordings, so the two must never share a window - and,
-    // because emitting to a window does not scope delivery, the listeners
-    // must go on matching the action itself.
-    assert_ne!(
-      action_window(ShortcutAction::TakeScreenshot).map(WindowLabel::as_str),
-      action_window(ShortcutAction::StartStopRecording).map(WindowLabel::as_str)
-    );
-  }
-
-  #[test]
-  fn the_actions_rust_handles_alone_ask_no_window() {
-    for action in [
-      ShortcutAction::ToggleRecordingBar,
-      ShortcutAction::PauseResumeRecording,
-      ShortcutAction::RecognizeText,
-    ] {
-      assert!(action_window(action).is_none());
-    }
-  }
-
-  #[test]
-  fn every_action_appears_once() {
-    let settings = ShortcutSettings::default();
-    let actions = settings
-      .bindings
-      .iter()
-      .map(|binding| binding.action)
-      .collect::<HashSet<_>>();
-    assert_eq!(actions.len(), settings.bindings.len());
-  }
-}
+mod tests;

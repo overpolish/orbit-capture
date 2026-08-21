@@ -161,9 +161,13 @@ pub(crate) async fn capture(
   app: &AppHandle,
   target: ScreenshotTarget,
   show_cursor: bool,
+  include_ruler: bool,
 ) -> Result<CapturedImage, String> {
   // Read as the shutter fires, the same way a recording reads it as it starts.
-  let include_own_windows = crate::settings::current(app).record_screenwide_windows;
+  // A preserved ruler is intentionally part of this shot. The screenshot
+  // region and recording controls have already faded out before the shutter.
+  let include_own_windows =
+    include_ruler || crate::settings::current(app).record_screenwide_windows;
 
   #[cfg(target_os = "macos")]
   {
@@ -191,9 +195,7 @@ pub(crate) async fn capture(
 
 /// Freezes a whole monitor before OCR surfaces appear. Screenwide's own
 /// windows deliberately remain in the image so text can be recognized there.
-pub(crate) async fn capture_text_recognition_snapshot(
-  monitor_id: u32,
-) -> Result<CapturedImage, String> {
+pub(crate) async fn capture_overlay_snapshot(monitor_id: u32) -> Result<CapturedImage, String> {
   #[cfg(target_os = "macos")]
   {
     tauri::async_runtime::spawn_blocking(move || {
@@ -219,6 +221,12 @@ pub(crate) async fn capture_text_recognition_snapshot(
   }
 }
 
+pub(crate) async fn capture_text_recognition_snapshot(
+  monitor_id: u32,
+) -> Result<CapturedImage, String> {
+  capture_overlay_snapshot(monitor_id).await
+}
+
 /// Captures a still and either copies it or saves it, returning the path it was
 /// written to when it went to disk.
 #[tauri::command]
@@ -232,8 +240,12 @@ pub async fn capture_still(
     return Err("A screenshot cannot be taken while a recording is active".to_owned());
   }
   crate::exports::reserve_screenshot_workspace(&app)?;
-  crate::text_recognition::dismiss(&app);
-  let image = match capture(&app, target, show_cursor).await {
+  let include_ruler = crate::ruler::is_active(&app);
+  crate::capture_overlays::dismiss_except(
+    &app,
+    include_ruler.then_some(crate::capture_overlays::CaptureOverlay::Ruler),
+  );
+  let image = match capture(&app, target, show_cursor, include_ruler).await {
     Ok(image) => image,
     Err(error) => {
       crate::exports::release_screenshot_workspace(&app);

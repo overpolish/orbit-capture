@@ -12,6 +12,7 @@ import {
 } from "../recording-sources/api";
 import { useRecordingSourceStore } from "../recording-sources/store";
 import { Region } from "../recording-sources/types";
+import { cancelRuler, setRulerScreenshotMode } from "../ruler/api";
 import { captureStill } from "../screenshots/api";
 
 /**
@@ -32,13 +33,14 @@ export const beginScreenshotCapture = async () => {
     if (!monitor) return;
     setSelectedMonitor(monitor);
   }
+  await setRulerScreenshotMode(true);
   // Rust has to know the overlay is allowed on screen before it is asked for:
   // the recording controls may well be hidden behind it.
   await setScreenshotRegionSession(true);
   setScreenshotCapture(true);
 };
 
-export const endScreenshotCapture = async () => {
+export const endScreenshotCapture = async (dismissRuler = false) => {
   const { recordingMode, selectedMonitor, setScreenshotCapture } =
     useRecordingSourceStore.getState();
 
@@ -48,6 +50,8 @@ export const endScreenshotCapture = async () => {
   await setScreenshotRegionSession(false);
   await hideRegionSelector();
   await setRegionSelectorOpacity(1);
+  if (dismissRuler) await cancelRuler();
+  else await setRulerScreenshotMode(false);
   setScreenshotCapture(false);
   // With the session flag already cleared, this asks for the overlay on the
   // recording UI's terms: it comes back for a cancelled session, and stays away
@@ -61,18 +65,19 @@ export const endScreenshotCapture = async () => {
 export const captureScreenshotRegion = (monitorId: number, region: Region) => {
   // The overlay is on top of what is being captured, so it goes invisible for
   // the shot exactly as it does for the magnifier's monitor image.
-  setRegionSelectorOpacity(0)
-    .then(() =>
-      captureStill({
+  const capture = async () => {
+    try {
+      await setRegionSelectorOpacity(0);
+      await captureStill({
         destination: "export",
         showCursor: useRecordingInputStore.getState().inputs.showCursor,
         target: { kind: "region", monitorId, region },
-      }),
-    )
-    .catch((error: unknown) => {
+      });
+      await endScreenshotCapture(true);
+    } catch (error: unknown) {
       console.error("Could not take the screenshot", error);
-    })
-    .finally(() => {
-      void endScreenshotCapture();
-    });
+      await endScreenshotCapture();
+    }
+  };
+  void capture();
 };

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 overpolish
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use cidre::{cv, sc};
+use cidre::{cg, cv, sc};
 use std::ffi::c_char;
 
 use crate::capture_kit::{display_scale, monitor_geometry, windows_to_exclude};
@@ -318,6 +318,11 @@ async fn capture(
   let mut cfg = sc::StreamCfg::new();
   cfg.set_shows_cursor(show_cursor);
   cfg.set_pixel_format(cv::PixelFormat::_32_BGRA);
+  // Without an explicit color space SCK emits each display's NATIVE profile,
+  // so the same overlay renders slightly differently per monitor (an sRGB
+  // canvas mis-shows native-profile pixels). The recording pipeline already
+  // normalizes to sRGB — screenshots must match.
+  cfg.set_color_space_name(cg::color_space::names::srgb());
 
   match target {
     ScreenshotTarget::Screen { monitor_id } => {

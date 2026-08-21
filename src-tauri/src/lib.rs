@@ -12,6 +12,7 @@ mod camera_preview;
 mod capture_geometry;
 #[cfg(target_os = "macos")]
 mod capture_kit;
+mod capture_overlays;
 #[cfg(target_os = "macos")]
 mod cursor_scrub;
 mod exports;
@@ -19,6 +20,7 @@ mod permissions;
 mod recording;
 mod recording_inputs;
 mod recording_sources;
+mod ruler;
 mod screenshots;
 mod settings;
 mod shortcuts;
@@ -65,6 +67,7 @@ pub fn run() {
     .manage(exports::screenshot_preview::ScreenshotPreviewState::default())
     .manage(permissions::PermissionState::default())
     .manage(recording::RecordingState::default())
+    .manage(ruler::RulerState::default())
     .manage(settings::GeneralSettingsState::default())
     .manage(shortcuts::ShortcutSettingsState::default())
     .manage(text_recognition::TextRecognitionState::default())
@@ -131,6 +134,13 @@ pub fn run() {
       recording_sources::make_window_borderless,
       recording_sources::resize_window,
       recording_sources::restore_window_border,
+      ruler::cancel_ruler,
+      ruler::copy_ruler_value,
+      ruler::set_ruler_screenshot_mode,
+      ruler::snapshot::get_ruler_boxes,
+      ruler::snapshot::get_ruler_gradients,
+      ruler::snapshot::get_ruler_snapshot,
+      ruler::start_ruler,
       screenshots::capture_still,
       text_recognition::cancel_text_recognition,
       text_recognition::capture_text_region,

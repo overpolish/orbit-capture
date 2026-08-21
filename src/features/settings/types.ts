@@ -6,7 +6,8 @@ export type ShortcutAction =
   | "startStopRecording"
   | "pauseResumeRecording"
   | "takeScreenshot"
-  | "recognizeText";
+  | "recognizeText"
+  | "rulerOverlay";
 
 type ShortcutBinding = {
   action: ShortcutAction;

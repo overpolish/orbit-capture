@@ -52,6 +52,11 @@ const actions: {
     description: "Draw around text anywhere on screen and copy it.",
     label: "Recognize text",
   },
+  {
+    action: "rulerOverlay",
+    description: "Measure distances and align elements anywhere on screen.",
+    label: "Ruler overlay",
+  },
 ];
 
 export function SettingsWindow() {
