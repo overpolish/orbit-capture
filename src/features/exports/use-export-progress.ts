@@ -6,25 +6,33 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const EXPORT_PROGRESS_EVENT = "export://progress";
 
-// Weight applied to each fresh instantaneous rate in the exponential moving
-// average. Low enough that a single unusually fast or slow event only nudges
-// the smoothed rate rather than swinging it, so the shown estimate is steady.
-const ETA_EMA_ALPHA = 0.3;
-// Ignore events closer together than this — a tiny delta over a tiny interval
-// produces a wildly noisy instantaneous rate.
-const ETA_MIN_INTERVAL_MS = 50;
-// Do not surface an estimate until the rate has been smoothed across at least
-// this many consecutive same-phase intervals.
-const ETA_MIN_RATE_SAMPLES = 2;
-// …and until this much wall-clock time has elapsed since the first measured
-// event, so the very first estimate isn't extrapolated from a noisy burst.
-const ETA_MIN_SPAN_MS = 1500;
-// The shown estimate only ever counts down, so frame-to-frame rate wobble
-// (which pushes the raw estimate up and down) can never flicker the label. The
-// one exception is a genuine slowdown: if the raw estimate jumps up by more
-// than this many seconds — far beyond normal wobble — the export really did
-// slow (e.g. a heavier phase), so the countdown is allowed to step back up.
-const ETA_SLOWDOWN_ESCAPE_S = 45;
+// The rate is measured across a trailing window rather than smoothed per event:
+// the endpoints of a ten-second span average out frame-to-frame encoder jitter
+// on their own, while still tracking a real change in throughput within a few
+// seconds. Ten seconds is long enough to swallow a stalled disk write or a
+// burst of cheap frames, short enough that the estimate is not describing a
+// part of the export that is already over.
+const ETA_WINDOW_MS = 10_000;
+// Do not surface an estimate until the window actually spans this much
+// wall-clock time, so the first estimate isn't extrapolated from a noisy burst.
+// This single gate replaces the old per-event interval and sample-count gates —
+// with an endpoint-based rate, closely spaced events are harmless.
+const ETA_MIN_SPAN_MS = 3_000;
+// Progress events arrive per encoded frame, so store at most one sample per
+// this many milliseconds. The window is bounded either way; this just keeps the
+// array short.
+const ETA_SAMPLE_MIN_GAP_MS = 100;
+// The shown estimate counts down freely but may only step back up once a
+// slowdown has held for this long. A transient dip in throughput therefore
+// never ticks the label upward, while a genuinely heavier stretch of the export
+// is reflected after a few seconds.
+const ETA_SLOWDOWN_SUSTAIN_MS = 5_000;
+// A step up is only considered at all once the raw estimate exceeds the shown
+// one by this margin: thirty seconds, or a quarter of the shown estimate for
+// long exports, where the absolute wobble scales with what is left to encode.
+// A fixed absolute margin re-triggered constantly on hour-long exports.
+const ETA_SLOWDOWN_MIN_MARGIN_S = 30;
+const ETA_SLOWDOWN_MARGIN_RATIO = 0.25;
 
 type EtaSample = { phase: ExportPhase; progress: number; time: number };
 
@@ -43,18 +51,14 @@ export function useExportProgress(artifactId?: number) {
 
   // Wall-clock timing state for the ETA. Kept in refs so it survives renders
   // and never itself triggers one; only the derived `etaSeconds` is state.
-  const startTimeRef = useRef<number | null>(null);
-  const lastSampleRef = useRef<EtaSample | null>(null);
-  const smoothedRateRef = useRef<number | null>(null);
-  const rateSampleCountRef = useRef(0);
+  const samplesRef = useRef<EtaSample[]>([]);
   const displayedEtaRef = useRef<number | null>(null);
+  const slowdownSinceRef = useRef<number | null>(null);
 
   const resetEta = useCallback(() => {
-    startTimeRef.current = null;
-    lastSampleRef.current = null;
-    smoothedRateRef.current = null;
-    rateSampleCountRef.current = 0;
+    samplesRef.current = [];
     displayedEtaRef.current = null;
+    slowdownSinceRef.current = null;
     setEtaSeconds(null);
   }, []);
 
@@ -72,63 +76,70 @@ export function useExportProgress(artifactId?: number) {
       setProgress(measured);
 
       const now = Date.now();
-      startTimeRef.current ??= now;
-      const last = lastSampleRef.current;
-      const sample: EtaSample = {
-        phase: payload.phase,
-        progress: measured,
-        time: now,
-      };
-      if (last === null || payload.phase !== last.phase) {
-        // First sample, or a phase boundary (recording→camera→finalizing):
-        // (re)start the baseline. A delta straddling a phase change is
-        // meaningless, and its progress weighting restarts anyway.
-        lastSampleRef.current = sample;
-      } else {
-        const dtMs = now - last.time;
-        const dProgress = measured - last.progress;
-        if (dtMs >= ETA_MIN_INTERVAL_MS && dProgress > 0) {
-          const instantRate = (dProgress / dtMs) * 1000; // percent per second
-          smoothedRateRef.current =
-            smoothedRateRef.current === null
-              ? instantRate
-              : ETA_EMA_ALPHA * instantRate +
-                (1 - ETA_EMA_ALPHA) * smoothedRateRef.current;
-          rateSampleCountRef.current += 1;
-          // Advance the baseline only once a sample is actually taken. Progress
-          // events arrive per encoded frame — faster than ETA_MIN_INTERVAL_MS —
-          // so resetting it every event would leave every interval below the
-          // threshold and no rate would ever be measured.
-          lastSampleRef.current = sample;
-        }
-        // Otherwise keep the baseline so the interval keeps growing toward the
-        // threshold instead of being discarded.
+      const samples = samplesRef.current;
+      const last = samples.length > 0 ? samples[samples.length - 1] : null;
+      if (last !== null && last.phase !== payload.phase) {
+        // Phase boundary (recording→camera→finalizing): a span straddling it is
+        // meaningless because the backend restarts its progress weighting, so
+        // start a fresh window. The shown estimate is deliberately left alone
+        // and simply holds until the new window is wide enough to measure.
+        samples.length = 0;
+      } else if (last === null || now - last.time >= ETA_SAMPLE_MIN_GAP_MS) {
+        samples.push({ phase: payload.phase, progress: measured, time: now });
+        // Drop samples that have fallen out of the trailing window, but keep the
+        // newest of them as the anchor: pruning to the window boundary alone
+        // would shrink the measured span every time, and the rate would be read
+        // off a span far shorter than ETA_WINDOW_MS.
+        const cutoff = now - ETA_WINDOW_MS;
+        let anchor = 0;
+        while (anchor + 1 < samples.length && samples[anchor + 1].time < cutoff)
+          anchor += 1;
+        if (anchor > 0) samples.splice(0, anchor);
       }
 
-      const rate = smoothedRateRef.current;
-      const spanMs = now - startTimeRef.current;
-      const raw =
-        rate !== null &&
-        rate > 0 &&
-        rateSampleCountRef.current >= ETA_MIN_RATE_SAMPLES &&
-        spanMs >= ETA_MIN_SPAN_MS
-          ? (100 - measured) / rate
-          : null;
-      if (raw === null) {
-        displayedEtaRef.current = null;
-        setEtaSeconds(null);
-      } else {
-        const prev = displayedEtaRef.current;
-        // Count down monotonically: take the lower of the last shown estimate
-        // and the new one, so wobble never ticks the label upward. Only a jump
-        // larger than normal wobble (a real slowdown) is allowed to raise it.
-        const next =
-          prev === null || raw - prev > ETA_SLOWDOWN_ESCAPE_S
-            ? raw
-            : Math.min(prev, raw);
-        displayedEtaRef.current = next;
-        setEtaSeconds(next);
+      let raw: number | null = null;
+      if (samples.length > 1) {
+        const anchorSample = samples[0];
+        const newestSample = samples[samples.length - 1];
+        const spanMs = newestSample.time - anchorSample.time;
+        const dProgress = newestSample.progress - anchorSample.progress;
+        if (spanMs >= ETA_MIN_SPAN_MS && dProgress > 0) {
+          const rate = (dProgress / spanMs) * 1000; // percent per second
+          raw = (100 - measured) / rate;
+        }
       }
+
+      if (raw !== null) {
+        const prev = displayedEtaRef.current;
+        if (prev === null || raw <= prev) {
+          // Count down freely.
+          displayedEtaRef.current = raw;
+          slowdownSinceRef.current = null;
+          setEtaSeconds(raw);
+        } else {
+          const margin = Math.max(
+            ETA_SLOWDOWN_MIN_MARGIN_S,
+            prev * ETA_SLOWDOWN_MARGIN_RATIO,
+          );
+          if (raw > prev + margin) {
+            // Only step up once the slowdown has persisted; a momentary spike
+            // resets the timer below and never reaches the label.
+            slowdownSinceRef.current ??= now;
+            if (now - slowdownSinceRef.current >= ETA_SLOWDOWN_SUSTAIN_MS) {
+              displayedEtaRef.current = raw;
+              slowdownSinceRef.current = null;
+              setEtaSeconds(raw);
+            }
+          } else {
+            slowdownSinceRef.current = null;
+          }
+        }
+      }
+      // When the rate is not measurable — warm-up, just after a phase change, or
+      // no forward progress — the last shown estimate simply holds. Blanking the
+      // label and bringing it back is far more distracting than a value that has
+      // gone a few seconds stale, and formatEta is coarse enough to hide it.
+      // Only resetEta (begin/complete/reset) clears the estimate.
     }).then((stopListening) => {
       if (disposed) stopListening();
       else unlisten = stopListening;
