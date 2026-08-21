@@ -31,6 +31,7 @@ windows = { version = "0.62.2", features = ["Win32_Graphics_Direct3D", "Win32_Gr
 [dependencies]
 tauri = { version = "2", features = ["image-ico", "image-png", "macos-private-api", "protocol-asset", "tray-icon"] }
 tauri-plugin-window-state = "2.4.1"
+tokio = { version = "1", features = ["macros", "rt", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 xcap = "0.9.8"
@@ -103,7 +104,6 @@ core-graphics = "0.25.0"
 nokhwa = { version = "0.10.11", default-features = false, features = ["decoding", "input-avfoundation", "output-threaded"] }
 tauri-plugin-macos-permissions = "2.3.0"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
-tokio = { version = "1", features = ["macros", "rt", "time"] }
 cidre = { version = "0.19.0", default-features = false, features = ["async", "ax", "cg", "core_audio", "iio", "macos_14_2", "ns", "sc", "vn", "vt"] }
 objc2 = "0.6.4"
 objc2-app-kit = "0.3.2"

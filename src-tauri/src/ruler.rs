@@ -44,7 +44,7 @@ fn set_ruler_level(window: &tauri::WebviewWindow, level: isize) -> Result<(), St
 
   #[cfg(not(target_os = "macos"))]
   {
-    let _ = window;
+    let _ = (window, level);
     Ok(())
   }
 }
